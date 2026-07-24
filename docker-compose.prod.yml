@@ -1,0 +1,105 @@
+# Hostinger VPS deployment shape. Use together with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Reads real secrets/domain from a root-level .env (see .env.example,
+# gitignored) via Docker Compose's automatic ${VAR} substitution — this
+# file and docker-compose.yml must never contain a real secret literal.
+# Only what needs to differ from the dev base file is overridden here;
+# non-sensitive operational defaults (token TTLs, media paths, JWT
+# algorithm) are inherited unchanged from docker-compose.yml.
+services:
+  db:
+    restart: always
+    ports: !override []
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+  backend:
+    # gunicorn manages a pool of uvicorn worker processes — BACKEND_WORKERS
+    # defaults to 2, a sensible fit for a modest Hostinger VPS (CLAUDE.md);
+    # the low-stock scan / digest-email jobs still only run once regardless
+    # of worker count, via core/scheduler.py's file lock.
+    command: >-
+      gunicorn app.main:app
+      -k uvicorn.workers.UvicornWorker
+      --workers ${BACKEND_WORKERS:-2}
+      --bind 0.0.0.0:8000
+      --timeout 60
+      --access-logfile -
+      --error-logfile -
+    volumes: !override
+      - media_data:/app/media
+    environment:
+      ENV: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@storematetn.in}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SCHEDULER_ENABLED: "true"
+      LOGIN_MAX_ATTEMPTS: "5"
+      LOGIN_LOCKOUT_MINUTES: "15"
+    restart: always
+    ports: !override []
+
+  frontend:
+    image: storemate-frontend:latest
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    command: ["nginx", "-g", "daemon off;"]
+    # Vite already baked VITE_API_BASE_URL into the built JS via the build
+    # arg above — the dev base file's runtime env var doesn't apply to this
+    # nginx-serving-static-files setup, so drop it rather than carry over
+    # dead/misleading config. (working_dir is harmless to inherit: nginx
+    # doesn't read it, and Docker auto-creates the dir if missing.)
+    environment: !override {}
+    volumes: !override []
+    ports: !override []
+    restart: always
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: always
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      # The official nginx image auto-envsubst's anything mounted under
+      # /etc/nginx/templates/*.template into conf.d/ at container start —
+      # no separate render step needed, ${DOMAIN} resolves on every restart.
+      - ./docker/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot
+
+  certbot:
+    image: certbot/certbot
+    restart: always
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    # Checks twice a day; --quiet + certbot's own 30-day renewal window
+    # make this a no-op except when a real renewal is due. nginx isn't
+    # reloaded automatically by this container — scripts/deploy.sh's
+    # crontab entry handles that (see docs/DEPLOYMENT.md).
+    entrypoint: >-
+      /bin/sh -c 'trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done;'
+
+volumes:
+  certbot_certs:
+  certbot_www:
+  media_data:

@@ -1,0 +1,23 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path"]
+
+[tool.pytest.ini_options]
+testpaths = ["app/tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+# SQLAlchemy's async ORM bridges lazy-loads/commits through greenlet_spawn;
+# without this, coverage.py's tracer loses the thread across each greenlet
+# switch and reports huge false gaps right after every `await` in service code.
+concurrency = ["greenlet", "thread"]
+source = ["app"]
+omit = ["app/tests/*"]
