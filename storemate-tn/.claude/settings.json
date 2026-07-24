@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose *)",
+      "Bash(alembic *)",
+      "Bash(npm *)",
+      "Bash(pip *)",
+      "Bash(pytest *)",
+      "Read(*)",
+      "Edit(*)"
+    ]
+  },
+  "notes": "Run phase commands from .claude/commands/ in numeric order. Each phase must reach its Definition of Done before the next phase starts."
+}

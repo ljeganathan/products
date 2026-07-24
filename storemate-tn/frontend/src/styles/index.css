@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --radius: 0.75rem;
+}
+
+body {
+  margin: 0;
+  font-family:
+    "Inter",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Tamil script renders noticeably better in Noto Sans Tamil than in Inter's
+   fallback glyphs — switch the whole document's body font when the UI
+   language is Tamil (see i18n/index.ts, which sets this attribute). */
+html[lang="ta"] body {
+  font-family:
+    "Noto Sans Tamil",
+    "Inter",
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+
+/* Every tap target on this app must clear 44px — it runs on tablets. */
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}

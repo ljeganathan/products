@@ -1,0 +1,11 @@
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+
+# Root-level .env holds real production secrets for docker-compose.prod.yml
+# (POSTGRES_PASSWORD, JWT_SECRET, DOMAIN, SMTP_*) — see .env.example.
+# backend/ and frontend/ each have their own .gitignore for their own .env.
+.env
+.env.production
