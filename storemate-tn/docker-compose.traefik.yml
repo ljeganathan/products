@@ -1,0 +1,33 @@
+# Use this instead of docker-compose.prod.yml's nginx/certbot services when
+# StoreMate TN shares a VPS with another Traefik-fronted stack (e.g. an
+# existing n8n deployment) that already owns host ports 80/443. Traefik's
+# own cert resolver (already configured for that other stack) issues the
+# TLS certificate for DOMAIN too — no separate certbot/webroot dance needed.
+#
+# Combine with the base file and docker-compose.prod.yml, but only start
+# db/backend/frontend (explicitly naming them skips prod's nginx/certbot,
+# which would otherwise try to bind 80/443 and collide with Traefik):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     -f docker-compose.traefik.yml up -d --build db backend frontend
+#
+# Requires in .env: DOMAIN, TRAEFIK_NETWORK (the existing Traefik stack's
+# Docker network, e.g. n8n_default), TRAEFIK_CERT_RESOLVER (the resolver
+# name from that stack's Traefik command, e.g. mytlschallenge).
+services:
+  frontend:
+    networks:
+      - default
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.storemate.rule=Host(`${DOMAIN}`) || Host(`www.${DOMAIN}`)
+      - traefik.http.routers.storemate.tls=true
+      - traefik.http.routers.storemate.entrypoints=web,websecure
+      - traefik.http.routers.storemate.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
+      - traefik.http.services.storemate.loadbalancer.server.port=80
+      - traefik.docker.network=${TRAEFIK_NETWORK}
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK}
