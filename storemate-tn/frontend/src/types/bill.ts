@@ -86,6 +86,7 @@ export interface CompanySettings {
   legal_name: string;
   display_name: string;
   address: string;
+  pincode: string | null;
   gstin: string | null;
   fssai_no: string | null;
   phone: string | null;

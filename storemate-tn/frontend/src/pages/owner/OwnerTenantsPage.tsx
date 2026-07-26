@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Repeat } from "lucide-react";
+import { Plus, Repeat, Users } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Table, type Column } from "@/components/ui/Table";
 import { ChangePlanModal } from "@/features/owner/ChangePlanModal";
 import { TenantFormModal } from "@/features/owner/TenantFormModal";
+import { TenantUsersModal } from "@/features/owner/TenantUsersModal";
 import { toast } from "@/store/toastStore";
 import type { PlanCode } from "@/types/plan";
 import type { Tenant, TenantCreate } from "@/types/tenant";
@@ -35,6 +36,7 @@ export default function OwnerTenantsPage() {
   const [isSuspending, setIsSuspending] = useState(false);
   const [changingPlanFor, setChangingPlanFor] = useState<Tenant | null>(null);
   const [isChangingPlan, setIsChangingPlan] = useState(false);
+  const [viewingUsersFor, setViewingUsersFor] = useState<Tenant | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["platform-tenants", page, search],
@@ -158,6 +160,14 @@ export default function OwnerTenantsPage() {
         <div className="flex gap-2">
           <button
             type="button"
+            onClick={() => setViewingUsersFor(tenant)}
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+            aria-label={t("owner.tenants.usersTitle", { name: tenant.name })}
+          >
+            <Users className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
             onClick={() => setChangingPlanFor(tenant)}
             className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
             aria-label={t("owner.subscriptions.changePlanTitle", { name: tenant.name })}
@@ -227,6 +237,15 @@ export default function OwnerTenantsPage() {
           plans={plans ?? []}
           onSubmit={handleChangePlan}
           isSubmitting={isChangingPlan}
+        />
+      )}
+
+      {viewingUsersFor && (
+        <TenantUsersModal
+          open={viewingUsersFor !== null}
+          onOpenChange={(open) => !open && setViewingUsersFor(null)}
+          tenantId={viewingUsersFor.id}
+          tenantName={viewingUsersFor.name}
         />
       )}
     </div>

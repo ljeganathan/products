@@ -21,6 +21,9 @@ class CompanySettings(Base, UUIDPKMixin, TimestampMixin):
     legal_name: Mapped[str] = mapped_column(String(200), nullable=False)
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
     address: Mapped[str] = mapped_column(Text, nullable=False)
+    # Nullable at the DB level so pre-existing rows don't break the migration;
+    # enforced as mandatory in the API layer instead (see api/v1/company_settings.py).
+    pincode: Mapped[str | None] = mapped_column(String(10), nullable=True)
     gstin: Mapped[str | None] = mapped_column(String(15), nullable=True)
     fssai_no: Mapped[str | None] = mapped_column(String(20), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
