@@ -13,9 +13,10 @@ import { formatPaise } from "@/utils/money";
 export interface SavedBillSearchModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onViewBill: (bill: Bill) => void;
 }
 
-export function SavedBillSearchModal({ open, onOpenChange }: SavedBillSearchModalProps) {
+export function SavedBillSearchModal({ open, onOpenChange, onViewBill }: SavedBillSearchModalProps) {
   const { t } = useTranslation();
   const [billNumber, setBillNumber] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -36,7 +37,19 @@ export function SavedBillSearchModal({ open, onOpenChange }: SavedBillSearchModa
   });
 
   const columns: Column<Bill>[] = [
-    { key: "bill_number", header: t("pos.billNumberColumn"), render: (b) => `#${b.bill_number}` },
+    {
+      key: "bill_number",
+      header: t("pos.billNumberColumn"),
+      render: (b) => (
+        <button
+          type="button"
+          onClick={() => onViewBill(b)}
+          className="font-medium text-brand-600 underline-offset-2 hover:underline"
+        >
+          #{b.bill_number}
+        </button>
+      ),
+    },
     {
       key: "created_at",
       header: t("pos.dateColumn"),

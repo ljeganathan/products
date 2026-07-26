@@ -39,6 +39,7 @@ export default function CompanySettingsPage() {
       legal_name: company.legal_name,
       display_name: company.display_name,
       address: company.address,
+      pincode: company.pincode ?? "",
       gstin: company.gstin ?? "",
       fssai_no: company.fssai_no ?? "",
       phone: company.phone ?? "",
@@ -50,7 +51,13 @@ export default function CompanySettingsPage() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
+  const PINCODE_PATTERN = /^[1-9][0-9]{5}$/;
+
   async function handleSave() {
+    if (!form.pincode || !PINCODE_PATTERN.test(form.pincode)) {
+      toast("danger", t("settings.company.pincodeRequired"));
+      return;
+    }
     setIsSaving(true);
     try {
       await updateCompanySettings(form);
@@ -84,6 +91,7 @@ export default function CompanySettingsPage() {
             legal_name: form.legal_name ?? company.legal_name,
             display_name: form.display_name ?? company.display_name,
             address: form.address ?? company.address,
+            pincode: (form.pincode ?? company.pincode) || null,
             gstin: (form.gstin ?? company.gstin) || null,
             phone: (form.phone ?? company.phone) || null,
             invoice_footer_text: (form.invoice_footer_text ?? company.invoice_footer_text) || null,
@@ -118,6 +126,19 @@ export default function CompanySettingsPage() {
             label={t("settings.company.address")}
             value={form.address ?? ""}
             onChange={(e) => setField("address", e.target.value)}
+          />
+          <Input
+            label={`${t("settings.company.pincode")} *`}
+            value={form.pincode ?? ""}
+            required
+            maxLength={6}
+            inputMode="numeric"
+            error={
+              form.pincode && !PINCODE_PATTERN.test(form.pincode)
+                ? t("settings.company.pincodeInvalid")
+                : undefined
+            }
+            onChange={(e) => setField("pincode", e.target.value.replace(/\D/g, ""))}
           />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Input

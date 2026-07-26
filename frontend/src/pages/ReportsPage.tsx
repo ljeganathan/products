@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { Download } from "lucide-react";
+import { Download, Lock } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
 import { downloadSalesCsv, getGstSummary, getSalesReport } from "@/api/reports";
 import { Button } from "@/components/ui/Button";
@@ -47,6 +48,7 @@ export default function ReportsPage() {
 
   const sales = salesQuery.data;
   const gst = gstQuery.data;
+  const isRangeUpgradeRequired = sales?.range_clamped === true;
 
   return (
     <div className="flex flex-col gap-6">
@@ -54,19 +56,33 @@ export default function ReportsPage() {
         title={t("reports.title")}
         subtitle={t("reports.subtitle")}
         actions={
-          <Button variant="outline" onClick={() => void handleExportCsv()} isLoading={isExporting}>
+          <Button
+            variant="outline"
+            onClick={() => void handleExportCsv()}
+            isLoading={isExporting}
+            disabled={isRangeUpgradeRequired}
+          >
             <Download className="h-4 w-4" />
             {t("reports.exportCsv")}
           </Button>
         }
       />
 
-      <DateRangePicker value={range} onChange={setRange} />
-
-      {sales?.range_clamped && (
-        <p className="rounded-lg bg-warning-50 px-3 py-2 text-sm text-warning-800">
-          {t("reports.rangeClampedNotice")}
-        </p>
+      {isRangeUpgradeRequired ? (
+        <div className="flex flex-col items-start justify-between gap-3 rounded-xl border border-warning-200 bg-warning-50 p-4 sm:flex-row sm:items-center">
+          <div className="flex items-center gap-3">
+            <Lock className="h-5 w-5 shrink-0 text-warning-600" />
+            <div>
+              <p className="text-sm font-medium text-warning-900">{t("reports.upgradeTitle")}</p>
+              <p className="text-sm text-warning-700">{t("reports.upgradeBody")}</p>
+            </div>
+          </div>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/settings/subscription">{t("dashboard.upgradeCta")}</Link>
+          </Button>
+        </div>
+      ) : (
+        <DateRangePicker value={range} onChange={setRange} />
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

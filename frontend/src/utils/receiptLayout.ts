@@ -15,7 +15,8 @@ export function buildReceiptLines(payload: BillPrintPayload, widthChars: number)
   const rule = "-".repeat(widthChars);
 
   lines.push(center(payload.company.display_name, widthChars));
-  if (payload.company.address) for (const l of wrap(payload.company.address, widthChars)) lines.push(center(l, widthChars));
+  const addressLine = [payload.company.address, payload.company.pincode].filter(Boolean).join(" - ");
+  if (addressLine) for (const l of wrap(addressLine, widthChars)) lines.push(center(l, widthChars));
   if (payload.company.gstin) lines.push(center(`GSTIN: ${payload.company.gstin}`, widthChars));
   if (payload.company.phone) lines.push(center(`Ph: ${payload.company.phone}`, widthChars));
   lines.push(rule);

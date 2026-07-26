@@ -42,3 +42,15 @@ class UserUpdate(BaseModel):
     store_id: uuid.UUID | None = None
     is_active: bool | None = None
     language_pref: LanguagePref | None = None
+
+
+class PlatformUserUpdate(BaseModel):
+    """Product-owner cross-tenant profile edit — deliberately narrower than
+    UserUpdate: no store_id/language_pref (those are the tenant admin's own
+    concern), but adds email since only the platform owner should be able to
+    change a tenant user's login identity."""
+
+    name: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    is_active: bool | None = None

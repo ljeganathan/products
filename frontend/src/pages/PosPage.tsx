@@ -1,7 +1,9 @@
-import { useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { createBill, printBill, resumeBill } from "@/api/bills";
+import { createBill, getBill, printBill, resumeBill } from "@/api/bills";
+import { listPrinterProfiles } from "@/api/printerProfiles";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/Input";
@@ -13,22 +15,30 @@ import { HelpOverlay } from "@/features/pos/components/HelpOverlay";
 import { ItemSearchBar } from "@/features/pos/components/ItemSearchBar";
 import { ManualEntryInput } from "@/features/pos/components/ManualEntryInput";
 import { PrintPreviewModal } from "@/features/pos/components/PrintPreviewModal";
+import { QuantityEntryModal } from "@/features/pos/components/QuantityEntryModal";
+import { SavedBillDetailModal } from "@/features/pos/components/SavedBillDetailModal";
 import { SavedBillSearchModal } from "@/features/pos/components/SavedBillSearchModal";
 import { TotalsPanel } from "@/features/pos/components/TotalsPanel";
 import { useBarcodeScanner } from "@/features/pos/hooks/useBarcodeScanner";
 import { useItemCatalog } from "@/features/pos/hooks/useItemCatalog";
 import { useKeyboardShortcuts } from "@/features/pos/hooks/useKeyboardShortcuts";
+import { useStockLookup } from "@/features/pos/hooks/useStockLookup";
+import { dispatchPrint } from "@/features/pos/printDispatch";
 import { useAuthStore } from "@/store/authStore";
 import { useCartStore } from "@/store/cartStore";
 import { toast } from "@/store/toastStore";
-import type { BillPrintPayload } from "@/types/bill";
+import type { Bill, BillPrintPayload } from "@/types/bill";
 import type { Item } from "@/types/item";
+import { getApiErrorMessage } from "@/utils/apiError";
 import { computeBillTotals } from "@/utils/billingCalc";
+
+const AUTO_PRINT_STORAGE_KEY = "storemate-pos-autoprint";
 
 export default function PosPage() {
   const { t } = useTranslation();
   const storeId = useAuthStore((s) => s.user?.store_id ?? undefined);
   const catalog = useItemCatalog(storeId);
+  const stock = useStockLookup(storeId);
 
   const cart = useCartStore();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -39,6 +49,22 @@ export default function PosPage() {
   const [billDiscountModalOpen, setBillDiscountModalOpen] = useState(false);
   const [lineDiscountIndex, setLineDiscountIndex] = useState<number | null>(null);
   const [printPayload, setPrintPayload] = useState<BillPrintPayload | null>(null);
+  const [pendingItem, setPendingItem] = useState<Item | null>(null);
+  const [viewingBillId, setViewingBillId] = useState<string | null>(null);
+  const [autoPrint, setAutoPrint] = useState<boolean>(() => {
+    const saved = localStorage.getItem(AUTO_PRINT_STORAGE_KEY);
+    return saved === null ? true : saved === "true";
+  });
+
+  useEffect(() => {
+    localStorage.setItem(AUTO_PRINT_STORAGE_KEY, String(autoPrint));
+  }, [autoPrint]);
+
+  const viewingBillQuery = useQuery({
+    queryKey: ["bill-detail", viewingBillId],
+    queryFn: () => getBill(viewingBillId as string),
+    enabled: viewingBillId !== null,
+  });
 
   const searchRef = useRef<HTMLInputElement>(null);
   const manualRef = useRef<HTMLInputElement>(null);
@@ -54,7 +80,9 @@ export default function PosPage() {
     isCancelConfirmOpen ||
     billDiscountModalOpen ||
     lineDiscountIndex !== null ||
-    printPayload !== null;
+    printPayload !== null ||
+    pendingItem !== null ||
+    viewingBillId !== null;
 
   const totals = computeBillTotals(
     cart.lines.map((l) => ({
@@ -71,15 +99,25 @@ export default function PosPage() {
     cart.billDiscountValue,
   );
 
-  function addItemToCart(item: Item) {
-    const taxProfile = catalog.getTaxProfile(item.tax_profile_id);
-    cart.addItem(item, taxProfile, 1);
+  function promptAddItem(item: Item) {
+    setPendingItem(item);
   }
+
+  function confirmAddItem(qty: number) {
+    if (!pendingItem) return;
+    const taxProfile = catalog.getTaxProfile(pendingItem.tax_profile_id);
+    cart.addItem(pendingItem, taxProfile, qty);
+    setPendingItem(null);
+  }
+
+  const pendingItemCartQty = pendingItem
+    ? (cart.lines.find((l) => l.itemId === pendingItem.id)?.qty ?? 0)
+    : 0;
 
   useBarcodeScanner((code) => {
     const item = catalog.findByBarcode(code);
     if (item) {
-      addItemToCart(item);
+      promptAddItem(item);
     } else {
       toast("danger", t("pos.itemNotFoundTitle"), t("pos.itemNotFoundDescription", { code }));
     }
@@ -134,10 +172,32 @@ export default function PosPage() {
       });
       cart.clear();
       toast("success", t("pos.billHeldTitle"), t("pos.billNumber", { number: bill.bill_number }));
-    } catch {
-      toast("danger", t("pos.billErrorTitle"));
+    } catch (err) {
+      toast("danger", t("pos.saveErrorTitle"), getApiErrorMessage(err, t("pos.billErrorTitle")));
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function printAfterFinalize(billId: string) {
+    const payload = await printBill(billId);
+    if (!autoPrint) {
+      setPrintPayload(payload);
+      return;
+    }
+    try {
+      const profiles = await listPrinterProfiles();
+      const profile = profiles.find((p) => p.is_default) ?? profiles[0];
+      if (!profile) {
+        // Nothing configured to print to — fall back to the preview modal so
+        // the cashier sees why nothing happened instead of a silent no-op.
+        setPrintPayload(payload);
+        return;
+      }
+      await dispatchPrint(profile, payload);
+      toast("success", t("pos.printSuccessTitle"));
+    } catch (err) {
+      toast("danger", t("pos.printFailedTitle"), err instanceof Error ? err.message : undefined);
     }
   }
 
@@ -160,10 +220,9 @@ export default function PosPage() {
         hold: false,
       });
       cart.clear();
-      const payload = await printBill(bill.id);
-      setPrintPayload(payload);
-    } catch {
-      toast("danger", t("pos.billErrorTitle"));
+      await printAfterFinalize(bill.id);
+    } catch (err) {
+      toast("danger", t("pos.saveErrorTitle"), getApiErrorMessage(err, t("pos.billErrorTitle")));
     } finally {
       setIsSubmitting(false);
     }
@@ -174,8 +233,8 @@ export default function PosPage() {
     try {
       const resumed = await resumeBill(billId);
       cart.loadResumedBill(resumed, catalog.getItem, catalog.getTaxProfile);
-    } catch {
-      toast("danger", t("pos.billErrorTitle"));
+    } catch (err) {
+      toast("danger", t("pos.saveErrorTitle"), getApiErrorMessage(err, t("pos.billErrorTitle")));
     }
   }
 
@@ -193,8 +252,8 @@ export default function PosPage() {
     <div className="flex h-full flex-col gap-4 p-4 lg:flex-row">
       <div className="flex min-w-0 flex-1 flex-col gap-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <ItemSearchBar ref={searchRef} catalog={catalog} onSelect={addItemToCart} />
-          <ManualEntryInput ref={manualRef} catalog={catalog} onFound={addItemToCart} />
+          <ItemSearchBar ref={searchRef} catalog={catalog} onSelect={promptAddItem} />
+          <ManualEntryInput ref={manualRef} catalog={catalog} onFound={promptAddItem} />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -231,25 +290,58 @@ export default function PosPage() {
         />
       </div>
 
-      <TotalsPanel
-        totals={totals}
-        paymentMode={cart.paymentMode}
-        onPaymentModeChange={cart.setPaymentMode}
-        onOpenBillDiscount={() => setBillDiscountModalOpen(true)}
-        onHold={() => void handleHold()}
-        onFinalize={() => void handleFinalize()}
-        onCancel={() => cart.lines.length > 0 && setIsCancelConfirmOpen(true)}
-        isSubmitting={isSubmitting}
-        disabled={cart.lines.length === 0}
-      />
+      <div className="flex w-full flex-col gap-3 lg:w-80">
+        <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700">
+          <input
+            type="checkbox"
+            checked={autoPrint}
+            onChange={(e) => setAutoPrint(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          {t("pos.printAutomatically")}
+        </label>
+
+        <TotalsPanel
+          totals={totals}
+          paymentMode={cart.paymentMode}
+          onPaymentModeChange={cart.setPaymentMode}
+          onOpenBillDiscount={() => setBillDiscountModalOpen(true)}
+          onHold={() => void handleHold()}
+          onFinalize={() => void handleFinalize()}
+          onCancel={() => cart.lines.length > 0 && setIsCancelConfirmOpen(true)}
+          isSubmitting={isSubmitting}
+          disabled={cart.lines.length === 0}
+        />
+      </div>
 
       <HelpOverlay open={isHelpOpen} onOpenChange={setIsHelpOpen} />
       <HeldBillsModal open={isHeldBillsOpen} onOpenChange={setIsHeldBillsOpen} onResume={(id) => void handleResume(id)} />
-      <SavedBillSearchModal open={isSavedSearchOpen} onOpenChange={setIsSavedSearchOpen} />
+      <SavedBillSearchModal
+        open={isSavedSearchOpen}
+        onOpenChange={setIsSavedSearchOpen}
+        onViewBill={(bill: Bill) => {
+          setIsSavedSearchOpen(false);
+          setViewingBillId(bill.id);
+        }}
+      />
+      <SavedBillDetailModal
+        open={viewingBillId !== null}
+        onOpenChange={(open) => !open && setViewingBillId(null)}
+        bill={viewingBillQuery.data ?? null}
+        isLoading={viewingBillQuery.isLoading}
+      />
       <PrintPreviewModal
         open={printPayload !== null}
         onOpenChange={(open) => !open && setPrintPayload(null)}
         payload={printPayload}
+      />
+      <QuantityEntryModal
+        open={pendingItem !== null}
+        item={pendingItem}
+        availableQty={pendingItem ? stock.getQuantity(pendingItem.id) : undefined}
+        currentCartQty={pendingItemCartQty}
+        onOpenChange={(open) => !open && setPendingItem(null)}
+        onConfirm={confirmAddItem}
       />
 
       <DiscountModal

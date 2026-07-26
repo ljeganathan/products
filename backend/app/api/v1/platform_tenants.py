@@ -18,6 +18,7 @@ from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.common import PaginatedResponse
 from app.schemas.platform_tenant import TenantCreate, TenantOut, TenantUpdate
+from app.schemas.user import PlatformUserUpdate, UserOut
 from app.services.subscription_service import BILLING_PERIOD_DAYS, build_tenant_out
 
 router = APIRouter(prefix="/platform/tenants", tags=["platform"])
@@ -140,5 +141,61 @@ async def update_tenant(
     tenant.status = payload.status
     await db.flush()
     result = await build_tenant_out(db, tenant)
+    await db.commit()
+    return result
+
+
+@router.get("/{tenant_id}/users", response_model=PaginatedResponse[UserOut])
+async def list_tenant_users(
+    tenant_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    _: object = Depends(require_owner),
+    db: AsyncSession = Depends(get_db),
+) -> PaginatedResponse[UserOut]:
+    tenant = await TenantRepository(db).get_by_id(tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+
+    users, total = await UserRepository(db).list_for_tenant(
+        tenant_id, page=page, page_size=page_size, search=None
+    )
+    return PaginatedResponse(
+        items=[UserOut.model_validate(u) for u in users],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.patch("/{tenant_id}/users/{user_id}", response_model=UserOut)
+async def update_tenant_user(
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    payload: PlatformUserUpdate,
+    _: object = Depends(require_owner),
+    db: AsyncSession = Depends(get_db),
+) -> UserOut:
+    """Lets the platform owner edit a tenant user's profile (e.g. the store
+    admin) directly — support/onboarding correction path that doesn't
+    require the tenant's own admin to be reachable."""
+    user_repo = UserRepository(db)
+    user = await user_repo.get_by_id(user_id)
+    if user is None or user.tenant_id != tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "email" in updates and updates["email"] != user.email:
+        existing = await user_repo.get_by_email(updates["email"])
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Email already registered"
+            )
+
+    for field, value in updates.items():
+        setattr(user, field, value)
+
+    await db.flush()
+    result = UserOut.model_validate(user)
     await db.commit()
     return result

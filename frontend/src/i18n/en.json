@@ -111,6 +111,8 @@
     "exportCsv": "Export CSV",
     "exportError": "Could not export the CSV",
     "rangeClampedNotice": "Your plan only shows today's report — upgrade to Pro for a full date range.",
+    "upgradeTitle": "Date-range reports are a Pro/Pro Max feature",
+    "upgradeBody": "Your plan only shows today's report. Upgrade to Pro or Pro Max to pick a custom date range and export CSV.",
     "cgstSgst": "CGST + SGST",
     "gstSummaryTitle": "GST summary",
     "subtotal": "Subtotal",
@@ -124,10 +126,6 @@
     "unauthorizedDescription": "You don't have permission to view that page",
     "sessionExpiredTitle": "Session expired",
     "sessionExpiredDescription": "Please sign in again to continue"
-  },
-  "placeholder": {
-    "usersTitle": "Users",
-    "usersDescription": "Store user management arrives in a later phase."
   },
   "notFound": {
     "title": "Page not found",
@@ -215,7 +213,16 @@
     "cancelConfirmTitle": "Cancel this bill?",
     "cancelConfirmDescription": "This clears the current cart.",
     "cancelConfirmBody": "Any items scanned or added will be removed. This cannot be undone.",
-    "cancelConfirmAction": "Yes, cancel"
+    "cancelConfirmAction": "Yes, cancel",
+    "addToCart": "Add to cart",
+    "qtyLabel": "Quantity",
+    "availableQty": "{{qty}} in stock",
+    "outOfStockWarning": "This item is out of stock. You can still add it, but check with your admin before selling.",
+    "lowStockWarning": "Only {{qty}} in stock — this quantity would go beyond what's on hand.",
+    "printAutomatically": "Print automatically on save",
+    "saveErrorTitle": "Could not save this bill",
+    "viewingBillTitle": "Viewing bill #{{number}} (read-only)",
+    "closeView": "Close"
   },
   "categories": {
     "title": "Categories",
@@ -317,6 +324,22 @@
     "lowStock": "Low stock",
     "outOfStock": "Out of stock"
   },
+  "users": {
+    "subtitle": "Manage store logins and access, within your plan's user limit",
+    "addButton": "Add user",
+    "addTitle": "Add user",
+    "name": "Name",
+    "email": "Email",
+    "phone": "Phone",
+    "password": "Password",
+    "passwordHint": "At least 8 characters",
+    "role": "Role",
+    "empty": "No users yet",
+    "searchPlaceholder": "Search by name or email",
+    "formRequired": "Name, email, and an 8+ character password are required",
+    "deleteConfirmTitle": "Delete this user?",
+    "deleteConfirmBody": "\"{{name}}\" will be deactivated and can no longer sign in. This frees up a user slot on your plan."
+  },
   "settings": {
     "title": "Settings",
     "navTax": "Tax",
@@ -373,6 +396,9 @@
       "legalName": "Legal name",
       "displayName": "Display name",
       "address": "Address",
+      "pincode": "Pincode",
+      "pincodeRequired": "Pincode is required",
+      "pincodeInvalid": "Enter a valid 6-digit pincode",
       "gstin": "GSTIN",
       "fssaiNo": "FSSAI no.",
       "phone": "Phone",
@@ -471,6 +497,7 @@
       "unlimited": "unlimited",
       "upgradeRequested": "Upgrade requested",
       "users": "Users",
+      "usersTitle": "Users — {{name}}",
       "stores": "Stores",
       "suspend": "Suspend",
       "reactivate": "Reactivate",

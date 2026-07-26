@@ -5,6 +5,7 @@ export interface CompanySettingsUpdate {
   legal_name?: string;
   display_name?: string;
   address?: string;
+  pincode?: string;
   gstin?: string | null;
   fssai_no?: string | null;
   phone?: string | null;
