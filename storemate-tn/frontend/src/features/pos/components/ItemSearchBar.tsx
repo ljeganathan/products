@@ -1,5 +1,5 @@
 import { Search } from "lucide-react";
-import { forwardRef, useEffect, useState } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { ItemCatalog } from "@/features/pos/hooks/useItemCatalog";
@@ -12,6 +12,11 @@ export interface ItemSearchBarProps {
   onSelect: (item: Item) => void;
 }
 
+// Shown when the cashier hits space on an empty search box to browse the
+// whole catalog — capped so the dropdown stays scannable/scrollable rather
+// than rendering a 1000-item list.
+const SHOW_ALL_LIMIT = 50;
+
 export const ItemSearchBar = forwardRef<HTMLInputElement, ItemSearchBarProps>(
   function ItemSearchBar({ catalog, onSelect }, ref) {
     const { t } = useTranslation();
@@ -19,14 +24,17 @@ export const ItemSearchBar = forwardRef<HTMLInputElement, ItemSearchBarProps>(
     const [results, setResults] = useState<Item[]>([]);
     const [activeIndex, setActiveIndex] = useState(0);
     const [isOpen, setIsOpen] = useState(false);
+    const [showingAll, setShowingAll] = useState(false);
+    const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
     useEffect(() => {
       const trimmed = query.trim();
       if (!trimmed) {
-        setResults([]);
-        setIsOpen(false);
+        if (!showingAll) setResults([]);
+        if (!showingAll) setIsOpen(false);
         return;
       }
+      setShowingAll(false);
 
       const local = catalog.searchLocal(trimmed, 8);
       setResults(local);
@@ -45,16 +53,34 @@ export const ItemSearchBar = forwardRef<HTMLInputElement, ItemSearchBarProps>(
           clearTimeout(timer);
         };
       }
-    }, [query, catalog]);
+    }, [query, catalog, showingAll]);
+
+    useEffect(() => {
+      if (isOpen) itemRefs.current[activeIndex]?.scrollIntoView({ block: "nearest" });
+    }, [activeIndex, isOpen]);
 
     function selectItem(item: Item) {
       onSelect(item);
       setQuery("");
       setResults([]);
       setIsOpen(false);
+      setShowingAll(false);
+    }
+
+    function showAllItems() {
+      const all = catalog.items.slice(0, SHOW_ALL_LIMIT);
+      setResults(all);
+      setActiveIndex(0);
+      setIsOpen(all.length > 0);
+      setShowingAll(true);
     }
 
     function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+      if (e.key === " " && query === "") {
+        e.preventDefault();
+        showAllItems();
+        return;
+      }
       if (!isOpen || results.length === 0) return;
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -67,6 +93,7 @@ export const ItemSearchBar = forwardRef<HTMLInputElement, ItemSearchBarProps>(
         selectItem(results[activeIndex]);
       } else if (e.key === "Escape") {
         setIsOpen(false);
+        setShowingAll(false);
       }
     }
 
@@ -92,9 +119,13 @@ export const ItemSearchBar = forwardRef<HTMLInputElement, ItemSearchBarProps>(
             {results.map((item, i) => (
               <li key={item.id}>
                 <button
+                  ref={(el) => {
+                    itemRefs.current[i] = el;
+                  }}
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => selectItem(item)}
+                  onMouseEnter={() => setActiveIndex(i)}
                   className={cn(
                     "flex w-full items-center justify-between gap-3 px-4 py-3 text-left",
                     i === activeIndex ? "bg-brand-50" : "hover:bg-slate-50",

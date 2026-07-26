@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
@@ -16,7 +16,7 @@ from app.repositories.tax_profile_repository import TaxProfileRepository
 from app.schemas.common import PaginatedResponse
 from app.schemas.item import BulkImportResult, ItemCreate, ItemOut, ItemUpdate
 from app.services.audit_service import record_audit_log
-from app.services.item_service import bulk_import_items
+from app.services.item_service import bulk_import_items, export_items_csv
 from app.utils.store_scope import resolve_store_id
 
 router = APIRouter(prefix="/items", tags=["items"])
@@ -171,6 +171,22 @@ async def bulk_import(
     )
     await db.commit()
     return result
+
+
+@router.get("/export.csv")
+async def export_items(
+    store_id: uuid.UUID | None = Query(None),
+    current_user: CurrentUser = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    assert current_user.tenant_id is not None
+    effective_store_id = store_id or current_user.store_id
+    csv_text = await export_items_csv(db, tenant_id=current_user.tenant_id, store_id=effective_store_id)
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=items-export.csv"},
+    )
 
 
 @router.get("/{item_id}", response_model=ItemOut)

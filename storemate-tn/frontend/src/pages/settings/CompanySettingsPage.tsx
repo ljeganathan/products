@@ -44,6 +44,7 @@ export default function CompanySettingsPage() {
       fssai_no: company.fssai_no ?? "",
       phone: company.phone ?? "",
       invoice_footer_text: company.invoice_footer_text ?? "",
+      show_tamil_item_names: company.show_tamil_item_names,
     });
   }, [company]);
 
@@ -95,6 +96,7 @@ export default function CompanySettingsPage() {
             gstin: (form.gstin ?? company.gstin) || null,
             phone: (form.phone ?? company.phone) || null,
             invoice_footer_text: (form.invoice_footer_text ?? company.invoice_footer_text) || null,
+            show_tamil_item_names: form.show_tamil_item_names ?? company.show_tamil_item_names,
           }),
           42,
         )
@@ -162,6 +164,23 @@ export default function CompanySettingsPage() {
             value={form.invoice_footer_text ?? ""}
             onChange={(e) => setField("invoice_footer_text", e.target.value)}
           />
+
+          <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={form.show_tamil_item_names ?? false}
+              onChange={(e) => setField("show_tamil_item_names", e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-slate-300"
+            />
+            <span>
+              <span className="block text-sm font-medium text-slate-700">
+                {t("settings.company.showTamilItemNames")}
+              </span>
+              <span className="block text-xs text-slate-500">
+                {t("settings.company.showTamilItemNamesHint")}
+              </span>
+            </span>
+          </label>
 
           <div>
             <label className="mb-1.5 block text-sm font-medium text-slate-700">

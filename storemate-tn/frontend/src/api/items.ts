@@ -45,6 +45,21 @@ export async function bulkImportItems(file: File, storeId?: string): Promise<Bul
   return data;
 }
 
+export async function exportItemsCsv(storeId?: string): Promise<void> {
+  const { data } = await apiClient.get<Blob>("/items/export.csv", {
+    params: { store_id: storeId },
+    responseType: "blob",
+  });
+  const url = URL.createObjectURL(data);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "items-export.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function searchPosItems(
   q: string,
   storeId?: string,

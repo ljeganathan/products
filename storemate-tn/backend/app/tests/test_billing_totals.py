@@ -17,6 +17,7 @@ def _line(
     return LineInput(
         item_id=uuid.uuid4(),
         name="Test Item",
+        name_ta="சோதனை பொருள்",
         unit_price_paise=unit_price_paise,
         qty=qty,
         cgst_pct=cgst_pct,

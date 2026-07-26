@@ -1,16 +1,39 @@
-import type { BillPrintPayload } from "@/types/bill";
+import type { BillPrintPayload, PrintPayloadItem } from "@/types/bill";
 import { paiseToPlainAmount } from "@/utils/money";
 
-/** Plain fixed-width text lines shared by both the ESC/POS (thermal) and
- * dot-matrix builders — dot-matrix prints these lines almost verbatim
- * (no graphics), thermal wraps them with ESC/POS formatting commands.
- *
- * Note: item names print in English (name_en) only. Thermal/dot-matrix
- * printers in this class have no Tamil glyph support without
- * printer-specific firmware — there is no reliable byte encoding for Tamil
- * script on this hardware class, so this is a real hardware limitation,
- * not an oversight. */
-export function buildReceiptLines(payload: BillPrintPayload, widthChars: number): string[] {
+export interface ReceiptItemRow {
+  displayName: string;
+  /** True when displayName has characters outside the single-byte ASCII
+   * range (e.g. Tamil) — ESC/POS text mode (EscPosBuilder.text) can't
+   * encode these, so the thermal builder rasters the name as an image
+   * instead of printing these as plain text bytes. */
+  isNonAscii: boolean;
+  nameLines: string[];
+  qtyRateLine: string;
+  discountLine: string | null;
+}
+
+interface ReceiptLineOptions {
+  /** Dot-matrix has no graphics mode at all, so it can never print a
+   * rasterized Tamil name — force the English snapshot regardless of the
+   * company's show_tamil_item_names setting. */
+  forceEnglishNames?: boolean;
+}
+
+function resolveItemDisplayName(
+  item: PrintPayloadItem,
+  payload: BillPrintPayload,
+  opts?: ReceiptLineOptions,
+): string {
+  const useTamil = !opts?.forceEnglishNames && payload.company.show_tamil_item_names;
+  return useTamil && item.name_ta ? item.name_ta : item.name;
+}
+
+function isNonAsciiText(text: string): boolean {
+  return Array.from(text).some((ch) => (ch.codePointAt(0) ?? 0) > 255);
+}
+
+export function buildReceiptHeaderLines(payload: BillPrintPayload, widthChars: number): string[] {
   const lines: string[] = [];
   const rule = "-".repeat(widthChars);
 
@@ -27,16 +50,38 @@ export function buildReceiptLines(payload: BillPrintPayload, widthChars: number)
   if (payload.customer_phone) lines.push(`Phone: ${payload.customer_phone}`);
   lines.push(rule);
 
-  for (const item of payload.items) {
-    for (const l of wrap(item.name, widthChars)) lines.push(l);
-    const qtyRate = `${formatQty(item.qty)} x ${paiseToPlainAmount(item.unit_price_paise)}`;
-    lines.push(twoCol(qtyRate, paiseToPlainAmount(item.line_total_paise), widthChars));
-    if (item.discount_paise > 0) {
-      lines.push(twoCol("  Discount", `-${paiseToPlainAmount(item.discount_paise)}`, widthChars));
-    }
-  }
-  lines.push(rule);
+  return lines;
+}
 
+/** Structured per-item data — the thermal (ESC/POS) builder consumes this
+ * directly so it can raster non-ASCII names instead of routing them through
+ * plain text bytes; the preview/dot-matrix builders just flatten it. */
+export function buildReceiptItemRows(
+  payload: BillPrintPayload,
+  widthChars: number,
+  opts?: ReceiptLineOptions,
+): ReceiptItemRow[] {
+  return payload.items.map((item) => {
+    const displayName = resolveItemDisplayName(item, payload, opts);
+    const qtyRate = `${formatQty(item.qty)} x ${paiseToPlainAmount(item.unit_price_paise)}`;
+    return {
+      displayName,
+      isNonAscii: isNonAsciiText(displayName),
+      nameLines: wrap(displayName, widthChars),
+      qtyRateLine: twoCol(qtyRate, paiseToPlainAmount(item.line_total_paise), widthChars),
+      discountLine:
+        item.discount_paise > 0
+          ? twoCol("  Discount", `-${paiseToPlainAmount(item.discount_paise)}`, widthChars)
+          : null,
+    };
+  });
+}
+
+export function buildReceiptTotalsFooterLines(payload: BillPrintPayload, widthChars: number): string[] {
+  const lines: string[] = [];
+  const rule = "-".repeat(widthChars);
+
+  lines.push(rule);
   lines.push(twoCol("Subtotal", paiseToPlainAmount(payload.subtotal_paise), widthChars));
   if (payload.discount_paise > 0) {
     lines.push(twoCol("Discount", `-${paiseToPlainAmount(payload.discount_paise)}`, widthChars));
@@ -57,6 +102,30 @@ export function buildReceiptLines(payload: BillPrintPayload, widthChars: number)
   }
   lines.push(center("Thank you! Visit again.", widthChars));
 
+  return lines;
+}
+
+/** Plain fixed-width text lines shared by the on-screen preview and the
+ * dot-matrix builder — dot-matrix prints these almost verbatim (no
+ * graphics), the preview renders them in an HTML <pre>. Item names honor
+ * the Tamil-display setting here since both targets can render Tamil text
+ * directly (a browser font for the preview); pass forceEnglishNames for
+ * dot-matrix specifically, since that hardware has no graphics mode to
+ * fall back on if a printer's code page can't show Tamil glyphs. */
+export function buildReceiptLines(
+  payload: BillPrintPayload,
+  widthChars: number,
+  opts?: ReceiptLineOptions,
+): string[] {
+  const lines: string[] = [...buildReceiptHeaderLines(payload, widthChars)];
+
+  for (const row of buildReceiptItemRows(payload, widthChars, opts)) {
+    lines.push(...row.nameLines);
+    lines.push(row.qtyRateLine);
+    if (row.discountLine) lines.push(row.discountLine);
+  }
+
+  lines.push(...buildReceiptTotalsFooterLines(payload, widthChars));
   return lines;
 }
 

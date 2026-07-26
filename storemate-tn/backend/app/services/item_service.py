@@ -184,3 +184,49 @@ async def bulk_import_items(
         error_count=len(row_errors),
         errors=row_errors,
     )
+
+
+async def export_items_csv(
+    db: AsyncSession, *, tenant_id: uuid.UUID, store_id: uuid.UUID | None
+) -> str:
+    """Exports current items in the exact column format bulk-import expects,
+    so an export can be edited and re-imported as-is (round-trip)."""
+    item_repo = ItemRepository(db)
+    stock_repo = StockRepository(db)
+    category_repo = CategoryRepository(db)
+    tax_repo = TaxProfileRepository(db)
+
+    items = await item_repo.list_all_for_tenant(tenant_id, store_id)
+    categories_by_id = {c.id: c for c in await category_repo.list_all_for_tenant(tenant_id)}
+    tax_profiles_by_id = {t.id: t for t in await tax_repo.list_for_tenant(tenant_id)}
+    stock_by_item_id = await stock_repo.map_by_item_id(tenant_id, store_id, [i.id for i in items])
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(REQUIRED_TEMPLATE_COLUMNS)
+    for item in items:
+        category = categories_by_id.get(item.category_id)
+        tax_profile = tax_profiles_by_id.get(item.tax_profile_id)
+        stock = stock_by_item_id.get(item.id)
+        writer.writerow(
+            [
+                item.name_en,
+                item.name_ta,
+                category.name_en if category else "",
+                item.brand or "",
+                item.pack_size or "",
+                item.barcode or "",
+                item.sku or "",
+                item.unit.value,
+                f"{item.mrp_paise / 100:.2f}",
+                f"{item.selling_price_paise / 100:.2f}",
+                f"{item.cost_price_paise / 100:.2f}",
+                tax_profile.name if tax_profile else "",
+                item.hsn_code or "",
+                item.reorder_level,
+                item.reorder_qty,
+                stock.quantity_on_hand if stock else 0,
+            ]
+        )
+
+    return buffer.getvalue()

@@ -58,6 +58,9 @@ class BillItem(Base, UUIDPKMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("items.id"), nullable=False, index=True
     )
     item_name_snapshot: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Nullable: bills created before this column existed have no Tamil
+    # snapshot — print/display falls back to item_name_snapshot for those.
+    item_name_ta_snapshot: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # Numeric, not Integer: FMCG units include kg/g/l/ml which are commonly fractional.
     qty: Mapped[float] = mapped_column(Numeric(12, 3), nullable=False)
     unit_price_paise: Mapped[int] = mapped_column(BigInteger, nullable=False)

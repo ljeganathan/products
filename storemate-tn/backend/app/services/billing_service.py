@@ -27,6 +27,7 @@ from app.services.stock_service import adjust_stock
 class LineInput:
     item_id: uuid.UUID
     name: str
+    name_ta: str
     unit_price_paise: int
     qty: float
     cgst_pct: float
@@ -40,6 +41,7 @@ class LineInput:
 class LineResult:
     item_id: uuid.UUID
     name: str
+    name_ta: str
     qty: float
     unit_price_paise: int
     discount_paise: int
@@ -144,6 +146,7 @@ def compute_bill_totals(
             LineResult(
                 item_id=line.item_id,
                 name=line.name,
+                name_ta=line.name_ta,
                 qty=line.qty,
                 unit_price_paise=line.unit_price_paise,
                 discount_paise=item_disc + line_bill_discount_share,
@@ -206,6 +209,7 @@ async def create_bill(
             LineInput(
                 item_id=item.id,
                 name=item.name_en,
+                name_ta=item.name_ta,
                 unit_price_paise=item.selling_price_paise,
                 qty=line.qty,
                 cgst_pct=float(tax_profile.cgst_pct),
@@ -254,6 +258,7 @@ async def create_bill(
             bill_id=bill.id,
             item_id=lr.item_id,
             item_name_snapshot=lr.name,
+            item_name_ta_snapshot=lr.name_ta,
             qty=lr.qty,
             unit_price_paise=lr.unit_price_paise,
             discount_paise=lr.discount_paise,
@@ -347,6 +352,7 @@ async def build_print_payload(
         items=[
             PrintPayloadItem(
                 name=i.item_name_snapshot,
+                name_ta=i.item_name_ta_snapshot,
                 qty=float(i.qty),
                 unit_price_paise=i.unit_price_paise,
                 discount_paise=i.discount_paise,

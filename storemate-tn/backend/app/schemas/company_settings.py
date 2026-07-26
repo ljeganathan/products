@@ -21,6 +21,7 @@ class CompanySettingsOut(BaseModel):
     phone: str | None
     logo_url: str | None
     invoice_footer_text: str | None
+    show_tamil_item_names: bool
 
 
 class CompanySettingsUpdate(BaseModel):
@@ -32,6 +33,7 @@ class CompanySettingsUpdate(BaseModel):
     fssai_no: str | None = None
     phone: str | None = None
     invoice_footer_text: str | None = None
+    show_tamil_item_names: bool | None = None
 
     @field_validator("pincode")
     @classmethod
