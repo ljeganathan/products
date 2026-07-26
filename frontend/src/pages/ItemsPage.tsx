@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Power, Upload } from "lucide-react";
+import { Download, Pencil, Plus, Power, Upload } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { listCategories } from "@/api/categories";
-import { createItem, deactivateItem, listItems, updateItem } from "@/api/items";
+import { createItem, deactivateItem, exportItemsCsv, listItems, updateItem } from "@/api/items";
 import { listStock } from "@/api/stock";
 import { listTaxProfiles } from "@/api/taxProfiles";
 import { Badge } from "@/components/ui/Badge";
@@ -34,6 +34,7 @@ export default function ItemsPage() {
   const [deactivatingItem, setDeactivatingItem] = useState<Item | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeactivating, setIsDeactivating] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["items", page, search, storeId],
@@ -83,6 +84,17 @@ export default function ItemsPage() {
       toast("danger", getApiErrorMessage(err, t("common.saveError")));
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleExport() {
+    setIsExporting(true);
+    try {
+      await exportItemsCsv(storeId);
+    } catch (err) {
+      toast("danger", getApiErrorMessage(err, t("items.exportError")));
+    } finally {
+      setIsExporting(false);
     }
   }
 
@@ -188,6 +200,10 @@ export default function ItemsPage() {
         title={t("items.title")}
         actions={
           <>
+            <Button variant="outline" onClick={() => void handleExport()} isLoading={isExporting}>
+              <Download className="h-4 w-4" />
+              {t("items.exportCsv")}
+            </Button>
             <Button variant="outline" onClick={() => setBulkImportOpen(true)}>
               <Upload className="h-4 w-4" />
               {t("items.bulkImport")}

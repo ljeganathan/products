@@ -88,6 +88,8 @@
     "rangeToday": "Today",
     "range7d": "7 days",
     "range30d": "30 days",
+    "rangeFrom": "From",
+    "rangeTo": "To",
     "salesTrend": "Sales trend",
     "breakdown": "Breakdown",
     "breakdownBy": {
@@ -289,7 +291,9 @@
     "rowErrors": "Errors",
     "importAnother": "Import another file",
     "bulkImportSuccess": "Imported {{count}} items successfully",
-    "bulkImportError": "Bulk import failed"
+    "bulkImportError": "Bulk import failed",
+    "exportCsv": "Export CSV",
+    "exportError": "Failed to export items"
   },
   "stock": {
     "title": "Stock",
@@ -403,6 +407,8 @@
       "fssaiNo": "FSSAI no.",
       "phone": "Phone",
       "footerText": "Invoice footer text",
+      "showTamilItemNames": "Show Tamil item names in English version",
+      "showTamilItemNamesHint": "When on, the billing screen and printed receipts show/print item names in Tamil even when the UI language is English. Thermal printers render the Tamil name as an image; dot-matrix receipts always stay in English since that hardware has no way to print it.",
       "logo": "Logo",
       "uploadLogo": "Upload logo",
       "logoUploaded": "Logo uploaded",

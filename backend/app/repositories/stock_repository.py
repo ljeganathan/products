@@ -58,6 +58,17 @@ class StockRepository:
         await self.db.flush()
         return stock
 
+    async def map_by_item_id(
+        self, tenant_id: uuid.UUID, store_id: uuid.UUID | None, item_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, Stock]:
+        if not item_ids:
+            return {}
+        stmt = select(Stock).where(Stock.tenant_id == tenant_id, Stock.item_id.in_(item_ids))
+        if store_id is not None:
+            stmt = stmt.where(Stock.store_id == store_id)
+        result = await self.db.execute(stmt)
+        return {s.item_id: s for s in result.scalars().all()}
+
 
 class StockMovementRepository:
     def __init__(self, db: AsyncSession) -> None:

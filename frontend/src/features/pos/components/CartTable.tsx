@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import type { CartLine } from "@/store/cartStore";
 import type { CalcLineResult } from "@/utils/billingCalc";
+import { resolveItemName } from "@/utils/itemDisplayName";
 import { formatPaise } from "@/utils/money";
 import { cn } from "@/utils/cn";
 
@@ -10,6 +11,7 @@ export interface CartTableProps {
   lines: CartLine[];
   lineResults: CalcLineResult[];
   selectedIndex: number | null;
+  showTamilItemNames: boolean;
   onSelect: (index: number) => void;
   onQtyChange: (index: number, qty: number) => void;
   onAdjustQty: (index: number, delta: number) => void;
@@ -21,6 +23,7 @@ export function CartTable({
   lines,
   lineResults,
   selectedIndex,
+  showTamilItemNames,
   onSelect,
   onQtyChange,
   onAdjustQty,
@@ -38,7 +41,7 @@ export function CartTable({
   }
 
   return (
-    <div className="flex-1 overflow-y-auto rounded-xl border border-slate-200 bg-white">
+    <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-slate-200 bg-white">
       <ul className="divide-y divide-slate-100">
         {lines.map((line, index) => {
           const result = lineResults[index];
@@ -52,8 +55,11 @@ export function CartTable({
                 isSelected ? "bg-brand-50" : "hover:bg-slate-50",
               )}
             >
+              <div className="w-6 shrink-0 text-sm text-slate-400">{index + 1}</div>
               <div className="min-w-0 flex-1">
-                <p className="truncate font-medium text-slate-900">{line.nameEn}</p>
+                <p className="truncate font-medium text-slate-900">
+                  {resolveItemName(line.nameEn, line.nameTa, showTamilItemNames)}
+                </p>
                 <p className="text-sm text-slate-500">
                   {formatPaise(line.unitPricePaise)} / {line.unit}
                   {result && result.discountPaise > 0 && (

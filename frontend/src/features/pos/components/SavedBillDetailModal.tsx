@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 
 import { Modal } from "@/components/ui/Modal";
 import type { Bill } from "@/types/bill";
+import { resolveItemName } from "@/utils/itemDisplayName";
 import { formatPaise } from "@/utils/money";
 
 export interface SavedBillDetailModalProps {
@@ -9,12 +10,19 @@ export interface SavedBillDetailModalProps {
   onOpenChange: (open: boolean) => void;
   bill: Bill | null;
   isLoading: boolean;
+  showTamilItemNames: boolean;
 }
 
 /** Read-only detail view opened from the saved bill search — shows every
  * line item and the server-computed totals for a past bill without
  * touching the live cart, unlike F9 resume (which is destructive/editable). */
-export function SavedBillDetailModal({ open, onOpenChange, bill, isLoading }: SavedBillDetailModalProps) {
+export function SavedBillDetailModal({
+  open,
+  onOpenChange,
+  bill,
+  isLoading,
+  showTamilItemNames,
+}: SavedBillDetailModalProps) {
   const { t } = useTranslation();
 
   return (
@@ -40,12 +48,19 @@ export function SavedBillDetailModal({ open, onOpenChange, bill, isLoading }: Sa
             </p>
           )}
 
-          <div className="rounded-xl border border-slate-200 bg-white">
+          <div className="max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white">
             <ul className="divide-y divide-slate-100">
-              {bill.items.map((line) => (
-                <li key={line.id} className="flex items-center justify-between gap-3 px-4 py-3">
+              {bill.items.map((line, index) => (
+                <li key={line.id} className="flex items-center gap-3 px-4 py-3">
+                  <div className="w-6 shrink-0 text-sm text-slate-400">{index + 1}</div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium text-slate-900">{line.item_name_snapshot}</p>
+                    <p className="truncate font-medium text-slate-900">
+                      {resolveItemName(
+                        line.item_name_snapshot,
+                        line.item_name_ta_snapshot,
+                        showTamilItemNames,
+                      )}
+                    </p>
                     <p className="text-sm text-slate-500">
                       {line.qty} × {formatPaise(line.unit_price_paise)}
                       {line.discount_paise > 0 && (

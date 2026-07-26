@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { resolveMediaUrl } from "@/api/client";
@@ -26,6 +26,7 @@ export function PrintPreviewModal({ open, onOpenChange, payload }: PrintPreviewM
   });
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [isPrinting, setIsPrinting] = useState(false);
+  const printButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!profiles || profiles.length === 0) return;
@@ -36,6 +37,14 @@ export function PrintPreviewModal({ open, onOpenChange, payload }: PrintPreviewM
   const selectedProfile = profiles?.find((p) => p.id === selectedProfileId) ?? null;
   const previewLines =
     payload && selectedProfile ? buildReceiptLines(payload, selectedProfile.paper_width_chars) : [];
+
+  useEffect(() => {
+    // The Print button starts disabled (profiles load async), so Radix's
+    // one-time mount focus can land on it while it's still disabled and
+    // silently no-op — re-focus once it actually becomes actionable so
+    // Enter reliably prints without a second keypress.
+    if (open && selectedProfile) printButtonRef.current?.focus();
+  }, [open, selectedProfile]);
 
   async function handlePrint() {
     if (!payload || !selectedProfile) return;
@@ -60,8 +69,14 @@ export function PrintPreviewModal({ open, onOpenChange, payload }: PrintPreviewM
       onOpenChange={onOpenChange}
       title={t("pos.printPreviewTitle")}
       className="max-w-2xl"
+      initialFocusRef={printButtonRef}
       footer={
-        <Button onClick={() => void handlePrint()} isLoading={isPrinting} disabled={!selectedProfile}>
+        <Button
+          ref={printButtonRef}
+          onClick={() => void handlePrint()}
+          isLoading={isPrinting}
+          disabled={!selectedProfile}
+        >
           {t("pos.print")}
         </Button>
       }

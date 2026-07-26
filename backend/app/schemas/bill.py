@@ -33,6 +33,7 @@ class BillItemOut(BaseModel):
     id: uuid.UUID
     item_id: uuid.UUID
     item_name_snapshot: str
+    item_name_ta_snapshot: str | None
     qty: float
     unit_price_paise: int
     discount_paise: int
@@ -89,6 +90,7 @@ class ResumeBillResponse(BaseModel):
 
 class PrintPayloadItem(BaseModel):
     name: str
+    name_ta: str | None
     qty: float
     unit_price_paise: int
     discount_paise: int

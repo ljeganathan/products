@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 
 import { cn } from "@/utils/cn";
 
@@ -12,14 +12,47 @@ export interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   className?: string;
+  /** Focuses this element instead of the first focusable child once the
+   * dialog opens — e.g. a destructive confirm dialog that should land on
+   * its primary action so Enter confirms immediately. */
+  initialFocusRef?: RefObject<HTMLElement | null>;
+  /** Focuses this element instead of Radix's default (the dialog's
+   * original trigger) once it closes — e.g. returning to a search box that
+   * had no real DOM "trigger" element in the first place. Must go through
+   * this hook rather than a plain effect/rAF in the caller: Radix restores
+   * focus on unmount itself, and a caller-side focus call can lose that
+   * race and get silently overwritten. */
+  finalFocusRef?: RefObject<HTMLElement | null>;
 }
 
-export function Modal({ open, onOpenChange, title, description, children, footer, className }: ModalProps) {
+export function Modal({
+  open,
+  onOpenChange,
+  title,
+  description,
+  children,
+  footer,
+  className,
+  initialFocusRef,
+  finalFocusRef,
+}: ModalProps) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-900/40 data-[state=open]:animate-in data-[state=open]:fade-in data-[state=closed]:animate-out data-[state=closed]:fade-out" />
         <Dialog.Content
+          onOpenAutoFocus={(e) => {
+            if (initialFocusRef?.current) {
+              e.preventDefault();
+              initialFocusRef.current.focus();
+            }
+          }}
+          onCloseAutoFocus={(e) => {
+            if (finalFocusRef?.current) {
+              e.preventDefault();
+              finalFocusRef.current.focus();
+            }
+          }}
           className={cn(
             "fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl",
             "bg-white p-6 shadow-card-hover focus:outline-none",

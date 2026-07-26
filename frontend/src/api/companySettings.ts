@@ -10,6 +10,7 @@ export interface CompanySettingsUpdate {
   fssai_no?: string | null;
   phone?: string | null;
   invoice_footer_text?: string | null;
+  show_tamil_item_names?: boolean;
 }
 
 export async function getCompanySettings(storeId?: string): Promise<CompanySettings> {

@@ -52,6 +52,16 @@ class ItemRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all()), total
 
+    async def list_all_for_tenant(
+        self, tenant_id: uuid.UUID, store_id: uuid.UUID | None
+    ) -> list[Item]:
+        stmt = select(Item).where(Item.tenant_id == tenant_id)
+        if store_id is not None:
+            stmt = stmt.where(Item.store_id == store_id)
+        stmt = stmt.order_by(Item.name_en)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def create(self, item: Item) -> Item:
         self.db.add(item)
         await self.db.flush()

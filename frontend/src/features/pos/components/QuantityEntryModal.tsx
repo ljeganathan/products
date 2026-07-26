@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/Button";
@@ -18,6 +19,10 @@ export interface QuantityEntryModalProps {
   currentCartQty: number;
   onOpenChange: (open: boolean) => void;
   onConfirm: (qty: number) => void;
+  /** Focused once the modal closes (confirm or cancel) — ready for the
+   * next scan/search immediately, since the search result button that
+   * opened this modal is already gone by the time it closes. */
+  finalFocusRef?: RefObject<HTMLElement | null>;
 }
 
 /** Opens whenever an item is selected via search, manual entry, or barcode
@@ -31,6 +36,7 @@ export function QuantityEntryModal({
   currentCartQty,
   onOpenChange,
   onConfirm,
+  finalFocusRef,
 }: QuantityEntryModalProps) {
   const { t } = useTranslation();
   const [qty, setQty] = useState("1");
@@ -64,6 +70,7 @@ export function QuantityEntryModal({
       onOpenChange={onOpenChange}
       title={item.name_en}
       description={item.name_ta}
+      finalFocusRef={finalFocusRef}
       footer={
         <Button onClick={handleConfirm} disabled={!isValid}>
           {t("pos.addToCart")}

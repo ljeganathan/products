@@ -25,6 +25,7 @@ export interface BillItemOut {
   id: string;
   item_id: string;
   item_name_snapshot: string;
+  item_name_ta_snapshot: string | null;
   qty: number;
   unit_price_paise: number;
   discount_paise: number;
@@ -73,6 +74,7 @@ export interface ResumeBillResponse {
 
 export interface PrintPayloadItem {
   name: string;
+  name_ta: string | null;
   qty: number;
   unit_price_paise: number;
   discount_paise: number;
@@ -92,6 +94,7 @@ export interface CompanySettings {
   phone: string | null;
   logo_url: string | null;
   invoice_footer_text: string | null;
+  show_tamil_item_names: boolean;
 }
 
 export interface BillPrintPayload {

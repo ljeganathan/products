@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { createBill, getBill, printBill, resumeBill } from "@/api/bills";
+import { getCompanySettings } from "@/api/companySettings";
 import { listPrinterProfiles } from "@/api/printerProfiles";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -41,6 +42,11 @@ export default function PosPage() {
   const stock = useStockLookup(storeId);
 
   const cart = useCartStore();
+  const companySettingsQuery = useQuery({
+    queryKey: ["company-settings"],
+    queryFn: () => getCompanySettings(),
+  });
+  const showTamilItemNames = companySettingsQuery.data?.show_tamil_item_names ?? false;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isHeldBillsOpen, setIsHeldBillsOpen] = useState(false);
@@ -68,6 +74,7 @@ export default function PosPage() {
 
   const searchRef = useRef<HTMLInputElement>(null);
   const manualRef = useRef<HTMLInputElement>(null);
+  const cancelConfirmYesRef = useRef<HTMLButtonElement>(null);
 
   // While any modal is open, keyboard focus is conceptually "inside" it —
   // global shortcuts (and accidental barcode-scanner input) must not also
@@ -250,7 +257,7 @@ export default function PosPage() {
 
   return (
     <div className="flex h-full flex-col gap-4 p-4 lg:flex-row">
-      <div className="flex min-w-0 flex-1 flex-col gap-4">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <ItemSearchBar ref={searchRef} catalog={catalog} onSelect={promptAddItem} />
           <ManualEntryInput ref={manualRef} catalog={catalog} onFound={promptAddItem} />
@@ -269,10 +276,15 @@ export default function PosPage() {
           />
         </div>
 
-        <div className="flex items-center justify-between">
-          <Button variant="ghost" size="sm" onClick={() => setIsSavedSearchOpen(true)}>
-            {t("pos.savedBillSearch")}
-          </Button>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setIsSavedSearchOpen(true)}>
+              {t("pos.savedBillSearch")}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setIsHeldBillsOpen(true)}>
+              {t("pos.heldBillsTitle")}
+            </Button>
+          </div>
           <Button variant="ghost" size="sm" onClick={() => setIsHelpOpen(true)}>
             {t("pos.helpButton")} (F1)
           </Button>
@@ -282,6 +294,7 @@ export default function PosPage() {
           lines={cart.lines}
           lineResults={totals.lines}
           selectedIndex={cart.selectedIndex}
+          showTamilItemNames={showTamilItemNames}
           onSelect={cart.selectLine}
           onQtyChange={cart.setQty}
           onAdjustQty={cart.adjustQty}
@@ -329,6 +342,7 @@ export default function PosPage() {
         onOpenChange={(open) => !open && setViewingBillId(null)}
         bill={viewingBillQuery.data ?? null}
         isLoading={viewingBillQuery.isLoading}
+        showTamilItemNames={showTamilItemNames}
       />
       <PrintPreviewModal
         open={printPayload !== null}
@@ -342,6 +356,7 @@ export default function PosPage() {
         currentCartQty={pendingItemCartQty}
         onOpenChange={(open) => !open && setPendingItem(null)}
         onConfirm={confirmAddItem}
+        finalFocusRef={searchRef}
       />
 
       <DiscountModal
@@ -368,12 +383,14 @@ export default function PosPage() {
         onOpenChange={setIsCancelConfirmOpen}
         title={t("pos.cancelConfirmTitle")}
         description={t("pos.cancelConfirmDescription")}
+        initialFocusRef={cancelConfirmYesRef}
         footer={
           <>
             <Button variant="ghost" onClick={() => setIsCancelConfirmOpen(false)}>
               {t("common.cancel")}
             </Button>
             <Button
+              ref={cancelConfirmYesRef}
               variant="danger"
               onClick={() => {
                 cart.clear();

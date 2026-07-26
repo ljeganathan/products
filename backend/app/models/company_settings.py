@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import Boolean, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,3 +29,10 @@ class CompanySettings(Base, UUIDPKMixin, TimestampMixin):
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     invoice_footer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # When on, POS billing/receipts show/print the item's Tamil name instead
+    # of English — thermal printers raster it as an image (no ESC/POS text
+    # glyph support for Tamil); dot-matrix has no graphics mode and always
+    # stays English regardless of this setting (see utils/dotmatrix.ts).
+    show_tamil_item_names: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
