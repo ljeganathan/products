@@ -1,0 +1,120 @@
+# This is the workflow that actually runs on GitHub for StoreMate TN — it
+# lives at the products monorepo's root (required: Actions only reads
+# .github/workflows/ from a repo's root) and is path-filtered to only
+# trigger on changes under storemate-tn/. Mirrors the test jobs documented
+# in storemate-tn/.github/workflows/ci.yml (kept there as the per-product
+# reference) plus the deploy step, adapted for the monorepo layout.
+name: StoreMate TN — CI & Deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["storemate-tn/**"]
+  pull_request:
+    paths: ["storemate-tn/**"]
+
+defaults:
+  run:
+    working-directory: storemate-tn
+
+jobs:
+  backend:
+    name: Backend (lint, type-check, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: storemate-tn/backend
+    services:
+      db:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: storemate
+          POSTGRES_PASSWORD: storemate
+          POSTGRES_DB: storemate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U storemate -d storemate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://storemate:storemate@localhost:5432/storemate
+      JWT_SECRET: ci-test-secret
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: storemate-tn/backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Mypy type-check
+        run: mypy app --ignore-missing-imports
+        continue-on-error: true
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Pytest
+        run: pytest
+
+  frontend:
+    name: Frontend (lint, type-check, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: storemate-tn/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: storemate-tn/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Type-check
+        run: npx tsc -b --noEmit
+
+      - name: Vitest unit tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  deploy:
+    name: Deploy to Hostinger VPS
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Gates this on manual approval — configure a required reviewer on the
+    # "production" environment under repo Settings → Environments so this
+    # pauses for a human click before ever touching the live VPS. See
+    # storemate-tn/docs/DEPLOYMENT.md §7 for the one-time setup, and §4b
+    # for why TRAEFIK_MODE=1 is used (VPS shares ports 80/443 with an
+    # existing n8n/Traefik stack).
+    environment: production
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.STOREMATE_DEPLOY_HOST }}
+          username: ${{ secrets.STOREMATE_DEPLOY_USER }}
+          key: ${{ secrets.STOREMATE_DEPLOY_SSH_KEY }}
+          script: |
+            cd ${{ secrets.STOREMATE_DEPLOY_PATH }}
+            TRAEFIK_MODE=1 bash scripts/deploy.sh
