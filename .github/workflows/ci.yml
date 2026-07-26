@@ -1,3 +1,13 @@
+# NOTE: this file only actually runs if storemate-tn is checked out as its
+# own top-level GitHub repo — GitHub Actions only reads workflows from a
+# repo's root .github/workflows/. Today this code is instead synced into
+# github.com/ljeganathan/products (via scripts/push_to_products.*) as a
+# storemate-tn/ subtree, where a nested .github/workflows/ci.yml here is
+# invisible to Actions. The `backend`/`frontend` test jobs below are kept
+# here as the authoritative reference for what CI should run; the `deploy`
+# job's actual, currently-triggering counterpart lives in the products
+# monorepo at .github/workflows/storemate-tn-deploy.yml (path-filtered to
+# storemate-tn/**) — keep both in sync if either changes.
 name: CI
 
 on:
@@ -104,4 +114,4 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             cd ${{ secrets.DEPLOY_PATH }}
-            bash scripts/deploy.sh
+            TRAEFIK_MODE=1 bash scripts/deploy.sh

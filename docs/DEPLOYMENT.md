@@ -93,6 +93,45 @@ the `certbot` service's `certbot renew` loop (already wired into the
 compose file) handles auto-renewal every 12 hours from this point forward,
 so this standalone step is a **one-time bootstrap only**, never repeated.
 
+## 4b. Alternative: deploying alongside an existing Traefik-fronted stack
+
+Skip this section (and step 4 above) if StoreMate TN owns the whole VPS.
+Use this instead if another stack (e.g. n8n's own `docker-compose.yml`,
+using the standard n8n "Traefik" template) already has a Traefik container
+bound to host ports 80/443 — you cannot also bind nginx+certbot to those
+same ports, and you don't need to: the existing Traefik already has a
+Let's Encrypt certresolver configured, and it will issue a certificate for
+StoreMate TN's domain too, automatically, the first time it's requested —
+no separate certbot/webroot bootstrap step at all.
+
+1. Confirm the existing Traefik's setup — find its compose file (e.g.
+   `/docker/n8n/docker-compose.yml`) and note two things from it:
+   - The Docker network name Traefik is on (Compose's default network
+     naming is `<project-dir-name>_default`, e.g. `n8n_default` —
+     `docker network ls` confirms it).
+   - The `certresolver` name from its `--certificatesresolvers.<name>.acme...`
+     command flags (e.g. `mytlschallenge`).
+2. Point `DOMAIN`'s DNS A records (`@` and `www`) at the VPS IP, same as
+   step 1 above — this is still required regardless of which nginx/Traefik
+   path you use.
+3. In `.env`, set `TRAEFIK_NETWORK` and `TRAEFIK_CERT_RESOLVER` to the
+   values found in step 1.
+4. Skip straight to step 5 below, but only start `db`, `backend`, and
+   `frontend` — passing those service names explicitly means Compose never
+   creates `nginx`/`certbot` at all, so there's no port collision:
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+     -f docker-compose.traefik.yml up -d --build db backend frontend
+   ```
+   `frontend`'s own nginx (`frontend/nginx.conf`) already proxies `/api/`
+   and `/media/` to the backend itself in this topology — it's the sole
+   public origin behind Traefik, unlike the standalone-nginx path where a
+   separate proxy tier does that job.
+5. The existing Traefik discovers the new `frontend` container via its
+   Docker-label provider (labels come from `docker-compose.traefik.yml`)
+   and requests+attaches the TLS cert on the first real request to the
+   domain — give it a few seconds after `docker compose up` before testing.
+
 ## 5. First launch
 
 ```bash
@@ -132,27 +171,42 @@ rule, since that rule targets scripts a Windows developer runs locally).
 From Windows you have two options:
 - **Automatic**: merge to `main` → CI's `deploy` job (§7) SSHes in and runs
   it for you.
-- **Manual**: `ssh deploy@storematetn.in "cd storemate-tn && bash scripts/deploy.sh"`
-  from PowerShell, or open a normal SSH session via `ssh deploy@<ip>` and
-  run it there directly.
+- **Manual**: `ssh root@<vps-ip> "cd /docker/products/storemate-tn && TRAEFIK_MODE=1 bash scripts/deploy.sh"`
+  from PowerShell (adjust the path/user/`TRAEFIK_MODE` to match your actual
+  setup per §4b), or open a normal SSH session and run it there directly.
 
 ## 7. CI/CD — gated deploy job
 
-`.github/workflows/ci.yml` has a `deploy` job that runs after `backend` and
+The workflow that actually runs on GitHub lives at
+`ljeganathan/products/.github/workflows/storemate-tn-deploy.yml` (path-filtered
+to `storemate-tn/**`), **not** `storemate-tn/.github/workflows/ci.yml` —
+GitHub Actions only reads workflows from a repo's root, and this code only
+exists on GitHub as a subtree inside the `products` monorepo (synced via
+`scripts/push_to_products.*`). The local `ci.yml` is kept as the
+authoritative reference for what the test jobs should run; keep both in
+sync if either changes. Its `deploy` job runs after `backend` and
 `frontend` both pass, only on a push to `main`, and only after a manual
-approval (via a GitHub **environment** named `production`). One-time setup:
+approval (via a GitHub **environment** named `production`). One-time setup
+(on the `products` repo, not `storemate-tn`):
 
 1. Repo Settings → Environments → New environment → `production`.
 2. Add yourself (or the team) as a **required reviewer** — this is what
    makes every deploy pause for a manual click, appropriate for a paid
    customer-facing app.
-3. Add these secrets to the `production` environment:
-   - `DEPLOY_HOST` — the VPS IP or hostname
-   - `DEPLOY_USER` — `deploy`
-   - `DEPLOY_SSH_KEY` — a private key whose public half is in
-     `~deploy/.ssh/authorized_keys` on the VPS (generate a dedicated
+3. Add these secrets to the `production` environment (prefixed
+   `STOREMATE_` since other products may share this monorepo/environment
+   later):
+   - `STOREMATE_DEPLOY_HOST` — the VPS IP or hostname
+   - `STOREMATE_DEPLOY_USER` — `root` on the current VPS (it only has a
+     root account; a dedicated non-root `deploy` user is the more
+     conventional setup elsewhere, per step 1, but wasn't set up on this
+     box before StoreMate TN was added to it)
+   - `STOREMATE_DEPLOY_SSH_KEY` — a private key whose public half is
+     authorized on the VPS (generate a dedicated
      deploy-only keypair, don't reuse a personal one)
-   - `DEPLOY_PATH` — `/home/deploy/storemate-tn`
+   - `STOREMATE_DEPLOY_PATH` — `/docker/products/storemate-tn` on the
+     current VPS (a clone of the `products` monorepo, following that box's
+     existing `/docker/<stack>` convention — see §4b)
 
 Once configured: merging to `main` runs tests, then waits for approval,
 then SSHes in and runs `scripts/deploy.sh`.
