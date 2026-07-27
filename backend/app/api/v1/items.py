@@ -181,7 +181,9 @@ async def export_items(
 ) -> Response:
     assert current_user.tenant_id is not None
     effective_store_id = store_id or current_user.store_id
-    csv_text = await export_items_csv(db, tenant_id=current_user.tenant_id, store_id=effective_store_id)
+    csv_text = await export_items_csv(
+        db, tenant_id=current_user.tenant_id, store_id=effective_store_id
+    )
     return Response(
         content=csv_text,
         media_type="text/csv",
