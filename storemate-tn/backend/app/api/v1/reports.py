@@ -71,6 +71,7 @@ async def get_sales_report(
         total_paise=report["total_paise"],
         bill_count=report["bill_count"],
         avg_bill_paise=report["avg_bill_paise"],
+        profit_paise=report["profit_paise"],
         daily=[SalesReportDayOut(**d) for d in report["daily"]],
     )
 

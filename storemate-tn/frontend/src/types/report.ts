@@ -11,6 +11,7 @@ export interface SalesReport {
   total_paise: number;
   bill_count: number;
   avg_bill_paise: number;
+  profit_paise: number;
   daily: SalesReportDay[];
 }
 

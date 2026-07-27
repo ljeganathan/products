@@ -69,6 +69,27 @@ async def test_sales_report_totals_match_created_bills(
     assert body["daily"][0]["bill_count"] == 2
 
 
+async def test_sales_report_profit_uses_item_cost_price(
+    client: AsyncClient, pro_tenant: dict
+) -> None:
+    tokens = await login(client, "admin@tenantpro.dev", "Admin@123")
+    headers = auth_headers(tokens["access_token"])
+    # selling_price_paise=10_000, cost_price_paise defaults to selling - 2_000 = 8_000
+    item_id = await _create_item(client, headers)
+    await _create_bill(client, headers, item_id, 2)
+    await _create_bill(client, headers, item_id, 1)
+
+    today = date.today().isoformat()
+    resp = await client.get(
+        "/api/v1/reports/sales",
+        params={"date_from": today, "date_to": today},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    # profit per unit = 10_000 - 8_000 = 2_000 paise; qty 2 + 1 = 3 units sold
+    assert resp.json()["profit_paise"] == 3 * 2_000
+
+
 async def test_gst_summary_matches_persisted_bill_columns(
     client: AsyncClient, pro_tenant: dict
 ) -> None:
