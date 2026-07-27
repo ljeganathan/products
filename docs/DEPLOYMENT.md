@@ -211,6 +211,9 @@ approval (via a GitHub **environment** named `production`). One-time setup
 Once configured: merging to `main` runs tests, then waits for approval,
 then SSHes in and runs `scripts/deploy.sh`.
 
+The `production` environment, its 4 secrets, and the required reviewer are
+confirmed set up on `ljeganathan/products` as of 2026-07-27.
+
 ## 8. Backups (`scripts/backup_db.sh`)
 
 ```bash
