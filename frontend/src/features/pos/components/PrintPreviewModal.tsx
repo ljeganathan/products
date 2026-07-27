@@ -52,6 +52,7 @@ export function PrintPreviewModal({ open, onOpenChange, payload }: PrintPreviewM
     try {
       await dispatchPrint(selectedProfile, payload);
       toast("success", t("pos.printSuccessTitle"));
+      onOpenChange(false);
     } catch (err) {
       toast(
         "danger",

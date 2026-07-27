@@ -229,4 +229,7 @@ async def export_items_csv(
             ]
         )
 
-    return buffer.getvalue()
+    # UTF-8 BOM: without it, Excel/Windows CSV viewers assume the system
+    # codepage and render Tamil (or any non-ASCII) text as mojibake even
+    # though the bytes are valid UTF-8.
+    return "﻿" + buffer.getvalue()

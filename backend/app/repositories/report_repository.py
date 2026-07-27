@@ -5,8 +5,9 @@ from typing import Any, TypedDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.bill import Bill
+from app.models.bill import Bill, BillItem
 from app.models.enums import BillStatus, PaymentMode
+from app.models.item import Item
 from app.models.user import User
 
 
@@ -20,6 +21,7 @@ class SalesReport(TypedDict):
     total_paise: int
     bill_count: int
     avg_bill_paise: int
+    profit_paise: int
     daily: list[DailyPoint]
 
 
@@ -108,12 +110,43 @@ class ReportRepository:
             for bucket, total, count in daily_result.tuples().all()
         ]
 
+        profit_paise = await self._get_profit_paise(
+            tenant_id, store_id, cashier_id, date_from, date_to
+        )
+
         return {
             "total_paise": int(total_paise),
             "bill_count": int(bill_count),
             "avg_bill_paise": round(total_paise / bill_count) if bill_count else 0,
+            "profit_paise": profit_paise,
             "daily": daily,
         }
+
+    async def _get_profit_paise(
+        self,
+        tenant_id: uuid.UUID,
+        store_id: uuid.UUID | None,
+        cashier_id: uuid.UUID | None,
+        date_from: date,
+        date_to: date,
+    ) -> int:
+        """Profit = per-line revenue net of discount (pre-tax) minus cost,
+        using each item's *current* cost_price_paise — bill_items has no
+        cost snapshot at sale time, so this is an approximation that shifts
+        if an item's cost is edited after past sales."""
+        filters = self._base_filters(tenant_id, store_id, cashier_id, date_from, date_to)
+        revenue_expr = (
+            func.round(BillItem.qty * BillItem.unit_price_paise) - BillItem.discount_paise
+        )
+        cost_expr = func.round(BillItem.qty * Item.cost_price_paise)
+        profit_paise = await self.db.scalar(
+            select(func.coalesce(func.sum(revenue_expr - cost_expr), 0))
+            .select_from(BillItem)
+            .join(Bill, Bill.id == BillItem.bill_id)
+            .join(Item, Item.id == BillItem.item_id)
+            .where(*filters)
+        )
+        return int(profit_paise)
 
     async def get_gst_summary(
         self,

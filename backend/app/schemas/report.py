@@ -16,6 +16,7 @@ class SalesReportOut(BaseModel):
     total_paise: int
     bill_count: int
     avg_bill_paise: int
+    profit_paise: int
     daily: list[SalesReportDayOut]
 
 

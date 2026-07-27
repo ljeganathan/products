@@ -85,13 +85,14 @@ export default function ReportsPage() {
         <DateRangePicker value={range} onChange={setRange} />
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatTile label={t("dashboard.sales")} value={formatPaise(sales?.total_paise ?? 0)} />
         <StatTile label={t("dashboard.bills")} value={String(sales?.bill_count ?? 0)} />
         <StatTile
           label={t("dashboard.avgBillValue")}
           value={formatPaise(sales?.avg_bill_paise ?? 0)}
         />
+        <StatTile label={t("reports.profit")} value={formatPaise(sales?.profit_paise ?? 0)} />
         <StatTile label={t("reports.cgstSgst")} value={formatPaise((gst?.cgst_paise ?? 0) + (gst?.sgst_paise ?? 0))} />
       </div>
 

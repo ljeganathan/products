@@ -115,6 +115,7 @@
     "rangeClampedNotice": "Your plan only shows today's report — upgrade to Pro for a full date range.",
     "upgradeTitle": "Date-range reports are a Pro/Pro Max feature",
     "upgradeBody": "Your plan only shows today's report. Upgrade to Pro or Pro Max to pick a custom date range and export CSV.",
+    "profit": "Profit",
     "cgstSgst": "CGST + SGST",
     "gstSummaryTitle": "GST summary",
     "subtotal": "Subtotal",
