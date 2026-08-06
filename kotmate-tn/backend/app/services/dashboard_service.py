@@ -1,0 +1,114 @@
+import uuid
+from datetime import date, timedelta
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import Bill, BillItem, TenantLocation
+from app.schemas.dashboard import (
+    DashboardSummaryResponse,
+    HourlySalesPoint,
+    LocationComparisonRow,
+    MultiLocationComparisonResponse,
+    TopItemRow,
+)
+
+# India-only product (CLAUDE.md: Tamil Nadu) — hardcoding IST rather than adding a
+# per-tenant timezone setting nobody has asked for, so "hourly trend" lines up with an
+# actual lunch/dinner rush instead of a UTC-shifted one.
+_IST = "Asia/Kolkata"
+
+
+def _day_filters(tenant_id: uuid.UUID, report_date: date, location_id: uuid.UUID | None) -> list:
+    filters = [
+        Bill.tenant_id == tenant_id,
+        Bill.status == "finalized",
+        Bill.created_at >= report_date,
+        Bill.created_at < report_date + timedelta(days=1),
+    ]
+    if location_id is not None:
+        filters.append(Bill.location_id == location_id)
+    return filters
+
+
+async def dashboard_summary(
+    session: AsyncSession, tenant_id: uuid.UUID, report_date: date, location_id: uuid.UUID | None
+) -> DashboardSummaryResponse:
+    filters = _day_filters(tenant_id, report_date, location_id)
+
+    totals = (
+        await session.execute(
+            select(func.count(Bill.id), func.coalesce(func.sum(Bill.grand_total), 0)).where(*filters)
+        )
+    ).one()
+    bill_count, today_sales = totals
+    average_bill_value = round(float(today_sales) / bill_count, 2) if bill_count else 0.0
+
+    top_item_rows = (
+        await session.execute(
+            select(BillItem.item_id, BillItem.name_en_snapshot, func.sum(BillItem.quantity))
+            .join(Bill, Bill.id == BillItem.bill_id)
+            .where(*filters)
+            .group_by(BillItem.item_id, BillItem.name_en_snapshot)
+            .order_by(func.sum(BillItem.line_total).desc())
+            .limit(5)
+        )
+    ).all()
+    top_items = [
+        TopItemRow(item_id=item_id, name_en=name_en, quantity_sold=int(qty))
+        for item_id, name_en, qty in top_item_rows
+    ]
+
+    hour_expr = func.extract("hour", func.timezone(_IST, Bill.created_at))
+    hourly_rows = (
+        await session.execute(
+            select(hour_expr, func.sum(Bill.grand_total)).where(*filters).group_by(hour_expr)
+        )
+    ).all()
+    sales_by_hour = {int(hour): float(sales) for hour, sales in hourly_rows}
+    hourly_trend = [HourlySalesPoint(hour=h, sales=sales_by_hour.get(h, 0.0)) for h in range(24)]
+
+    return DashboardSummaryResponse(
+        report_date=report_date,
+        today_sales=float(today_sales),
+        bill_count=bill_count,
+        average_bill_value=average_bill_value,
+        top_items=top_items,
+        hourly_trend=hourly_trend,
+    )
+
+
+async def multi_location_comparison(
+    session: AsyncSession, tenant_id: uuid.UUID, date_from: date, date_to: date
+) -> MultiLocationComparisonResponse:
+    """Pro Max only (CLAUDE.md §6) — enforced by the caller (route), not here; this
+    function just computes across every location, deliberately ignoring any single
+    `location_id` filter since the entire point is comparing them.
+    """
+    rows = (
+        await session.execute(
+            select(
+                TenantLocation.id,
+                TenantLocation.name,
+                func.coalesce(func.sum(Bill.grand_total), 0),
+                func.count(Bill.id),
+            )
+            .join(Bill, Bill.location_id == TenantLocation.id)
+            .where(
+                Bill.tenant_id == tenant_id,
+                Bill.status == "finalized",
+                Bill.created_at >= date_from,
+                Bill.created_at < date_to + timedelta(days=1),
+            )
+            .group_by(TenantLocation.id, TenantLocation.name)
+            .order_by(func.sum(Bill.grand_total).desc())
+        )
+    ).all()
+    return MultiLocationComparisonResponse(
+        rows=[
+            LocationComparisonRow(
+                location_id=loc_id, location_name=name, sales=float(sales), bill_count=count
+            )
+            for loc_id, name, sales, count in rows
+        ]
+    )

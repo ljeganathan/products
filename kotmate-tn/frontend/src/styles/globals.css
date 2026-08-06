@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 100 20% 95%;
+  --foreground: 160 25% 12%;
+  --border: 100 15% 85%;
+  --accent: 158 60% 30%;
+  --accent-foreground: 0 0% 100%;
+  --radius: 0.625rem;
+  /* CLAUDE.md §9 saturated category palette — turmeric gold + chili red, used
+     sparingly for branding accents (e.g. login) alongside the banana-leaf --accent. */
+  --gold: 40 90% 40%;
+  --chili: 4 60% 42%;
+  /* Dense-POS surface tiers + soft tints (Phase 07 POS prototype) — surfaces step from
+     card-white up through two muted greens for headers/rails/badges without leaning on
+     flat gray, matching the "dense + colorful, not minimalist" brief in CLAUDE.md §9. */
+  --surface: 0 0% 100%;
+  --surface-2: 100 20% 91%;
+  --surface-3: 95 18% 85%;
+  --ink-soft: 160 15% 35%;
+  --ink-faint: 160 10% 55%;
+  --veg: 122 40% 32%;
+  --accent-soft: 152 45% 91%;
+  --gold-soft: 42 75% 91%;
+  --chili-soft: 4 55% 93%;
+}
+
+.dark {
+  --background: 160 22% 7%;
+  --foreground: 100 15% 92%;
+  --border: 150 15% 20%;
+  --accent: 155 45% 45%;
+  --accent-foreground: 160 30% 6%;
+  --gold: 40 85% 55%;
+  --chili: 4 70% 60%;
+  --surface: 160 20% 10%;
+  --surface-2: 155 18% 15%;
+  --surface-3: 150 16% 20%;
+  --ink-soft: 100 12% 68%;
+  --ink-faint: 100 8% 48%;
+  --veg: 122 35% 55%;
+  --accent-soft: 155 30% 17%;
+  --gold-soft: 40 40% 18%;
+  --chili-soft: 4 35% 20%;
+}
+
+body {
+  @apply bg-background text-foreground;
+}

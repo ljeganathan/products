@@ -1,0 +1,33 @@
+# --- Node / frontend ---------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+*.local
+*.tsbuildinfo
+
+# --- Python / backend ----------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# --- Env files -------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- Editors / OS ---------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Logs -------------------------------------------------------------------
+*.log
+npm-debug.log*
+
+# --- Uploads (local disk storage, see CLAUDE.md §2) -------------------------
+backend/uploads/

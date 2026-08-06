@@ -1,0 +1,26 @@
+{
+  "app": {
+    "name": "KOTMate TN",
+    "tagline": "Hotel & Restaurant KOT and Billing"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "pos": "POS",
+    "kot": "KOT",
+    "items": "Items",
+    "waiters": "Waiters",
+    "reports": "Reports",
+    "settings": "Settings"
+  },
+  "shell": {
+    "placeholder": "Scaffold ready — phase modules land here."
+  },
+  "auth": {
+    "userId": "User ID",
+    "password": "Password",
+    "signIn": "Sign In",
+    "signingIn": "Signing in…",
+    "invalidCredentials": "Invalid User ID or password.",
+    "genericError": "Something went wrong. Please try again."
+  }
+}
