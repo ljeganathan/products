@@ -1,12 +1,3 @@
-# NOTE: this file only actually runs if kotmate-tn is checked out as its own
-# top-level GitHub repo — GitHub Actions only reads workflows from a repo's
-# root .github/workflows/. This code now lives inside github.com/ljeganathan/
-# products as a kotmate-tn/ subfolder, where a nested .github/workflows/ci.yml
-# here is invisible to Actions. These `backend`/`frontend` jobs are kept here
-# as the authoritative reference for what CI should run; the actual,
-# currently-triggering counterpart lives in the products monorepo at
-# .github/workflows/kotmate-tn-ci.yml (path-filtered to kotmate-tn/**) — keep
-# both in sync if either changes.
 name: CI
 
 on:

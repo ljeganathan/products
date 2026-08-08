@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { type FormEvent, useState } from "react";
-import { Link } from "react-router-dom";
 
 import {
   type DiscountRule,
@@ -104,22 +103,27 @@ function DiscountRuleFormModal({
             />
           </div>
 
-          {!editingRule && (
-            <div className="flex flex-col gap-1.5">
-              <label className={labelClass}>Type</label>
-              <select
-                className={inputClass}
-                value={form.type}
-                onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as DiscountRuleFormState["type"] }))}
-              >
-                {allowedTypes.map((t) => (
-                  <option key={t} value={t}>
-                    {TYPE_LABELS[t] ?? t}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div className="flex flex-col gap-1.5">
+            <label className={labelClass}>Type</label>
+            <select
+              disabled={!!editingRule}
+              className={`${inputClass} disabled:opacity-60`}
+              value={form.type}
+              onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as DiscountRuleFormState["type"] }))}
+            >
+              {(editingRule && !allowedTypes.includes(editingRule.type)
+                ? [editingRule.type, ...allowedTypes]
+                : allowedTypes
+              ).map((t) => (
+                <option key={t} value={t}>
+                  {TYPE_LABELS[t] ?? t}
+                </option>
+              ))}
+            </select>
+            {editingRule && (
+              <p className="text-[11px] text-foreground/50">Type can't be changed after creation.</p>
+            )}
+          </div>
 
           {form.type !== "item_level" && (
             <div className="flex flex-col gap-1.5">
@@ -196,9 +200,6 @@ export function DiscountRulesPage() {
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <Link to="/dashboard" className="text-xs text-foreground/50 hover:underline">
-            ← Dashboard
-          </Link>
           <h1 className="mt-1 text-xl font-bold">Discount Rules</h1>
           <p className="text-sm text-foreground/60">
             {allowedTypes.length === 1

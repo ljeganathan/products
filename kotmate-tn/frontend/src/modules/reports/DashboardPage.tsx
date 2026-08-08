@@ -11,8 +11,9 @@ import {
 } from "recharts";
 
 import { formatINR } from "@/lib/utils";
+import { listLocations } from "@/modules/admin/locationsApi";
 import { me } from "@/modules/auth/authApi";
-import { getDashboardSummary, getMultiLocationComparison } from "@/modules/reports/dashboardApi";
+import { getDashboardSummary, getLowStockItems, getMultiLocationComparison } from "@/modules/reports/dashboardApi";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -26,57 +27,78 @@ function daysAgoIso(days: number): string {
 
 export function DashboardPage() {
   const { data: meData } = useQuery({ queryKey: ["me"], queryFn: me });
+  const { data: locations = [] } = useQuery({ queryKey: ["tenant-locations"], queryFn: listLocations });
   const reportsLevel = (meData?.features?.reports as string | undefined) ?? "basic";
   const hasCharts = reportsLevel !== "basic";
   const hasMultiLocation = reportsLevel === "charts_csv_pdf_excel_multilocation";
 
+  const [locationId, setLocationId] = useState<string>("");
+
   const { data, isLoading } = useQuery({
-    queryKey: ["dashboard-summary"],
-    queryFn: () => getDashboardSummary(),
+    queryKey: ["dashboard-summary", locationId],
+    queryFn: () => getDashboardSummary({ location_id: locationId || undefined }),
   });
 
   return (
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
-      <div className="mb-6">
-        <h1 className="text-xl font-bold">Dashboard</h1>
-        <p className="text-sm text-foreground/60">
-          {data ? new Date(data.report_date).toLocaleDateString("en-IN", { dateStyle: "full" }) : "Today"}
-        </p>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold">Dashboard</h1>
+          <p className="text-sm text-foreground/60">
+            {data ? new Date(data.report_date).toLocaleDateString("en-IN", { dateStyle: "full" }) : "Today"}
+          </p>
+        </div>
+        {locations.length > 1 && (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-foreground/70">Location</label>
+            <select
+              className="min-h-9 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-accent"
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+            >
+              <option value="">All locations</option>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {isLoading && <p className="text-sm text-foreground/60">Loading…</p>}
 
       {data && (
         <>
-          <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3">
             <KpiCard label="Today's Sales" value={formatINR(data.today_sales)} />
             <KpiCard label="Bill Count" value={String(data.bill_count)} />
             <KpiCard label="Average Bill Value" value={formatINR(data.average_bill_value)} />
-            <KpiCard
-              label="Top Item"
-              value={data.top_items[0]?.name_en ?? "—"}
-              sub={data.top_items[0] ? `${data.top_items[0].quantity_sold} sold` : undefined}
-            />
           </div>
 
-          <div className="mb-6 rounded-lg border border-border bg-surface p-4">
-            <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-foreground/60">
-              Top Selling Items
-            </h2>
-            {data.top_items.length === 0 && (
-              <p className="text-sm text-foreground/60">No sales yet today.</p>
-            )}
-            <ul className="flex flex-col gap-1.5">
-              {data.top_items.map((item, i) => (
-                <li key={item.item_id} className="flex items-center justify-between text-sm">
-                  <span>
-                    <span className="mr-2 text-foreground/40">#{i + 1}</span>
-                    {item.name_en}
-                  </span>
-                  <span className="tabular-nums font-semibold">{item.quantity_sold} sold</span>
-                </li>
-              ))}
-            </ul>
+          <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="rounded-lg border border-border bg-surface p-4">
+              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-foreground/60">
+                Top Selling Items
+              </h2>
+              {data.top_items.length === 0 && (
+                <p className="text-sm text-foreground/60">No sales yet today.</p>
+              )}
+              <ul className="flex flex-col gap-1.5">
+                {data.top_items.map((item, i) => (
+                  <li key={item.item_id} className="flex items-center justify-between text-sm">
+                    <span>
+                      <span className="mr-2 text-foreground/40">#{i + 1}</span>
+                      {item.name_en}
+                    </span>
+                    <span className="tabular-nums font-semibold">{item.quantity_sold} sold</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <LowStockSection />
           </div>
 
           {hasCharts ? (
@@ -121,6 +143,44 @@ function KpiCard({ label, value, sub }: { label: string; value: string; sub?: st
       <p className="text-xs font-semibold uppercase tracking-wide text-foreground/50">{label}</p>
       <p className="mt-1 truncate text-2xl font-extrabold tabular-nums">{value}</p>
       {sub && <p className="text-xs text-foreground/50">{sub}</p>}
+    </div>
+  );
+}
+
+function LowStockSection() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["dashboard-low-stock"],
+    queryFn: () => getLowStockItems(),
+  });
+
+  return (
+    <div className="rounded-lg border border-border bg-surface p-4">
+      <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-foreground/60">Low Stock Items</h2>
+      {isLoading && <p className="text-sm text-foreground/60">Loading…</p>}
+      {data && data.rows.length === 0 && (
+        <p className="text-sm text-foreground/60">
+          No tracked items are running low — nothing at 5 or fewer remaining.
+        </p>
+      )}
+      {data && data.rows.length > 0 && (
+        <ul className="flex flex-col gap-1.5">
+          {data.rows.map((item) => (
+            <li key={item.item_id} className="flex items-center justify-between text-sm">
+              <span>
+                {item.name_en}
+                {item.name_ta && <span className="ml-1.5 text-foreground/50">/ {item.name_ta}</span>}
+              </span>
+              <span
+                className={`tabular-nums font-semibold ${
+                  item.available_qty === 0 ? "text-chili" : "text-gold"
+                }`}
+              >
+                {item.available_qty === 0 ? "Out of stock" : `${item.available_qty} left`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

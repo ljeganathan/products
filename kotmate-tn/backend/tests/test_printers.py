@@ -35,6 +35,50 @@ async def test_create_and_list_printer(client: AsyncClient, tenant_admin: dict):
     assert any(p["id"] == body["id"] for p in list_resp.json())
 
 
+async def test_create_wifi_and_bluetooth_printer_with_paper_width(
+    client: AsyncClient, tenant_admin: dict
+):
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+
+    wifi_resp = await client.post(
+        "/api/v1/printers",
+        json={
+            "location_id": location_id,
+            "name": "WiFi Kitchen Printer",
+            "target": "kot",
+            "printer_type": "thermal",
+            "connection_type": "wifi",
+            "connection_details": {"ip_address": "192.168.1.50", "port": "9100"},
+            "paper_width_mm": 80,
+        },
+        headers=headers,
+    )
+    assert wifi_resp.status_code == 201, wifi_resp.text
+    wifi_body = wifi_resp.json()
+    assert wifi_body["connection_type"] == "wifi"
+    assert wifi_body["paper_width_mm"] == 80
+    assert wifi_body["connection_details"]["ip_address"] == "192.168.1.50"
+
+    bt_resp = await client.post(
+        "/api/v1/printers",
+        json={
+            "location_id": location_id,
+            "name": "Bluetooth Bill Printer",
+            "target": "bill",
+            "printer_type": "thermal",
+            "connection_type": "bluetooth",
+            "connection_details": {"device_name": "BT-Printer-58"},
+            "paper_width_mm": 58,
+        },
+        headers=headers,
+    )
+    assert bt_resp.status_code == 201, bt_resp.text
+    bt_body = bt_resp.json()
+    assert bt_body["connection_type"] == "bluetooth"
+    assert bt_body["paper_width_mm"] == 58
+
+
 async def test_printer_location_must_belong_to_tenant(client: AsyncClient, tenant_admin: dict):
     resp = await client.post(
         "/api/v1/printers",

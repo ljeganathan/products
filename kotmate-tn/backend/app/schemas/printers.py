@@ -13,6 +13,7 @@ class PrinterCreateRequest(BaseModel):
     printer_type: str
     connection_type: str
     connection_details: dict = Field(default_factory=dict)
+    paper_width_mm: int | None = Field(default=None, gt=0)
 
     @field_validator("target")
     @classmethod
@@ -43,6 +44,7 @@ class PrinterUpdateRequest(BaseModel):
     printer_type: str | None = None
     connection_type: str | None = None
     connection_details: dict | None = None
+    paper_width_mm: int | None = Field(default=None, gt=0)
     is_active: bool | None = None
 
     @field_validator("target")
@@ -77,5 +79,6 @@ class PrinterResponse(BaseModel):
     printer_type: str
     connection_type: str
     connection_details: dict
+    paper_width_mm: int | None
     is_active: bool
     created_at: datetime

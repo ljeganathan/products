@@ -29,6 +29,17 @@ class DashboardSummaryResponse(BaseModel):
     hourly_trend: list[HourlySalesPoint]
 
 
+class LowStockItemRow(BaseModel):
+    item_id: uuid.UUID
+    name_en: str
+    name_ta: str | None
+    available_qty: int
+
+
+class LowStockItemsResponse(BaseModel):
+    rows: list[LowStockItemRow]
+
+
 class LocationComparisonRow(BaseModel):
     location_id: uuid.UUID
     location_name: str

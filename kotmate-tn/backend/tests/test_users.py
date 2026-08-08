@@ -22,7 +22,7 @@ async def test_create_cashier_with_incentive_rate_and_login(client: AsyncClient,
     )
     assert resp.status_code == 201
     body = resp.json()
-    assert body["user_id"] == f"{tenant_admin['tenant']['tenant_code']}-cashier01"
+    assert body["user_id"] == f"{tenant_admin['tenant']['tenant_code']}cashier01"
     assert body["local_handle"] == "cashier01"
     assert body["incentive_rate"] == 2.5
     assert body["role"] == "pos_user"

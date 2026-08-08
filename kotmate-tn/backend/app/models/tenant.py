@@ -16,16 +16,18 @@ class Tenant(UUIDPKMixin, TimestampMixin, Base):
     """One row per subscribing Company account — the Company Master (CLAUDE.md §4).
 
     `tenant_code` is a short, unique, platform-assigned prefix (Phase 03) that composes
-    every tenant-scoped user's login id as `{tenant_code}-{local_handle}` (CLAUDE.md §5)
-    so `users.user_id` can be a single globally-unique login field with no separate
-    company/tenant selector on the login form, even though two tenants may pick the same
-    local handle (e.g. both wanting "admin01").
+    every tenant-scoped user's login id as `{tenant_code}{local_handle}` (CLAUDE.md §5,
+    no separator, e.g. "HNRADMIN") so `users.user_id` can be a single globally-unique
+    login field with no separate company/tenant selector on the login form, even though
+    two tenants may pick the same local handle (e.g. both wanting "admin01").
     """
 
     __tablename__ = "tenants"
 
     tenant_code: Mapped[str] = mapped_column(String(10), nullable=False, unique=True)
     company_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(200))
+    phone: Mapped[str | None] = mapped_column(String(20))
     door_no: Mapped[str | None] = mapped_column(String(50))
     street: Mapped[str | None] = mapped_column(String(200))
     city: Mapped[str | None] = mapped_column(String(100))

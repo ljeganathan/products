@@ -118,6 +118,72 @@ async def test_toggling_track_inventory_off_clears_available_qty(client: AsyncCl
     assert reenable_resp.json()["available_qty"] is None
 
 
+async def test_export_csv_blocked_on_lite_plan(client: AsyncClient, tenant_admin: dict):
+    resp = await client.get("/api/v1/items/export.csv", headers=tenant_admin["headers"])
+    assert resp.status_code == 403
+
+
+async def test_export_csv_on_pro_plan(client: AsyncClient, pro_tenant_admin: dict):
+    headers = pro_tenant_admin["headers"]
+    category = await _create_category(client, headers, name_en="Tiffin")
+    await _create_item(client, headers, category["id"], name_en="Dosai", price=60, item_code="401")
+
+    resp = await client.get("/api/v1/items/export.csv", headers=headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    body = resp.text
+    assert "item_code,name_en,name_ta,category,price,tax_class" in body.splitlines()[0]
+    assert "401,Dosai" in body
+
+
+async def test_import_csv_blocked_on_pro_plan(client: AsyncClient, pro_tenant_admin: dict):
+    headers = pro_tenant_admin["headers"]
+    csv_bytes = b"item_code,name_en,name_ta,category,price,tax_class,is_top_seller,is_combo_tile\n"
+    resp = await client.post(
+        "/api/v1/items/import.csv",
+        files={"file": ("items.csv", csv_bytes, "text/csv")},
+        headers=headers,
+    )
+    assert resp.status_code == 403
+
+
+async def test_import_csv_creates_and_updates_on_pro_max_plan(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    headers = pro_max_tenant_admin["headers"]
+    category = await _create_category(client, headers, name_en="Beverages")
+    existing = await _create_item(
+        client, headers, category["id"], name_en="Old Coffee", price=15, item_code="501"
+    )
+
+    csv_text = (
+        "item_code,name_en,name_ta,category,price,tax_class,is_top_seller,is_combo_tile\n"
+        f"501,Filter Coffee,{'':s},Beverages,25,,false,false\n"
+        "502,Badam Milk,பாதம் பால்,Beverages,40,,true,false\n"
+        "999,Ghost,,Unknown Category,10,,false,false\n"
+    )
+
+    resp = await client.post(
+        "/api/v1/items/import.csv",
+        files={"file": ("items.csv", csv_text.encode("utf-8"), "text/csv")},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["created"] == 1
+    assert body["updated"] == 1
+    assert len(body["errors"]) == 1
+    assert "Unknown Category" in body["errors"][0]
+
+    list_resp = await client.get("/api/v1/items", headers=headers)
+    items_by_code = {i["item_code"]: i for i in list_resp.json()}
+    assert items_by_code["501"]["name_en"] == "Filter Coffee"
+    assert items_by_code["501"]["price"] == 25
+    assert items_by_code["501"]["id"] == existing["id"]
+    assert items_by_code["502"]["name_en"] == "Badam Milk"
+    assert items_by_code["502"]["is_top_seller"] is True
+
+
 async def test_lite_tenant_blocked_from_image_upload(client: AsyncClient, tenant_admin: dict):
     category = await _create_category(client, tenant_admin["headers"])
     item = await _create_item(client, tenant_admin["headers"], category["id"])
@@ -261,7 +327,23 @@ async def test_fuzzy_search_endpoint_tolerates_typos(client: AsyncClient, tenant
     assert resp.status_code == 200
     names = [i["name_en"] for i in resp.json()]
     assert "Chicken Biryani" in names
-    assert "Filter Coffee" not in names
+
+
+async def test_search_matches_short_realistic_prefix(client: AsyncClient, tenant_admin: dict):
+    """POS-37 regression: trigram similarity alone scores "cof" vs "Filter Coffee" at
+    0.2, under pg_trgm's 0.3 default threshold — a cashier typing the first few letters
+    of an item got zero results. Substring matching must catch this even though it's not
+    a typo case.
+    """
+    category = await _create_category(client, tenant_admin["headers"])
+    await _create_item(client, tenant_admin["headers"], category["id"], name_en="Filter Coffee")
+
+    resp = await client.get(
+        "/api/v1/items/search", params={"q": "cof"}, headers=tenant_admin["headers"]
+    )
+    assert resp.status_code == 200
+    names = [i["name_en"] for i in resp.json()]
+    assert "Filter Coffee" in names
 
 
 async def test_get_item_by_exact_code(client: AsyncClient, tenant_admin: dict):
@@ -288,3 +370,40 @@ async def test_top_sellers_endpoint(client: AsyncClient, tenant_admin: dict):
     ids = [i["id"] for i in resp.json()]
     assert top_item["id"] in ids
     assert all(i["is_top_seller"] for i in resp.json())
+
+
+async def test_top_sellers_backfills_from_recent_sales_when_none_pinned(
+    client: AsyncClient, tenant_admin: dict
+):
+    """POS-31: with nothing manually pinned, a recently-billed item must still appear —
+    previously the tab was 100% manual and stayed empty/stale regardless of sales.
+    """
+    headers = tenant_admin["headers"]
+    category = await _create_category(client, headers)
+    unpinned = await _create_item(client, headers, category["id"], name_en="Chicken 65", price=150)
+
+    location_id = (await client.get("/api/v1/locations", headers=headers)).json()[0]["id"]
+    section_id = next(
+        s["id"] for s in (await client.get("/api/v1/sections", headers=headers)).json() if s["name_en"] == "AC"
+    )
+    order = (
+        await client.post(
+            "/api/v1/orders",
+            json={
+                "location_id": location_id,
+                "section_id": section_id,
+                "items": [{"item_id": unpinned["id"], "quantity": 3}],
+            },
+            headers=headers,
+        )
+    ).json()
+    await client.post(
+        "/api/v1/bills",
+        json={"order_id": order["id"], "payments": [{"method": "upi", "amount": order["subtotal"]}]},
+        headers=headers,
+    )
+
+    resp = await client.get("/api/v1/items/top-sellers", headers=headers)
+    assert resp.status_code == 200
+    ids = [i["id"] for i in resp.json()]
+    assert unpinned["id"] in ids

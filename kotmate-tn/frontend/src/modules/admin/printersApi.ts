@@ -2,7 +2,10 @@ import { api } from "@/lib/api";
 
 export const PRINTER_TARGETS = ["kot", "bill"] as const;
 export const PRINTER_TYPES = ["thermal", "dotmatrix"] as const;
-export const PRINTER_CONNECTION_TYPES = ["network", "usb", "local_agent"] as const;
+export const PRINTER_CONNECTION_TYPES = ["network", "usb", "local_agent", "wifi", "bluetooth"] as const;
+// 58/80mm thermal roll widths, 241mm (9.5") dot-matrix continuous stationery — a "Custom"
+// option in the UI falls back to a free-entry mm field for anything else (CLAUDE.md §10).
+export const PRINTER_PAPER_WIDTHS_MM = [58, 80, 241] as const;
 
 export interface Printer {
   id: string;
@@ -12,6 +15,7 @@ export interface Printer {
   printer_type: (typeof PRINTER_TYPES)[number];
   connection_type: (typeof PRINTER_CONNECTION_TYPES)[number];
   connection_details: Record<string, unknown>;
+  paper_width_mm: number | null;
   is_active: boolean;
   created_at: string;
 }
@@ -22,6 +26,8 @@ export interface PrinterCreatePayload {
   target: string;
   printer_type: string;
   connection_type: string;
+  connection_details?: Record<string, unknown>;
+  paper_width_mm?: number | null;
 }
 
 export interface PrinterUpdatePayload {
@@ -30,6 +36,8 @@ export interface PrinterUpdatePayload {
   target?: string;
   printer_type?: string;
   connection_type?: string;
+  connection_details?: Record<string, unknown>;
+  paper_width_mm?: number | null;
   is_active?: boolean;
 }
 

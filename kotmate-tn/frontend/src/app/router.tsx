@@ -17,6 +17,7 @@ import { roleHomePath, useAuthStore } from "@/modules/auth/authStore";
 import { BillHistoryPage } from "@/modules/billing/BillHistoryPage";
 import { KotDisplayPage } from "@/modules/kot/KotDisplayPage";
 import { POSPage } from "@/modules/pos/POSPage";
+import { InvoicesPage } from "@/modules/product-owner/InvoicesPage";
 import { MaintenancePage } from "@/modules/product-owner/MaintenancePage";
 import { PlansPage } from "@/modules/product-owner/PlansPage";
 import { PlatformDashboardPage } from "@/modules/product-owner/PlatformDashboardPage";
@@ -33,10 +34,11 @@ function RootRedirect() {
   return <Navigate to={accessToken && role ? roleHomePath(role) : "/login"} replace />;
 }
 
-// AppShell is the shared Phase-00 placeholder shell for every tenant-scoped role
-// until each phase builds out its own real screen — /pos, /kot, /billing/history,
-// /dashboard, and /reports are now all real screens (Phases 07/08/09/11); nothing
-// still routes to the bare placeholder.
+// AppShell wraps every non-POS/KOT tenant-scoped screen (Dashboard, Reports, Bill
+// History, and every /admin/* master) so a persistent sidebar — not a per-page ad-hoc
+// "← Dashboard" text link — is always the way back (Phase 15). /pos and /kot stay
+// standalone on purpose: they're full-screen operational views (CLAUDE.md §9) that
+// shouldn't compete with a sidebar for space.
 //
 // Each route gets its own role list rather than one shared group across every
 // tenant-scoped path: a `kitchen` ("KOT User", CLAUDE.md §5) login must resolve only
@@ -68,8 +70,22 @@ export const router = createBrowserRouter([
           </AppShell>
         ),
       },
-      { path: "/reports", element: <ReportsPage /> },
-      { path: "/billing/history", element: <BillHistoryPage /> },
+      {
+        path: "/reports",
+        element: (
+          <AppShell>
+            <ReportsPage />
+          </AppShell>
+        ),
+      },
+      {
+        path: "/billing/history",
+        element: (
+          <AppShell>
+            <BillHistoryPage />
+          </AppShell>
+        ),
+      },
     ],
   },
   {
@@ -78,16 +94,86 @@ export const router = createBrowserRouter([
     // CLAUDE.md §5.
     element: <ProtectedRoute roles={["tenant_admin"]} />,
     children: [
-      { path: "/admin/users", element: <UsersPage /> },
-      { path: "/admin/categories", element: <CategoriesPage /> },
-      { path: "/admin/items", element: <ItemsPage /> },
-      { path: "/admin/waiters", element: <WaitersPage /> },
-      { path: "/admin/sections", element: <SectionsPage /> },
-      { path: "/admin/tables", element: <TablesPage /> },
-      { path: "/admin/printers", element: <PrintersPage /> },
-      { path: "/admin/tax-rules", element: <TaxRulesPage /> },
-      { path: "/admin/discount-rules", element: <DiscountRulesPage /> },
-      { path: "/admin/settings", element: <SettingsPage /> },
+      {
+        path: "/admin/users",
+        element: (
+          <AppShell>
+            <UsersPage />
+          </AppShell>
+        ),
+      },
+      {
+        path: "/admin/categories",
+        element: (
+          <AppShell>
+            <CategoriesPage />
+          </AppShell>
+        ),
+      },
+      {
+        path: "/admin/items",
+        element: (
+          <AppShell>
+            <ItemsPage />
+          </AppShell>
+        ),
+      },
+      {
+        path: "/admin/waiters",
+        element: (
+          <AppShell>
+            <WaitersPage />
+          </AppShell>
+        ),
+      },
+      {
+        path: "/admin/sections",
+        element: (
+          <AppShell>
+            <SectionsPage />
+          </AppShell>
+        ),
+      },
+      {
+        path: "/admin/tables",
+        element: (
+          <AppShell>
+            <TablesPage />
+          </AppShell>
+        ),
+      },
+      {
+        path: "/admin/printers",
+        element: (
+          <AppShell>
+            <PrintersPage />
+          </AppShell>
+        ),
+      },
+      {
+        path: "/admin/tax-rules",
+        element: (
+          <AppShell>
+            <TaxRulesPage />
+          </AppShell>
+        ),
+      },
+      {
+        path: "/admin/discount-rules",
+        element: (
+          <AppShell>
+            <DiscountRulesPage />
+          </AppShell>
+        ),
+      },
+      {
+        path: "/admin/settings",
+        element: (
+          <AppShell>
+            <SettingsPage />
+          </AppShell>
+        ),
+      },
     ],
   },
   {
@@ -101,6 +187,7 @@ export const router = createBrowserRouter([
           { path: "tenants", element: <TenantsListPage /> },
           { path: "tenants/new", element: <TenantCreatePage /> },
           { path: "tenants/:tenantId", element: <TenantDetailPage /> },
+          { path: "invoices", element: <InvoicesPage /> },
           { path: "plans", element: <PlansPage /> },
           { path: "maintenance", element: <MaintenancePage /> },
         ],

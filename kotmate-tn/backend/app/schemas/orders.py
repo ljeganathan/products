@@ -24,6 +24,9 @@ class OrderCreateRequest(BaseModel):
     waiter_id: uuid.UUID | None = None
     items: list[OrderLineInput] = Field(default_factory=list)
     hold_label: str | None = Field(default=None, max_length=100)
+    # Distinguishes concurrent parties at the same table (Phase 19, POS-22) — e.g.
+    # "Party 1"/"Party 2". None is the default single-party path.
+    party_label: str | None = Field(default=None, max_length=30)
 
 
 class OrderUpdateRequest(BaseModel):
@@ -34,6 +37,7 @@ class OrderUpdateRequest(BaseModel):
     # replace the cart contents (existing lines not present are removed).
     items: list[OrderLineInput] | None = None
     hold_label: str | None = Field(default=None, max_length=100)
+    party_label: str | None = Field(default=None, max_length=30)
     status: str | None = None
 
     @field_validator("status")
@@ -77,6 +81,7 @@ class OrderResponse(BaseModel):
     pos_user_login_id: str
     status: str
     hold_label: str | None
+    party_label: str | None
     items: list[OrderItemResponse]
     subtotal: float
     waiter_incentive_amount: float | None

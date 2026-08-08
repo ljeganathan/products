@@ -16,6 +16,8 @@ export interface TenantSummary {
 }
 
 export interface TenantDetail extends TenantSummary {
+  email: string | null;
+  phone: string | null;
   door_no: string | null;
   street: string | null;
   city: string | null;
@@ -27,8 +29,15 @@ export interface TenantDetail extends TenantSummary {
   created_at: string;
 }
 
+export interface TenantAdminPasswordReset {
+  admin_login_id: string;
+  temp_password: string;
+}
+
 export interface TenantCreatePayload {
   company_name: string;
+  email?: string;
+  phone?: string;
   door_no?: string;
   street?: string;
   city?: string;
@@ -71,6 +80,51 @@ export interface PlatformMetrics {
   total_max_locations: number;
 }
 
+export interface Invoice {
+  id: string;
+  tenant_id: string;
+  tenant_company_name: string;
+  subscription_id: string | null;
+  invoice_number: string;
+  amount: number;
+  status: "draft" | "sent" | "paid" | "overdue";
+  issued_date: string;
+  due_date: string;
+  paid_date: string | null;
+  description: string | null;
+}
+
+export interface InvoiceCreatePayload {
+  tenant_id: string;
+  subscription_id?: string;
+  amount: number;
+  due_date: string;
+  description?: string;
+}
+
+export interface ExpiringSubscriptionAlert {
+  tenant_id: string;
+  company_name: string;
+  plan_code: string | null;
+  current_period_end: string;
+  days_remaining: number;
+}
+
+export interface OverdueInvoiceAlert {
+  invoice_id: string;
+  tenant_id: string;
+  company_name: string;
+  invoice_number: string;
+  amount: number;
+  due_date: string;
+  days_overdue: number;
+}
+
+export interface DashboardAlerts {
+  expiring_subscriptions: ExpiringSubscriptionAlert[];
+  overdue_invoices: OverdueInvoiceAlert[];
+}
+
 export async function listTenants(): Promise<TenantSummary[]> {
   return (await api.get<TenantSummary[]>("/api/v1/platform/tenants")).data;
 }
@@ -85,9 +139,29 @@ export async function createTenant(payload: TenantCreatePayload): Promise<Tenant
 
 export async function updateTenant(
   id: string,
-  payload: Partial<Pick<TenantDetail, "company_name" | "is_active">>,
+  payload: Partial<
+    Pick<
+      TenantDetail,
+      | "company_name"
+      | "email"
+      | "phone"
+      | "door_no"
+      | "street"
+      | "city"
+      | "district"
+      | "state"
+      | "pincode"
+      | "is_active"
+    >
+  >,
 ): Promise<TenantDetail> {
   return (await api.patch<TenantDetail>(`/api/v1/platform/tenants/${id}`, payload)).data;
+}
+
+export async function resetTenantAdminPassword(id: string): Promise<TenantAdminPasswordReset> {
+  return (
+    await api.post<TenantAdminPasswordReset>(`/api/v1/platform/tenants/${id}/reset-admin-password`)
+  ).data;
 }
 
 export async function changeTenantPlan(
@@ -129,4 +203,23 @@ export async function updateMaintenanceSettings(
 
 export async function getPlatformMetrics(): Promise<PlatformMetrics> {
   return (await api.get<PlatformMetrics>("/api/v1/platform/metrics")).data;
+}
+
+export async function getDashboardAlerts(): Promise<DashboardAlerts> {
+  return (await api.get<DashboardAlerts>("/api/v1/platform/dashboard/alerts")).data;
+}
+
+export async function listInvoices(params?: {
+  tenant_id?: string;
+  status?: string;
+}): Promise<Invoice[]> {
+  return (await api.get<Invoice[]>("/api/v1/platform/invoices", { params })).data;
+}
+
+export async function createInvoice(payload: InvoiceCreatePayload): Promise<Invoice> {
+  return (await api.post<Invoice>("/api/v1/platform/invoices", payload)).data;
+}
+
+export async function markInvoicePaid(id: string): Promise<Invoice> {
+  return (await api.patch<Invoice>(`/api/v1/platform/invoices/${id}/mark-paid`)).data;
 }

@@ -53,6 +53,8 @@ product-level rationale — this doc is the implementation-level ERD.
 | id | uuid PK | |
 | tenant_code | varchar(10) unique NOT NULL, CHECK `^[A-Z0-9]{2,10}$` | short platform-assigned prefix (Phase 03), used only to compose tenant-scoped `users.user_id` (Phase 02 migration `3d908345eda4`) — see §5 |
 | company_name | varchar(200) NOT NULL | |
+| email | varchar(200), nullable | Phase 13 |
+| phone | varchar(20), nullable | Phase 13 |
 | door_no, street, city, district | varchar | Indian address format |
 | state | varchar(50), CHECK ∈ `INDIAN_STATES` | |
 | pincode | varchar(6), CHECK `^[1-9][0-9]{5}$` | |
@@ -68,11 +70,27 @@ FK `tenant_id`. Same Indian address fields as `tenants`. A **trigger**
 `billing_cycle` ∈ monthly/yearly, `payment_status` ∈ paid/pending/overdue (manual flag
 for now — CLAUDE.md §7), `current_period_start`/`current_period_end` dates.
 
+**`invoices`** (Phase 14) — tenant subscription billing document, distinct from the POS
+`bills` table (which bills a tenant's own customers, not the tenant itself).
+| column | type | notes |
+|---|---|---|
+| tenant_id | uuid FK | |
+| subscription_id | uuid FK → subscriptions, **nullable** | invoice can outlive/precede a subscription row |
+| invoice_number | varchar(30) unique NOT NULL | server-generated `INV-{YYYYMM}-{seq}`, sequence resets monthly |
+| amount | numeric(10,2) | single flat amount — plans are flat-priced, no line-item breakdown |
+| status | varchar(20), CHECK ∈ draft/sent/paid/overdue | `overdue` is **never persisted** — computed from `due_date < today AND status != paid` on every read (dashboard alerts + `GET /invoices/overdue`), so there's no cron that can silently stop running |
+| issued_date, due_date | date | |
+| paid_date | date, nullable | set by `PATCH /invoices/{id}/mark-paid` |
+| description | varchar(200), nullable | e.g. "Pro Max — Aug 2026" |
+
+Indexed on `(tenant_id, id)` (standard tenant-scoped composite) and `(due_date, status)`
+for the overdue-lookup query. RLS-enabled like every other tenant-scoped table.
+
 **`users`** — login is always by `user_id`, never email (CLAUDE.md §5).
 | column | type | notes |
 |---|---|---|
 | tenant_id | uuid, **nullable** | NULL only for `product_owner` |
-| user_id | varchar(60), **globally unique** (single unique constraint, no per-tenant partial index — Phase 02 migration `3d908345eda4`), CHECK `^[A-Za-z0-9_-]{2,60}$` | for tenant-scoped roles, composed at creation (Phase 04) as `{tenant.tenant_code}-{local_handle}`; `product_owner` uses a bare, unprefixed value |
+| user_id | varchar(60), **globally unique** (single unique constraint, no per-tenant partial index — Phase 02 migration `3d908345eda4`), CHECK `^[A-Za-z0-9_-]{2,60}$` | for tenant-scoped roles, composed at creation (Phase 04) as `{tenant.tenant_code}{local_handle}` — no separator, since Phase 13 (was `{tenant_code}-{local_handle}` before; pre-Phase-13 accounts keep their hyphenated id, not renamed retroactively); `product_owner` uses a bare, unprefixed value |
 | password_hash | varchar(255) | bcrypt, set in Phase 02 |
 | role_id | uuid FK → roles | |
 | name, phone | | |
@@ -83,7 +101,8 @@ for now — CLAUDE.md §7), `current_period_start`/`current_period_end` dates.
 (`user_id`, `location_id`). Per-location access grants, relevant on every tier now that
 every tier can have >1 location.
 
-**`categories`** — `name_en`, `name_ta`, `display_order`, `is_active`.
+**`categories`** — `name_en`, `name_ta`, `icon_url` (nullable, Phase 18 — POS falls back to
+a generic icon when unset; not plan-gated unlike item images), `display_order`, `is_active`.
 
 **`items`**
 | column | type | notes |
@@ -112,13 +131,20 @@ a blanket "+X% for AC" markup (CLAUDE.md §6/§11).
 
 **`tables`** — `location_id`, `section_id` FK (**required** — only `is_seating=true`
 sections are selectable), `table_number` (unique per tenant+location),
-`seating_capacity`, `status` ∈ free/occupied/billed.
+`seating_capacity`. `status` is declared on the model/response but is never written —
+it's computed on read as free/occupied from whether the table has any `orders` row
+with `status='open'` (Phase 19), so it can't drift out of sync with actual order state.
 
 **`orders`** — the server-persisted "cart" (CLAUDE.md §11). `location_id`, `table_id`
 (nullable — null for non-seating sections), `section_id` (always set — drives price
 resolution), `waiter_id` (nullable), `pos_user_id` (cashier-of-record, NOT NULL),
-`status` ∈ open/held/billed, `hold_label`. Indexed on (`tenant_id`, `status`) for the
-recall list query.
+`status` ∈ open/held/billed, `hold_label`, `party_label` (nullable varchar(30) —
+distinguishes concurrent parties/bills at the same table, Phase 19, CLAUDE.md §11).
+Indexed on (`tenant_id`, `status`) for the recall list query. Partial unique index
+`uq_orders_open_table_party` on (`tenant_id`, `table_id`, `party_label`) WHERE
+`status='open' AND table_id IS NOT NULL AND party_label IS NOT NULL` — stops two open
+parties at the same table from colliding on the same label, while leaving non-seating
+orders and single-party (label-less) orders unconstrained.
 
 **`order_items`** — `order_id`, `item_id`, **`unit_price`** (snapshotted at add-time from
 the section-resolved price — later item/section-price edits never retroactively change
@@ -164,8 +190,11 @@ via `items.tax_class_id`.
 `coupon_code` (nullable, unique per tenant when set), `is_active`.
 
 **`printers`** — `location_id`, `name`, `target` ∈ kot/bill, `printer_type` ∈
-thermal/dotmatrix, `connection_type` ∈ network/usb/local_agent, `connection_details`
-(jsonb).
+thermal/dotmatrix, `connection_type` ∈ network/usb/local_agent/wifi/bluetooth (wifi +
+bluetooth added Phase 15), `connection_details` (jsonb — `{ip_address, port}` for
+network/wifi, `{device_name}` for bluetooth), `paper_width_mm` (int, nullable — Phase
+15; UI offers 58/80/241mm presets or free entry, not a CHECK constraint since actual
+hardware varies).
 
 **`hotel_master`** — one row per `tenant_location` (unique `location_id`). `name`, same
 Indian address fields as `tenants`, `phone`, `gstin` (CHECK format), `logo_url`,
@@ -212,6 +241,25 @@ staff-facing grid always shows English+Tamil together regardless, CLAUDE.md §9)
    partial unique indexes on `users.user_id` with one global unique constraint, so a
    single-field login form (CLAUDE.md §5) can always resolve to exactly one account. See
    `users`/`tenants` table notes above for the resulting column shapes.
+
+*(Several Phase 04-12 migrations — waiter login linking, items trigram search index,
+items track_inventory/available_qty, bills status check constraint, platform settings
+singleton — are omitted from this numbered list for brevity; see `alembic/versions/`
+for the full chain. Resuming the list for the manual-testing-fix backlog phases:)*
+
+7. **`tenant email phone`** (Phase 13) — adds `tenants.email`/`tenants.phone` (both
+   nullable), captured at tenant creation and editable via `PATCH /platform/tenants/{id}`.
+8. **`create invoices table`** (Phase 14) — the `invoices` table above, including its own
+   RLS enable/force/policy statements (the original `row level security policies`
+   migration predates this table's existence, so it couldn't have covered it).
+9. **`printer width and wifi/bluetooth connection types`** (Phase 15) — adds
+   `printers.paper_width_mm`, and widens the `connection_type` CHECK constraint from
+   network/usb/local_agent to also allow wifi/bluetooth.
+10. **`category icon url`** (Phase 18) — adds `categories.icon_url` (nullable).
+11. **`order party label`** (Phase 19, revision `5a1c3e8f2d67`) — adds `orders.party_label`
+    (nullable varchar(30)) and the partial unique index `uq_orders_open_table_party` on
+    (`tenant_id`, `table_id`, `party_label`) WHERE `status='open' AND table_id IS NOT
+    NULL AND party_label IS NOT NULL`.
 
 ### Gotcha for Phase 02: setting the RLS session vars
 

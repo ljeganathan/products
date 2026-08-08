@@ -10,6 +10,7 @@ interface CartPanelProps {
   onHold: () => void;
   onSendKot: () => void;
   onBill: () => void;
+  onClear: () => void;
   kotSending: boolean;
   showSyncIndicator?: boolean;
 }
@@ -22,6 +23,7 @@ export function CartPanel({
   onHold,
   onSendKot,
   onBill,
+  onClear,
   kotSending,
   showSyncIndicator,
 }: CartPanelProps) {
@@ -43,15 +45,27 @@ export function CartPanel({
               </span>
             )}
           </div>
-          {showSyncIndicator && syncState !== "idle" && (
-            <span
-              className={`text-[10px] font-extrabold ${
-                syncState === "error" ? "text-chili" : syncState === "saving" ? "text-gold" : "text-veg"
-              }`}
-            >
-              {syncState === "saving" ? "Saving…" : syncState === "saved" ? "Saved" : "Sync failed"}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {showSyncIndicator && syncState !== "idle" && (
+              <span
+                className={`text-[10px] font-extrabold ${
+                  syncState === "error" ? "text-chili" : syncState === "saving" ? "text-gold" : "text-veg"
+                }`}
+              >
+                {syncState === "saving" ? "Saving…" : syncState === "saved" ? "Saved" : "Sync failed"}
+              </span>
+            )}
+            {!isEmpty && (
+              <button
+                type="button"
+                onClick={onClear}
+                className="rounded-md border border-border px-2 py-0.5 text-[10.5px] font-extrabold text-ink-soft hover:border-chili hover:text-chili"
+                title="Clear cart (Esc)"
+              >
+                ✕ Clear
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Table number is the dominant visual anchor everywhere (CLAUDE.md §9) —
@@ -142,26 +156,6 @@ export function CartPanel({
               <span>Subtotal</span>
               <span className="tabular-nums font-bold text-foreground">{formatINR(order?.subtotal ?? 0)}</span>
             </div>
-            {(order?.waiter_incentive_amount != null || order?.cashier_incentive_amount != null) && (
-              <div className="mt-1.5 space-y-0.5 border-t border-dashed border-border pt-1.5">
-                {order?.waiter_incentive_amount != null && (
-                  <div className="flex items-center justify-between text-[10.5px] text-ink-faint">
-                    <span>🧑‍🍳 Waiter incentive</span>
-                    <span className="tabular-nums font-bold text-gold">
-                      {formatINR(order.waiter_incentive_amount)}
-                    </span>
-                  </div>
-                )}
-                {order?.cashier_incentive_amount != null && (
-                  <div className="flex items-center justify-between text-[10.5px] text-ink-faint">
-                    <span>🧑‍💼 Cashier incentive</span>
-                    <span className="tabular-nums font-bold text-gold">
-                      {formatINR(order.cashier_incentive_amount)}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
 

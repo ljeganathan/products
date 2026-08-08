@@ -45,7 +45,7 @@ async def test_create_tenant_end_to_end_and_login_as_admin(client: AsyncClient, 
     assert body["plan_code"] == "lite"
     assert body["active_user_count"] == 1
     assert body["active_location_count"] == 1
-    assert body["admin_login_id"] == f"{body['tenant_code']}-admin01"
+    assert body["admin_login_id"] == f"{body['tenant_code']}admin01"
 
     admin_login = await client.post(
         "/api/v1/auth/login",

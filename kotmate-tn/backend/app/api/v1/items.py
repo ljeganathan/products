@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.models import Tenant
 from app.schemas.items import (
     ItemCreateRequest,
+    ItemImportResult,
     ItemResponse,
     ItemUpdateRequest,
     RestockRequest,
@@ -18,9 +19,11 @@ from app.schemas.items import (
 )
 from app.services.item_service import (
     create_item,
+    export_items_csv,
     get_item_by_code,
     get_item_or_404,
     get_section_prices,
+    import_items_csv,
     list_items,
     list_top_sellers,
     restock_item,
@@ -78,6 +81,43 @@ async def get_tenant_item_by_code(
 ) -> ItemResponse:
     item = await get_item_by_code(db, current_user.tenant_id, item_code)
     return ItemResponse.model_validate(item)
+
+
+@router.get("/export.csv", dependencies=[Depends(require_role("tenant_admin"))])
+async def export_tenant_items_csv(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    tenant = await _get_tenant(db, current_user)
+    plan = await get_active_plan(db, tenant.id)
+    csv_text = await export_items_csv(db, tenant.id, plan)
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=items.csv"},
+    )
+
+
+@router.post(
+    "/import.csv", response_model=ItemImportResult, dependencies=[Depends(require_role("tenant_admin"))]
+)
+async def import_tenant_items_csv(
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ItemImportResult:
+    tenant = await _get_tenant(db, current_user)
+    plan = await get_active_plan(db, tenant.id)
+    content = (await file.read()).decode("utf-8-sig")
+    try:
+        result = await import_items_csv(db, tenant.id, plan, content)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Import failed: a duplicate item code was encountered"
+        ) from exc
+    await db.commit()
+    return result
 
 
 @router.post("", response_model=ItemResponse, status_code=status.HTTP_201_CREATED)

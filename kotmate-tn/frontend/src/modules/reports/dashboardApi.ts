@@ -20,6 +20,21 @@ export interface DashboardSummary {
   hourly_trend: HourlySalesPoint[];
 }
 
+export interface LowStockItemRow {
+  item_id: string;
+  name_en: string;
+  name_ta: string | null;
+  available_qty: number;
+}
+
+export interface LowStockItemsResponse {
+  rows: LowStockItemRow[];
+}
+
+export async function getLowStockItems(): Promise<LowStockItemsResponse> {
+  return (await api.get<LowStockItemsResponse>("/api/v1/dashboard/low-stock-items")).data;
+}
+
 export interface LocationComparisonRow {
   location_id: string;
   location_name: string;

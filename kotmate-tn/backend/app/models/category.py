@@ -13,6 +13,9 @@ class Category(UUIDPKMixin, TimestampMixin, Base):
     tenant_id: Mapped[uuid.UUID] = tenant_id_column()
     name_en: Mapped[str] = mapped_column(String(100), nullable=False)
     name_ta: Mapped[str | None] = mapped_column(String(100))
+    # Nullable — POS falls back to a generic icon when unset (Phase 18, POS-30). Not
+    # plan-gated, unlike item images: this is basic nav legibility, not a premium extra.
+    icon_url: Mapped[str | None] = mapped_column(String(500))
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 

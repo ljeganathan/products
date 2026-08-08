@@ -304,6 +304,46 @@ async def test_old_bill_search_and_reprint_produces_identical_bill(client: Async
         assert reprinted[key] == finalized[key]
 
 
+async def test_bill_search_filters_by_section_and_cashier(client: AsyncClient, tenant_admin: dict):
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    ac_section_id = await _section_id(client, headers, "AC")
+    non_ac_section_id = await _section_id(client, headers, "Non-AC")
+
+    ac_order = await _order_with_200_subtotal(client, headers, location_id, ac_section_id)
+    ac_bill = (
+        await client.post(
+            "/api/v1/bills",
+            json={"order_id": ac_order["id"], "payments": [{"method": "upi", "amount": 200.0}]},
+            headers=headers,
+        )
+    ).json()
+    non_ac_order = await _order_with_200_subtotal(client, headers, location_id, non_ac_section_id)
+    non_ac_bill = (
+        await client.post(
+            "/api/v1/bills",
+            json={"order_id": non_ac_order["id"], "payments": [{"method": "upi", "amount": 200.0}]},
+            headers=headers,
+        )
+    ).json()
+
+    section_search = await client.get(
+        "/api/v1/bills", params={"section_id": ac_section_id}, headers=headers
+    )
+    assert section_search.status_code == 200
+    section_ids = [b["id"] for b in section_search.json()]
+    assert ac_bill["id"] in section_ids
+    assert non_ac_bill["id"] not in section_ids
+
+    cashier_id = ac_bill["pos_user_id"]
+    cashier_search = await client.get(
+        "/api/v1/bills", params={"pos_user_id": cashier_id}, headers=headers
+    )
+    assert cashier_search.status_code == 200
+    assert all(b["pos_user_id"] == cashier_id for b in cashier_search.json())
+    assert ac_bill["id"] in [b["id"] for b in cashier_search.json()]
+
+
 async def test_audit_log_written_for_large_discount(client: AsyncClient, pro_max_tenant_admin: dict):
     headers = pro_max_tenant_admin["headers"]
     tenant_id = pro_max_tenant_admin["tenant"]["id"]

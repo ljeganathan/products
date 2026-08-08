@@ -51,6 +51,7 @@ async def create_printer(session: AsyncSession, tenant_id: uuid.UUID, req: Print
         printer_type=req.printer_type,
         connection_type=req.connection_type,
         connection_details=req.connection_details,
+        paper_width_mm=req.paper_width_mm,
         is_active=True,
     )
     session.add(printer)

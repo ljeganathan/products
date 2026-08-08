@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, String
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -23,7 +23,14 @@ class Printer(UUIDPKMixin, TimestampMixin, Base):
     target: Mapped[str] = mapped_column(String(10), nullable=False)
     printer_type: Mapped[str] = mapped_column(String(20), nullable=False)
     connection_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Connection-specific fields (network/wifi: {ip, port}; bluetooth: {device_name}) —
+    # deliberately unstructured since each connection_type needs a different shape and
+    # this only ever feeds the printing adapter, never queried on (Phase 15).
     connection_details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Nullable: pre-Phase-15 printers have no recorded width. UI offers 58/80/241mm
+    # presets (PRINTER_PAPER_WIDTHS_MM) plus a free-entry "Custom" option — not a CHECK
+    # constraint, since a tenant's actual hardware may not match any listed preset.
+    paper_width_mm: Mapped[int | None] = mapped_column(Integer)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     __table_args__ = (

@@ -25,8 +25,8 @@ export interface WaiterUpdatePayload extends Partial<WaiterCreatePayload> {
   is_active?: boolean;
 }
 
-export async function listWaiters(): Promise<Waiter[]> {
-  return (await api.get<Waiter[]>("/api/v1/waiters")).data;
+export async function listWaiters(params?: { location_id?: string }): Promise<Waiter[]> {
+  return (await api.get<Waiter[]>("/api/v1/waiters", { params })).data;
 }
 
 // Resolves the logged-in waiter's own Waiter Master row, if a tenant_admin has linked

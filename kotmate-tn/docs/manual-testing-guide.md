@@ -5,18 +5,34 @@ reusable seed script so you're never testing against an empty database.
 
 ## 1. Setup
 
-**Start both dev servers** (from the repo root):
+### Option A — Docker (recommended)
+
+From the repo root, build and start everything:
 
 ```
-cd backend  && python -m uvicorn app.main:app --port 8000 --reload
-cd frontend && npm run dev
+docker compose up -d --build
 ```
 
-**Seed demo data** (from `backend/`, with the servers running or stopped — it talks
-directly to Postgres, not the API):
+This starts three containers: `postgres` (host port 5433), `backend` (8000),
+`frontend` (5173). Both `backend` and `frontend` bind-mount your local `backend/` and
+`frontend/` folders, so code edits apply live — no rebuild needed unless you change a
+dependency (`requirements.txt` / `package.json`).
+
+Check health:
 
 ```
-python -m scripts.seed_demo_data
+curl http://localhost:8000/api/v1/health   # → {"status":"ok"}
+curl -o /dev/null -w "%{http_code}\n" http://localhost:5173/   # → 200
+```
+
+**Seed demo data** — run it *inside* the backend container, against the same
+Postgres the app is using. The seed script needs Pillow (for placeholder item
+images), which is dev-only and isn't in the backend image's `requirements.txt`, so
+install it once per container lifetime first:
+
+```
+docker compose exec backend pip install Pillow==11.3.0
+docker compose exec backend python -m scripts.seed_demo_data
 ```
 
 This creates **one hotel per subscription tier** and is safe to re-run any time — it
@@ -25,8 +41,38 @@ login handle), and resets every seeded login's password to `Demo@12345` on every
 Re-run it at the start of each testing session to guarantee fresh "today" bills for
 the Reports/Dashboard checks in §13.
 
-Full output is a credentials dump; the essentials are in §2 below. If you need a
-**Product Owner** login (Phase 03) and don't already have one, create it once via:
+Full output is a credentials dump; the essentials are in §2 below.
+
+To stop everything: `docker compose down` (add `-v` only if you also want to wipe the
+Postgres data volume — don't do that if you want to keep your seeded/test data).
+
+### Option B — native (no Docker)
+
+**Start both dev servers** (from the repo root):
+
+```
+cd backend  && python -m uvicorn app.main:app --port 8000 --reload
+cd frontend && npm run dev
+```
+
+Requires Postgres reachable at the `DATABASE_URL`/`APP_DATABASE_URL` in
+`backend/.env` yourself (e.g. still via `docker compose up -d postgres`, or a local
+install) — see the root `README.md`'s "Local Development" section for the full native
+setup (venv, `.env` copy, etc.).
+
+**Seed demo data** (from `backend/`, with the servers running or stopped — it talks
+directly to Postgres, not the API):
+
+```
+python -m scripts.seed_demo_data
+```
+
+Same idempotent/reusable behavior as the Docker version above.
+
+### Product Owner login (either option)
+
+If you need a **Product Owner** login (Phase 03) and don't already have one, create
+it once — from `backend/` natively, or `docker compose exec backend` if using Docker:
 
 ```
 ! python -m scripts.create_superuser
@@ -102,7 +148,7 @@ Every tenant also has, at its Main location:
 - [ ] Tenants list shows Lite/Pro/Pro Max Demo Hotel with correct plan badges.
 - [ ] Open a tenant detail page → company address, active user/location counts, plan.
 - [ ] Create a brand-new tenant via the UI form → new tenant appears in the list,
-  composed admin login shown (`{tenant_code}-{handle}`).
+  composed admin login shown (`{tenant_code}{handle}`, no separator — Phase 13).
 - [ ] Plans page → edit a feature flag, confirm it persists.
 - [ ] Platform maintenance page loads without error.
 
@@ -248,6 +294,194 @@ bills)*
   payment-method breakdown that sums to the grand total.
 - [ ] As `PMDH-waiter01`, confirm `/reports` and `/dashboard` are both entirely
   unreachable (redirected away), not just missing a nav link.
+
+## 14. Phase 13 — Platform Console UX
+
+*(requires a `product_owner` login)*
+
+- [ ] Log in as product owner with several tenants seeded → the Log out button in the
+  sidebar is visible without scrolling, regardless of nav list length.
+- [ ] Click "KOTMate TN" in the sidebar header from any `/platform/*` page → returns to
+  `/platform`.
+- [ ] Create a new tenant → admin login id has no hyphen (e.g. `HTL1ADMIN01`, not
+  `HTL1-ADMIN01`).
+- [ ] Open an existing (pre-Phase-13) seeded tenant's admin → their hyphenated login id
+  still works and still displays the correct local handle in `/admin/users`.
+- [ ] Tenant detail page → click Edit, change company name/email/phone/address, Save →
+  persists and reflects immediately.
+- [ ] Tenant detail page → "Reset Admin Password" → one-time password shown once;
+  logging in as that tenant's admin with the new password works.
+
+## 15. Phase 14 — Tenant Invoicing & Dashboard Alerts
+
+*(requires a `product_owner` login)*
+
+- [ ] `/platform/invoices` → "+ New Invoice" → pick a tenant, amount, a due date **in
+  the past**, create → invoice appears with status `sent`, invoice number like
+  `INV-202608-0001`.
+- [ ] Same invoice now appears in the status filter chip "overdue" on `/platform/invoices`
+  even though its stored status is still `sent` (overdue is computed from due date, not
+  stored).
+- [ ] `/platform` dashboard → "Overdue Invoices" card shows that invoice; click it →
+  navigates to the tenant's detail page.
+- [ ] Click "Mark Paid" on that invoice → disappears from the overdue filter/card,
+  status badge shows `paid`.
+- [ ] Manually set a tenant's subscription `current_period_end` to within 7 days (or
+  ask a dev to do it via `psql`) → tenant appears in the dashboard's "Expiring / Expired
+  Subscriptions" card with the correct days-remaining count (negative once past).
+- [ ] Both alert cards show their empty-state message when nothing qualifies.
+
+## 16. Phase 15 — Admin Navigation, Settings, Printers
+
+*(as any `tenant_admin`)*
+
+- [ ] Left sidebar has no dead "Items"/"Waiters" entries (only the real "Item Master"/
+  "Waiter Master" links, each with a small icon).
+- [ ] From `/admin/items` (or any other `/admin/*` page), the same persistent sidebar is
+  visible — including a "Dashboard" link — with no separate "← Dashboard" text link
+  anywhere on the page.
+- [ ] Same check on `/reports` and `/billing/history`.
+- [ ] `/admin/settings` → Printers tab → "+ Add" → fill the form → printer appears in
+  the tab's own list immediately, without navigating away from Settings.
+- [ ] `/admin/settings` → Tax tab → "+ Add" → same inline behavior.
+- [ ] `/admin/settings` has no "Categories" tab.
+- [ ] `/admin/printers` → Add Printer → set Connection to WiFi → IP Address/Port fields
+  appear; set to Bluetooth → a "Paired Device Name" field appears instead; set to USB →
+  neither appears.
+- [ ] Add a printer with Paper Width = 80mm (preset) and another with "Custom" → 112 →
+  both values show correctly in the printer list's Width column.
+
+## 17. Phase 16 — Item Master Overhaul
+
+*(as `PDH-admin` for Export-only checks, `PMDH-admin` for Import checks — Lite has neither)*
+
+- [ ] As `LDH-admin` → `/admin/items` has no Export/Import CSV buttons.
+- [ ] As `PDH-admin` → Export CSV button present, Import CSV button absent; clicking
+  Export downloads a `items.csv` with header `item_code,name_en,name_ta,category,price,
+  tax_class,is_top_seller,is_combo_tile`.
+- [ ] As `PMDH-admin` → both Export and Import CSV buttons present.
+- [ ] `+ Add Item` → Item Code field is pre-filled with a suggested next number (still
+  editable) → fill Name + Price → Save → modal stays open, now showing Item Image and
+  Per-Section Price Override sections (previously only appeared after closing and
+  reopening in Edit mode).
+- [ ] In that same now-open modal, set a Tax Class from the dropdown, upload a photo
+  under 1MB (preview appears immediately), try uploading one over 1MB (rejected with an
+  inline message, no request sent).
+- [ ] Edit two different sections' prices, click "Save All Section Prices" once → both
+  show "Saved ✓"; edit one of them again → its "Saved ✓" clears while the other stays.
+  Confirm via `psql` (`SELECT * FROM item_section_prices WHERE item_id = '<id>'`) that
+  both rows are still present, not just the last-edited one.
+- [ ] Item list → Deactivate an item → row dims, Status badge flips to "Deactivated",
+  Reactivate brings it back.
+- [ ] Import a CSV with one row matching an existing item_code (should update) and one
+  new row (should create) and one row with a made-up category name → result summary
+  shows 1 created, 1 updated, 1 error naming the bad category.
+
+## 18. Phase 17 — Discount Rules & Bill History Filters
+
+*(as `PMDH-admin`, Pro Max, so coupon-type rules are available)*
+
+- [ ] `/admin/discount-rules` → add a Coupon Code rule → Edit it → Type field is
+  visible (disabled) showing "Coupon code", and the Coupon Code input shows the
+  existing code and is editable.
+- [ ] `/billing/history` → filters row shows "All sections" (not "All tables") and a
+  new "All cashiers" dropdown alongside "All waiters".
+- [ ] Filter by a seating section → only bills billed under that section appear.
+- [ ] Filter by a specific cashier → only bills that cashier rang up appear; combine
+  with a date range and confirm both apply together.
+
+## 19. Phase 18 — POS Core Fixes
+
+*(as `PMDH-admin` or any cashier login on `/pos`)*
+
+- [ ] Upload an item image (Item Master), a category icon (Category Master), and a
+  hotel logo (Settings → General) → all three render correctly on the POS grid /
+  category rail / bill print preview.
+- [ ] POS search box → type a short realistic prefix of an existing item's name (e.g.
+  "cof" for "Filter Coffee") → the item appears in results.
+- [ ] Category rail shows distinct icons for categories that have one uploaded, and the
+  generic 🍽️ fallback for ones that don't.
+- [ ] Category rail's last tab is "All" → shows every active item regardless of
+  category.
+- [ ] With no items manually pinned as Top Selling, bill an item → it appears under
+  "Top Selling" on next load (may take a moment; window is the last 7 days).
+- [ ] Table picker (F10) → a seating section with zero active tables (e.g. deactivate
+  all tables in one section via Table Master) does not appear at all.
+- [ ] Add an item to the cart, press Esc with no field focused → cart clears. Add again,
+  click "✕ Clear" next to Current Order → same result.
+- [ ] Send an order to KOT, open "🍳 KOT Tickets" → click a ticket to expand it → item
+  list and a "Bill this ticket" button appear; collapsing hides them again.
+- [ ] No waiter/cashier incentive figures appear anywhere on the POS cart summary, for
+  any role.
+- [ ] Open Finalize Bill → the payment amount is already filled with the grand total,
+  no click needed. "+ Split Payment" is a full-size button, not a small text link.
+- [ ] POS header shows the tenant's company name and current location name (not a bare
+  "POS" label).
+
+---
+
+## 20. Phase 19 — POS Multi-Location, Seat Splitting & Order Clubbing
+
+*(as `PMDH-cashier01` on `/pos` — Pro Max Demo Hotel has 2 locations, Main + Branch
+Two, §3 — and `PMDH-admin` on `/dashboard`/`/reports`)*
+
+- [ ] POS header location control shows both locations as a dropdown (only rendered
+  because this tenant has >1 location); switching it clears the in-progress draft and
+  reloads tables/waiters/open-orders scoped to the newly selected location.
+- [ ] Reload the page → the previously selected location is still selected (persisted,
+  not reset to the first location every time).
+- [ ] Tap an empty table (e.g. T1) → selects immediately, no extra picker step
+  (unchanged pre-Phase-19 behavior for a table with zero open orders).
+- [ ] Add an item, bill it while table T1 is still selected — but before confirming,
+  cancel and instead: add an item and leave the order open (don't bill). Tap T1 again
+  from the table picker → it now shows a gold badge with a count of 1 and offers a
+  party sub-picker: "Party 1" (resume) and "+ New Party (Party 2)".
+- [ ] Choose "+ New Party" → a brand-new empty cart opens at the same table, tagged
+  "Party 2" (shown as a small badge next to the table number in the header). Add a
+  different item than Party 1's — Party 1's cart is untouched (verify via "Party 1" →
+  resume).
+- [ ] Bill Party 2 only → table T1 stays occupied (badge count drops to 1, Party 1
+  still open) — the table does **not** free up until every party at it has billed.
+- [ ] Bill Party 1 → table T1 now shows fully free (no badge) in the picker.
+- [ ] Repeat-KOT clubbing: start a fresh order at any table, send one item to KOT, add
+  a second different item to the same order, send KOT again → bill the order → the
+  final bill contains both items as one bill, not two.
+- [ ] Dashboard (`PMDH-admin`) → a "Location" dropdown appears next to the date heading
+  (only because this tenant has >1 location) defaulting to "All locations"; picking one
+  location changes Today's Sales/Bill Count/Average Bill Value to that location's
+  figures only.
+- [ ] Reports (`PMDH-admin`) → the existing Location filter (any report, e.g. Sales
+  Summary) narrows results to the selected location; "All locations" aggregates across
+  both.
+- [ ] Dashboard's Pro Max-only "Multi-Location Comparison" table (bottom of page) still
+  shows a per-location bills/sales breakdown for a date range, independent of the new
+  single-location KPI filter above.
+
+---
+
+## 21. Phase 20 — Dashboard Cleanup & POS Visual Pass
+
+*(as any `tenant_admin` on `/dashboard` and `/pos`)*
+
+- [ ] Dashboard KPI row shows exactly 3 cards — Today's Sales, Bill Count, Average Bill
+  Value — the old "Top Item" box is gone.
+- [ ] "Top Selling Items" and "Low Stock Items" render side by side (stacked on
+  narrow/mobile widths).
+- [ ] With no items opted into `track_inventory`, Low Stock Items shows "No tracked
+  items are running low…" rather than an empty box or an error.
+- [ ] In Item Master, enable "Track stock count" on an item and set its Available Qty
+  to 3 (≤5) → it appears in the Dashboard's Low Stock Items list, sorted with the
+  lowest counts first. Set another item's stock to 0 → it shows "Out of stock" in red
+  instead of a count.
+- [ ] Set a tracked item's stock back above 5 (or turn tracking off) → it drops out of
+  the Low Stock Items list on next Dashboard load.
+- [ ] POS visual pass (already-built, spot-check only — no new UI expected here): the
+  item grid is dense (multiple columns, small gaps, not large whitespace-heavy cards);
+  any item with "Combo / Thali tile" enabled in Item Master renders visibly larger than
+  a regular item card in the POS grid; the cart header's table number is the largest,
+  boldest text in the cart panel; Finalize Bill lists UPI before Cash/Card; ₹ amounts
+  use lakh/crore comma grouping and only show paise when non-zero (e.g. ₹1,25,000 and
+  ₹120 vs ₹120.50).
 
 ---
 

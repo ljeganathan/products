@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { type FormEvent, useState } from "react";
-import { Link } from "react-router-dom";
 
 import { listLocations } from "@/modules/admin/locationsApi";
 import { listUsers } from "@/modules/admin/usersApi";
@@ -207,7 +206,7 @@ function WaiterFormModal({
 
 export function WaitersPage() {
   const queryClient = useQueryClient();
-  const { data: waiters, isLoading, isError } = useQuery({ queryKey: ["waiters"], queryFn: listWaiters });
+  const { data: waiters, isLoading, isError } = useQuery({ queryKey: ["waiters"], queryFn: () => listWaiters() });
   const { data: locations = [] } = useQuery({ queryKey: ["tenant-locations"], queryFn: listLocations });
   const { data: users = [] } = useQuery({ queryKey: ["tenant-users"], queryFn: listUsers });
   const [formWaiter, setFormWaiter] = useState<Waiter | null | "new">(null);
@@ -232,9 +231,6 @@ export function WaitersPage() {
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <Link to="/dashboard" className="text-xs text-foreground/50 hover:underline">
-            ← Dashboard
-          </Link>
           <h1 className="mt-1 text-xl font-bold">Waiter Master</h1>
           <p className="text-sm text-foreground/60">Incentive rate applies to net sale value per bill</p>
         </div>

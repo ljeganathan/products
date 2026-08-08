@@ -9,8 +9,8 @@ _LOCAL_HANDLE_RE = r"^[A-Za-z0-9_-]+$"
 
 
 class UserCreateRequest(BaseModel):
-    # Local handle only — the API composes the real login id as {tenant_code}-{handle}
-    # (CLAUDE.md §5), same convention as tenant onboarding (Phase 03).
+    # Local handle only — the API composes the real login id as {tenant_code}{handle}
+    # (no separator, CLAUDE.md §5), same convention as tenant onboarding (Phase 03).
     local_handle: str = Field(min_length=2, max_length=50, pattern=_LOCAL_HANDLE_RE)
     name: str = Field(min_length=2, max_length=200)
     phone: str | None = None

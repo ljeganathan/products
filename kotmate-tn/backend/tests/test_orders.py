@@ -416,3 +416,193 @@ async def test_kitchen_role_blocked_from_orders(client: AsyncClient, tenant_admi
         headers=kitchen_headers,
     )
     assert resp.status_code == 403
+
+
+async def test_two_parties_at_same_table_get_independent_orders(client: AsyncClient, tenant_admin: dict):
+    """POS-22: two concurrent parties at one physical table must be two fully separate
+    orders — independently priced, KOT'd, and billed — not merged or blocked.
+    """
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    table = await _create_table(client, headers, location_id, section_id, table_number="T5")
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=100)
+
+    party1 = (
+        await client.post(
+            "/api/v1/orders",
+            json={
+                "location_id": location_id,
+                "section_id": section_id,
+                "table_id": table["id"],
+                "party_label": "Party 1",
+                "items": [{"item_id": item["id"], "quantity": 2}],
+            },
+            headers=headers,
+        )
+    ).json()
+    party2 = (
+        await client.post(
+            "/api/v1/orders",
+            json={
+                "location_id": location_id,
+                "section_id": section_id,
+                "table_id": table["id"],
+                "party_label": "Party 2",
+                "items": [{"item_id": item["id"], "quantity": 1}],
+            },
+            headers=headers,
+        )
+    ).json()
+
+    assert party1["id"] != party2["id"]
+    assert party1["subtotal"] == 200
+    assert party2["subtotal"] == 100
+
+    # The table shows occupied while either party is still open.
+    table_after = next(
+        t for t in (await client.get("/api/v1/tables", headers=headers)).json() if t["id"] == table["id"]
+    )
+    assert table_after["status"] == "occupied"
+
+
+async def test_duplicate_party_label_at_same_table_rejected(client: AsyncClient, tenant_admin: dict):
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    table = await _create_table(client, headers, location_id, section_id, table_number="T6")
+
+    first = await client.post(
+        "/api/v1/orders",
+        json={
+            "location_id": location_id,
+            "section_id": section_id,
+            "table_id": table["id"],
+            "party_label": "Party 1",
+            "items": [],
+        },
+        headers=headers,
+    )
+    assert first.status_code == 201
+
+    dup = await client.post(
+        "/api/v1/orders",
+        json={
+            "location_id": location_id,
+            "section_id": section_id,
+            "table_id": table["id"],
+            "party_label": "Party 1",
+            "items": [],
+        },
+        headers=headers,
+    )
+    assert dup.status_code == 409
+
+
+async def test_table_frees_only_once_all_parties_billed(client: AsyncClient, tenant_admin: dict):
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    table = await _create_table(client, headers, location_id, section_id, table_number="T7")
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=50)
+
+    party1 = (
+        await client.post(
+            "/api/v1/orders",
+            json={
+                "location_id": location_id,
+                "section_id": section_id,
+                "table_id": table["id"],
+                "party_label": "Party 1",
+                "items": [{"item_id": item["id"], "quantity": 1}],
+            },
+            headers=headers,
+        )
+    ).json()
+    party2 = (
+        await client.post(
+            "/api/v1/orders",
+            json={
+                "location_id": location_id,
+                "section_id": section_id,
+                "table_id": table["id"],
+                "party_label": "Party 2",
+                "items": [{"item_id": item["id"], "quantity": 1}],
+            },
+            headers=headers,
+        )
+    ).json()
+
+    await client.post(
+        "/api/v1/bills",
+        json={"order_id": party1["id"], "payments": [{"method": "upi", "amount": 50.0}]},
+        headers=headers,
+    )
+
+    still_occupied = next(
+        t for t in (await client.get("/api/v1/tables", headers=headers)).json() if t["id"] == table["id"]
+    )
+    assert still_occupied["status"] == "occupied", "party 2 is still open"
+
+    await client.post(
+        "/api/v1/bills",
+        json={"order_id": party2["id"], "payments": [{"method": "upi", "amount": 50.0}]},
+        headers=headers,
+    )
+
+    now_free = next(
+        t for t in (await client.get("/api/v1/tables", headers=headers)).json() if t["id"] == table["id"]
+    )
+    assert now_free["status"] == "free"
+
+
+async def test_multiple_kot_sends_on_same_order_club_into_one_bill(client: AsyncClient, tenant_admin: dict):
+    """POS-25: a second KOT send for the same table/customer must land on the same
+    order (and so the same eventual bill), not silently start a duplicate order.
+    """
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    table = await _create_table(client, headers, location_id, section_id, table_number="T8")
+    category = await _create_category(client, headers)
+    dosai = await _create_item(client, headers, category["id"], name_en="Dosai", price=60)
+    idly = await _create_item(client, headers, category["id"], name_en="Idly", price=40)
+
+    order = (
+        await client.post(
+            "/api/v1/orders",
+            json={
+                "location_id": location_id,
+                "section_id": section_id,
+                "table_id": table["id"],
+                "items": [{"item_id": dosai["id"], "quantity": 1}],
+            },
+            headers=headers,
+        )
+    ).json()
+    first_kot = await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)
+    assert first_kot.status_code == 201, first_kot.text
+
+    # Same customer, same table, orders more a bit later — added to the SAME order.
+    updated = (
+        await client.patch(
+            f"/api/v1/orders/{order['id']}",
+            json={"items": [{"item_id": dosai["id"], "quantity": 1}, {"item_id": idly["id"], "quantity": 1}]},
+            headers=headers,
+        )
+    ).json()
+    assert updated["id"] == order["id"]
+    second_kot = await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)
+    assert second_kot.status_code == 201, second_kot.text
+
+    bill = (
+        await client.post(
+            "/api/v1/bills",
+            json={"order_id": order["id"], "payments": [{"method": "upi", "amount": 100.0}]},
+            headers=headers,
+        )
+    ).json()
+    assert bill["subtotal"] == 100
+    assert len(bill["items"]) == 2

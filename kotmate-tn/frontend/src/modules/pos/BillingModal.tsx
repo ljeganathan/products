@@ -101,6 +101,15 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
     setPayments((prev) => (prev.length === 1 ? [{ ...prev[0], amount: total }] : prev));
   }
 
+  // Payment defaults to the full grand total as soon as it's known — a single (non-split)
+  // payment must equal the grand total to bill anyway, so there's no case where a
+  // cashier wants it pre-filled with anything else (POS-28, replaces a manual "Fill full
+  // amount" click). Splitting still works: adding a row takes it out of this sync.
+  useEffect(() => {
+    if (preview) syncSinglePaymentToGrandTotal(preview.grand_total);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview?.grand_total]);
+
   const finalizeMutation = useMutation({
     mutationFn: () => createBill({ order_id: order.id, discount, payments }),
     onSuccess: (bill) => setFinalizedBill(bill),
@@ -249,18 +258,9 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
         </div>
 
         <div className="mb-3">
-          <div className="mb-1.5 flex items-center justify-between">
-            <label className="text-[11px] font-bold uppercase tracking-wide text-ink-faint">Payment</label>
-            {preview && (
-              <button
-                type="button"
-                onClick={() => syncSinglePaymentToGrandTotal(preview.grand_total)}
-                className="text-[10px] font-bold text-accent hover:underline"
-              >
-                Fill full amount
-              </button>
-            )}
-          </div>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-ink-faint">
+            Payment
+          </label>
           <div className="flex flex-col gap-1.5">
             {payments.map((payment, i) => (
               <div key={i} className="flex items-center gap-1.5">
@@ -297,9 +297,9 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
             <button
               type="button"
               onClick={() => setPayments((prev) => [...prev, { method: "cash", amount: 0 }])}
-              className="self-start text-[11px] font-bold text-accent hover:underline"
+              className="min-h-[38px] rounded-lg border border-accent bg-accent-soft px-3 text-sm font-bold text-accent hover:bg-accent hover:text-accent-foreground"
             >
-              + Split payment
+              + Split Payment
             </button>
           </div>
           {preview && !balanced && (

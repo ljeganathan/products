@@ -2,9 +2,10 @@ from pydantic import BaseModel, Field
 
 
 class LoginRequest(BaseModel):
-    # The full login id — for tenant-scoped roles this is the {tenant_code}-{local
-    # handle} form composed at user-creation time (Phase 04); product_owner uses a
-    # bare, unprefixed id. Deliberately untyped/unvalidated as an email (CLAUDE.md §5).
+    # The full login id — for tenant-scoped roles this is the {tenant_code}{local
+    # handle} form (no separator) composed at user-creation time (Phase 04);
+    # product_owner uses a bare, unprefixed id. Deliberately untyped/unvalidated as an
+    # email (CLAUDE.md §5).
     user_id: str = Field(min_length=2, max_length=60)
     password: str = Field(min_length=1)
 

@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router-dom";
 
 import { formatINR } from "@/lib/utils";
 import { listLocations } from "@/modules/admin/locationsApi";
@@ -96,9 +95,6 @@ export function ReportsPage() {
   return (
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
       <div className="mb-6">
-        <Link to="/dashboard" className="text-xs text-foreground/50 hover:underline">
-          ← Dashboard
-        </Link>
         <h1 className="mt-1 text-xl font-bold">Reports</h1>
         <p className="text-sm text-foreground/60">
           Sales, tax, and staff incentive reports for a date range.

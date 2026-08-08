@@ -1,10 +1,12 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUser, get_current_user, require_role, require_tenant_scope
 from app.db.session import get_db
+from app.models import Tenant
 from app.schemas.categories import (
     CategoryCreateRequest,
     CategoryReorderRequest,
@@ -17,6 +19,7 @@ from app.services.category_service import (
     list_categories,
     reorder_categories,
     update_category,
+    upload_category_icon,
 )
 
 # Read access is broad (any tenant-scoped role — Phase 07/08 read categories for the
@@ -56,6 +59,24 @@ async def update_tenant_category(
 ) -> CategoryResponse:
     category = await get_category_or_404(db, current_user.tenant_id, category_id)
     category = await update_category(db, category, payload)
+    await db.commit()
+    return CategoryResponse.model_validate(category)
+
+
+@router.post(
+    "/{category_id}/icon",
+    response_model=CategoryResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def upload_tenant_category_icon(
+    category_id: uuid.UUID,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CategoryResponse:
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))).scalar_one()
+    category = await get_category_or_404(db, tenant.id, category_id)
+    category = await upload_category_icon(db, tenant, category, file)
     await db.commit()
     return CategoryResponse.model_validate(category)
 

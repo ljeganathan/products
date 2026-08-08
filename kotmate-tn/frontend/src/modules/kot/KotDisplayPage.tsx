@@ -4,6 +4,7 @@ import { useState } from "react";
 import { listItems } from "@/modules/admin/itemsApi";
 import { listLocations } from "@/modules/admin/locationsApi";
 import { useAuthStore } from "@/modules/auth/authStore";
+import { UserMenu } from "@/modules/auth/UserMenu";
 import { type ActiveKotTicket, listActiveKotTickets, updateKotTicketStatus } from "@/modules/pos/kotApi";
 import { useLocationSocket } from "@/modules/realtime/useLocationSocket";
 
@@ -89,6 +90,8 @@ export function KotDisplayPage() {
           KM
         </span>
         <span className="text-[13px] font-extrabold leading-none">Kitchen Display</span>
+
+        <UserMenu links={role === "tenant_admin" ? [{ to: "/dashboard", label: "Dashboard" }] : []} />
       </header>
 
       {lowStockItems.length > 0 && (

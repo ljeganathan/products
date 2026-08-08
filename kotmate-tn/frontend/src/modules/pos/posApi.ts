@@ -35,6 +35,7 @@ export interface Order {
   pos_user_login_id: string;
   status: "open" | "held" | "billed";
   hold_label: string | null;
+  party_label: string | null;
   items: OrderItemLine[];
   subtotal: number;
   waiter_incentive_amount: number | null;
@@ -54,6 +55,7 @@ export interface OrderCreatePayload {
   waiter_id?: string | null;
   items: OrderLineInput[];
   hold_label?: string | null;
+  party_label?: string | null;
 }
 
 export interface OrderUpdatePayload {
@@ -62,6 +64,7 @@ export interface OrderUpdatePayload {
   waiter_id?: string | null;
   items?: OrderLineInput[];
   hold_label?: string | null;
+  party_label?: string | null;
   status?: "open" | "held";
 }
 
@@ -73,7 +76,11 @@ export async function getOrder(id: string): Promise<Order> {
   return (await api.get<Order>(`/api/v1/orders/${id}`)).data;
 }
 
-export async function listOrders(params?: { status?: string; location_id?: string }): Promise<Order[]> {
+export async function listOrders(params?: {
+  status?: string;
+  location_id?: string;
+  table_id?: string;
+}): Promise<Order[]> {
   return (await api.get<Order[]>("/api/v1/orders", { params })).data;
 }
 

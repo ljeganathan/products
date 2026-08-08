@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { type FormEvent, useState } from "react";
-import { Link } from "react-router-dom";
 
 import { me } from "@/modules/auth/authApi";
 import {
@@ -30,7 +29,7 @@ interface TaxRuleFormState {
   is_default: boolean;
 }
 
-function TaxRuleFormModal({
+export function TaxRuleFormModal({
   editingRule,
   onClose,
 }: {
@@ -172,9 +171,6 @@ export function TaxRulesPage() {
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <Link to="/dashboard" className="text-xs text-foreground/50 hover:underline">
-            ← Dashboard
-          </Link>
           <h1 className="mt-1 text-xl font-bold">Tax Rules</h1>
           <p className="text-sm text-foreground/60">
             CGST and SGST are always tracked as two separate rates — never merged into one

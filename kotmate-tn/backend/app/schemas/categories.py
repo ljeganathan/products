@@ -24,6 +24,7 @@ class CategoryResponse(BaseModel):
     id: uuid.UUID
     name_en: str
     name_ta: str | None
+    icon_url: str | None
     display_order: int
     is_active: bool
     created_at: datetime

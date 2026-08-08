@@ -8,6 +8,8 @@ import { createTenant, type TenantCreatePayload } from "@/modules/product-owner/
 
 const initialForm: TenantCreatePayload = {
   company_name: "",
+  email: "",
+  phone: "",
   door_no: "",
   street: "",
   city: "",
@@ -74,6 +76,24 @@ export function TenantCreatePage() {
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className={labelClass}>Email</label>
+              <input
+                type="email"
+                className={inputClass}
+                value={form.email}
+                onChange={(e) => update("email", e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className={labelClass}>Phone</label>
+              <input
+                type="tel"
+                className={inputClass}
+                value={form.phone}
+                onChange={(e) => update("phone", e.target.value)}
+              />
+            </div>
             <div className="flex flex-col gap-1.5">
               <label className={labelClass}>Door No.</label>
               <input

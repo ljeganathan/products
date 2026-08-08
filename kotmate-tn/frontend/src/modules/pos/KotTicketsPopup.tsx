@@ -37,21 +37,39 @@ export function KotTicketsPopup({ onSelectOrder, onClose }: KotTicketsPopupProps
         {data && data.length > 0 && (
           <ul className="flex flex-col gap-2">
             {data.map((ticket) => (
-              <li key={ticket.id}>
-                <button
-                  type="button"
-                  onClick={() => onSelectOrder(ticket.order_id)}
-                  className="flex w-full items-center justify-between rounded-lg border border-border bg-surface-2 px-3.5 py-2.5 text-left transition-colors hover:border-accent hover:bg-accent-soft"
-                >
-                  <span>
-                    <span className="font-mono text-xs text-ink-faint">#{ticket.ticket_number}</span>
-                    <span className="ml-2 text-lg font-black">{ticket.table_number ?? "—"}</span>
-                    <span className="ml-1.5 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-extrabold text-accent">
-                      {ticket.section_name_en}
+              <li key={ticket.id} className="overflow-hidden rounded-lg border border-border bg-surface-2">
+                <details>
+                  <summary className="flex cursor-pointer list-none items-center justify-between px-3.5 py-2.5 marker:content-none">
+                    <span>
+                      <span className="font-mono text-xs text-ink-faint">#{ticket.ticket_number}</span>
+                      <span className="ml-2 text-lg font-black">{ticket.table_number ?? "—"}</span>
+                      <span className="ml-1.5 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-extrabold text-accent">
+                        {ticket.section_name_en}
+                      </span>
                     </span>
-                  </span>
-                  <span className="text-xs font-semibold capitalize text-ink-faint">{ticket.status}</span>
-                </button>
+                    <span className="text-xs font-semibold capitalize text-ink-faint">{ticket.status}</span>
+                  </summary>
+                  <div className="border-t border-dashed border-border px-3.5 py-2">
+                    <ul className="mb-2 flex flex-col gap-0.5">
+                      {ticket.items.map((item, i) => (
+                        <li key={i} className="flex items-center justify-between text-xs">
+                          <span>
+                            {item.name_en}
+                            {item.name_ta && <span className="ml-1.5 text-ink-faint">{item.name_ta}</span>}
+                          </span>
+                          <span className="font-bold">×{item.quantity}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      type="button"
+                      onClick={() => onSelectOrder(ticket.order_id)}
+                      className="w-full rounded-md border border-accent bg-accent-soft py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-accent-foreground"
+                    >
+                      Bill this ticket
+                    </button>
+                  </div>
+                </details>
               </li>
             ))}
           </ul>

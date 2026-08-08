@@ -126,9 +126,9 @@ async def test_tenant_location_user_roundtrip_and_isolation():
             )
         )
         role = (await session.execute(select(Role).where(Role.code == "tenant_admin"))).scalar_one()
-        # user_id is globally unique (Phase 02) and composed as {tenant_code}-{local
-        # handle}, exactly as Phase 04 will do at real user-creation time.
-        login_id = f"{tenant.tenant_code}-admin01"
+        # user_id is globally unique (Phase 02) and composed as {tenant_code}{local
+        # handle} (no separator), exactly as Phase 04 will do at real user-creation time.
+        login_id = f"{tenant.tenant_code}admin01"
         session.add(
             User(
                 tenant_id=tenant.id,

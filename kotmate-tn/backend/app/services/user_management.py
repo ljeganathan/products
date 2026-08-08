@@ -64,8 +64,16 @@ async def _enforce_seat_cap(session: AsyncSession, tenant_id: uuid.UUID, role_co
 
 
 def _to_response(user: User, role_code: str, tenant_code: str, location_ids: list[uuid.UUID]) -> UserResponse:
-    prefix = f"{tenant_code}-"
-    local_handle = user.user_id[len(prefix):] if user.user_id.startswith(prefix) else user.user_id
+    # New logins compose as "{tenant_code}{local_handle}" (no separator, CLAUDE.md §5).
+    # Accounts created before that change still carry the old "{tenant_code}-{handle}"
+    # form — strip whichever prefix is actually present so both keep displaying correctly.
+    hyphen_prefix = f"{tenant_code}-"
+    if user.user_id.startswith(hyphen_prefix):
+        local_handle = user.user_id[len(hyphen_prefix):]
+    elif user.user_id.startswith(tenant_code):
+        local_handle = user.user_id[len(tenant_code):]
+    else:
+        local_handle = user.user_id
     return UserResponse(
         id=user.id,
         user_id=user.user_id,
@@ -119,7 +127,7 @@ async def create_user(session: AsyncSession, tenant: Tenant, req: UserCreateRequ
     await _enforce_seat_cap(session, tenant.id, req.role)
     await _validate_location_ids(session, tenant.id, req.location_ids)
 
-    login_id = f"{tenant.tenant_code}-{req.local_handle}"
+    login_id = f"{tenant.tenant_code}{req.local_handle}"
     existing = (await session.execute(select(User.id).where(User.user_id == login_id))).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, f"Login id '{login_id}' is already in use")

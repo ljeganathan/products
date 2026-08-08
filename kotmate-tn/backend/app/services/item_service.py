@@ -1,13 +1,17 @@
+import csv
+import io
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import or_, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.models import Category, Item, ItemSectionPrice, Plan, SeatingSection, TaxRule, Tenant
+from app.models import Bill, BillItem, Category, Item, ItemSectionPrice, Plan, SeatingSection, TaxRule, Tenant
 from app.schemas.items import (
     ItemCreateRequest,
+    ItemImportResult,
     ItemUpdateRequest,
     SectionPriceEntry,
     SectionPriceOption,
@@ -15,6 +19,25 @@ from app.schemas.items import (
 from app.services.storage import get_storage
 
 _ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+_TOP_SELLER_LIMIT = 8
+_TOP_SELLER_LOOKBACK_DAYS = 7
+
+# Low-stock threshold — CLAUDE.md §11: banner/badge (KOT/POS) and the Dashboard's Low
+# Stock widget (Phase 20) all agree a tracked item is "low" once 5 or fewer remain.
+LOW_STOCK_THRESHOLD = 5
+
+# Deliberately excludes image_url (CLAUDE.md §6 "Item import/export" — images are
+# handled by their own per-item upload flow, not the spreadsheet round-trip).
+_CSV_COLUMNS = [
+    "item_code",
+    "name_en",
+    "name_ta",
+    "category",
+    "price",
+    "tax_class",
+    "is_top_seller",
+    "is_combo_tile",
+]
 
 
 def _upgrade_required(feature: str) -> HTTPException:
@@ -63,23 +86,56 @@ async def list_items(
     return list(rows.scalars().all())
 
 
-async def search_items(session: AsyncSession, tenant_id: uuid.UUID, q: str, limit: int = 50) -> list[Item]:
-    """Trigram-similarity search across name_en/name_ta (Phase 07, CLAUDE.md §9) — the
-    `ix_items_name_en_trgm`/`ix_items_name_ta_trgm` GIN indexes keep this fast even on a
-    large catalog, and `%` (pg_trgm's similarity operator) tolerates typos/partial
-    matches that a plain ILIKE can't.
+async def list_low_stock_items(session: AsyncSession, tenant_id: uuid.UUID) -> list[Item]:
+    """Powers the Dashboard's Low Stock widget (Phase 20, Dash-33a) — the same
+    `track_inventory`/`available_qty <= LOW_STOCK_THRESHOLD` signal already driving the
+    KOT/POS low-stock badges (CLAUDE.md §11), just queried tenant-wide instead of
+    per-item. Items that don't opt into tracking never appear here, same as elsewhere.
     """
     rows = await session.execute(
         select(Item)
         .where(
             Item.tenant_id == tenant_id,
             Item.is_active.is_(True),
-            text("(name_en % :q OR name_ta % :q)"),
+            Item.track_inventory.is_(True),
+            Item.available_qty.is_not(None),
+            Item.available_qty <= LOW_STOCK_THRESHOLD,
         )
-        .params(q=q)
-        .order_by(
-            text("GREATEST(similarity(name_en, :q), similarity(COALESCE(name_ta, ''), :q)) DESC")
+        .order_by(Item.available_qty.asc(), Item.name_en)
+    )
+    return list(rows.scalars().all())
+
+
+async def search_items(session: AsyncSession, tenant_id: uuid.UUID, q: str, limit: int = 50) -> list[Item]:
+    """Substring + trigram-similarity search across name_en/name_ta (Phase 07/18,
+    CLAUDE.md §9). Substring `ILIKE` alone would miss typos; trigram similarity (`%`)
+    alone misses realistic short prefixes — e.g. "cof" vs "Filter Coffee" scores 0.2
+    similarity, under pg_trgm's default 0.3 threshold, so a cashier typing the first few
+    letters of an item got zero results (POS-37). ORing both keeps the typo-tolerance
+    trigram search was added for while still matching plain short prefixes. The
+    `ix_items_name_en_trgm`/`ix_items_name_ta_trgm` GIN indexes accelerate both forms.
+    """
+    like = f"%{q}%"
+    # Bind `q` directly on each text() fragment via .bindparams() rather than relying on
+    # an outer .params(q=q) on the Select — two separate text() clauses both named `:q`
+    # left the outer binding ambiguous under SQLAlchemy's statement-plan caching,
+    # intermittently raising "A value is required for bind parameter 'q'" at execution.
+    trgm_match = text("(name_en % :q OR name_ta % :q)").bindparams(q=q)
+    trgm_rank = text(
+        "GREATEST(similarity(name_en, :q), similarity(COALESCE(name_ta, ''), :q)) DESC"
+    ).bindparams(q=q)
+    rows = await session.execute(
+        select(Item)
+        .where(
+            Item.tenant_id == tenant_id,
+            Item.is_active.is_(True),
+            or_(
+                Item.name_en.ilike(like),
+                Item.name_ta.ilike(like),
+                trgm_match,
+            ),
         )
+        .order_by(trgm_rank)
         .limit(limit)
     )
     return list(rows.scalars().all())
@@ -102,13 +158,45 @@ async def get_item_by_code(session: AsyncSession, tenant_id: uuid.UUID, item_cod
 async def list_top_sellers(session: AsyncSession, tenant_id: uuid.UUID) -> list[Item]:
     """Powers the POS screen's "Top Selling" category tab (CLAUDE.md §9), always the
     first tab regardless of what other categories the tenant has configured.
+
+    Manually-pinned items (`is_top_seller=True`, set in Item Master) always show first —
+    an owner can still guarantee a Meals/Thali combo leads the tab regardless of recent
+    sales. When fewer than `_TOP_SELLER_LIMIT` items are pinned, the rest are filled in
+    from actual sales over the last `_TOP_SELLER_LOOKBACK_DAYS` days (Phase 18, POS-31) —
+    previously this tab was 100% manual and never reflected what was actually selling.
     """
-    rows = await session.execute(
-        select(Item)
-        .where(Item.tenant_id == tenant_id, Item.is_active.is_(True), Item.is_top_seller.is_(True))
-        .order_by(Item.name_en)
+    pinned = (
+        await session.execute(
+            select(Item)
+            .where(Item.tenant_id == tenant_id, Item.is_active.is_(True), Item.is_top_seller.is_(True))
+            .order_by(Item.name_en)
+        )
+    ).scalars().all()
+    if len(pinned) >= _TOP_SELLER_LIMIT:
+        return list(pinned)
+
+    pinned_ids = {i.id for i in pinned}
+    cutoff = datetime.now(UTC) - timedelta(days=_TOP_SELLER_LOOKBACK_DAYS)
+    ranked = await session.execute(
+        select(BillItem.item_id, func.sum(BillItem.quantity).label("qty"))
+        .join(Bill, Bill.id == BillItem.bill_id)
+        .where(Bill.tenant_id == tenant_id, Bill.status == "finalized", Bill.created_at >= cutoff)
+        .group_by(BillItem.item_id)
+        .order_by(func.sum(BillItem.quantity).desc())
+        .limit(_TOP_SELLER_LIMIT + len(pinned))
     )
-    return list(rows.scalars().all())
+    computed_ids = [row.item_id for row in ranked if row.item_id not in pinned_ids]
+    if not computed_ids:
+        return list(pinned)
+
+    computed_items = (
+        await session.execute(
+            select(Item).where(Item.id.in_(computed_ids), Item.is_active.is_(True))
+        )
+    ).scalars().all()
+    rank = {item_id: i for i, item_id in enumerate(computed_ids)}
+    computed_items = sorted(computed_items, key=lambda i: rank[i.id])
+    return list(pinned) + computed_items[: _TOP_SELLER_LIMIT - len(pinned)]
 
 
 async def get_item_or_404(session: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID) -> Item:
@@ -278,3 +366,140 @@ async def set_section_prices(
 
     await session.flush()
     return await get_section_prices(session, tenant_id, item)
+
+
+async def export_items_csv(session: AsyncSession, tenant_id: uuid.UUID, plan: Plan | None) -> str:
+    if not plan or not plan.features.get("item_export"):
+        raise _upgrade_required("item_export")
+
+    rows = (
+        await session.execute(
+            select(Item, Category.name_en, TaxRule.name)
+            .join(Category, Category.id == Item.category_id)
+            .outerjoin(TaxRule, TaxRule.id == Item.tax_class_id)
+            .where(Item.tenant_id == tenant_id)
+            .order_by(Item.name_en)
+        )
+    ).all()
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=_CSV_COLUMNS)
+    writer.writeheader()
+    for item, category_name, tax_class_name in rows:
+        writer.writerow(
+            {
+                "item_code": item.item_code or "",
+                "name_en": item.name_en,
+                "name_ta": item.name_ta or "",
+                "category": category_name,
+                "price": item.price,
+                "tax_class": tax_class_name or "",
+                "is_top_seller": item.is_top_seller,
+                "is_combo_tile": item.is_combo_tile,
+            }
+        )
+    return buffer.getvalue()
+
+
+def _parse_bool(value: str) -> bool:
+    return value.strip().lower() in {"true", "1", "yes"}
+
+
+async def import_items_csv(
+    session: AsyncSession, tenant_id: uuid.UUID, plan: Plan | None, csv_text: str
+) -> ItemImportResult:
+    if not plan or not plan.features.get("item_import"):
+        raise _upgrade_required("item_import")
+
+    try:
+        reader = csv.DictReader(io.StringIO(csv_text))
+        rows = list(reader)
+    except csv.Error as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Malformed CSV: {exc}") from exc
+
+    categories = {
+        c.name_en.strip().lower(): c.id
+        for c in (
+            await session.execute(select(Category).where(Category.tenant_id == tenant_id))
+        ).scalars()
+    }
+    tax_classes = {
+        t.name.strip().lower(): t.id
+        for t in (await session.execute(select(TaxRule).where(TaxRule.tenant_id == tenant_id))).scalars()
+    }
+    existing_by_code = {
+        i.item_code: i
+        for i in (
+            await session.execute(
+                select(Item).where(Item.tenant_id == tenant_id, Item.item_code.is_not(None))
+            )
+        ).scalars()
+        if i.item_code
+    }
+
+    created = 0
+    updated = 0
+    errors: list[str] = []
+
+    for row_num, row in enumerate(rows, start=2):  # header is row 1
+        name_en = (row.get("name_en") or "").strip()
+        category_name = (row.get("category") or "").strip()
+        price_raw = (row.get("price") or "").strip()
+        item_code = (row.get("item_code") or "").strip() or None
+
+        if not name_en:
+            errors.append(f"row {row_num}: name_en is required")
+            continue
+        category_id = categories.get(category_name.lower())
+        if category_id is None:
+            errors.append(f"row {row_num}: unknown category '{category_name}'")
+            continue
+        try:
+            price = float(price_raw)
+            if price <= 0:
+                raise ValueError
+        except ValueError:
+            errors.append(f"row {row_num}: invalid price '{price_raw}'")
+            continue
+
+        tax_class_name = (row.get("tax_class") or "").strip()
+        tax_class_id = None
+        if tax_class_name:
+            tax_class_id = tax_classes.get(tax_class_name.lower())
+            if tax_class_id is None:
+                errors.append(f"row {row_num}: unknown tax_class '{tax_class_name}'")
+                continue
+
+        name_ta = (row.get("name_ta") or "").strip() or None
+        is_top_seller = _parse_bool(row.get("is_top_seller") or "")
+        is_combo_tile = _parse_bool(row.get("is_combo_tile") or "")
+
+        existing = existing_by_code.get(item_code) if item_code else None
+        if existing is not None:
+            existing.name_en = name_en
+            existing.name_ta = name_ta
+            existing.category_id = category_id
+            existing.price = price
+            existing.tax_class_id = tax_class_id
+            existing.is_top_seller = is_top_seller
+            existing.is_combo_tile = is_combo_tile
+            updated += 1
+        else:
+            session.add(
+                Item(
+                    tenant_id=tenant_id,
+                    name_en=name_en,
+                    name_ta=name_ta,
+                    category_id=category_id,
+                    price=price,
+                    tax_class_id=tax_class_id,
+                    item_code=item_code,
+                    is_top_seller=is_top_seller,
+                    is_combo_tile=is_combo_tile,
+                    is_active=True,
+                )
+            )
+            created += 1
+
+    await session.flush()
+    return ItemImportResult(created=created, updated=updated, errors=errors)

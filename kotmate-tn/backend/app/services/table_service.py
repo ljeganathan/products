@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import SeatingSection, Table, TenantLocation
+from app.models import Order, SeatingSection, Table, TenantLocation
 from app.schemas.tables import TableCreateRequest, TableUpdateRequest
 
 
@@ -47,6 +47,24 @@ async def list_tables(
         query = query.where(Table.location_id == location_id)
     rows = await session.execute(query.order_by(Table.table_number))
     return list(rows.scalars().all())
+
+
+async def compute_occupied_table_ids(
+    session: AsyncSession, tenant_id: uuid.UUID, table_ids: list[uuid.UUID]
+) -> set[uuid.UUID]:
+    """`Table.status` is never actually written anywhere (it sits at its 'free' default
+    forever) — the real signal is "does this table have an open order right now",
+    computed here rather than stored, so it can't drift out of sync with `orders`
+    (Phase 19 — a table can now hold more than one open order/party, POS-22).
+    """
+    if not table_ids:
+        return set()
+    rows = await session.execute(
+        select(Order.table_id)
+        .where(Order.tenant_id == tenant_id, Order.status == "open", Order.table_id.in_(table_ids))
+        .distinct()
+    )
+    return set(rows.scalars().all())
 
 
 async def get_table_or_404(session: AsyncSession, tenant_id: uuid.UUID, table_id: uuid.UUID) -> Table:

@@ -128,6 +128,32 @@ async def test_multi_location_comparison_pro_max_only(
     assert not any(r["location_id"] == second_location["id"] for r in rows)
 
 
+async def test_low_stock_items_reports_tracked_items_at_or_under_threshold(
+    client: AsyncClient, tenant_admin: dict
+):
+    headers = tenant_admin["headers"]
+    category = await _create_category(client, headers)
+    low = await _create_item(
+        client, headers, category["id"], name_en="Gulab Jamun", track_inventory=True, available_qty=3
+    )
+    out = await _create_item(
+        client, headers, category["id"], name_en="Filter Coffee", track_inventory=True, available_qty=0
+    )
+    # Not tracked, and tracked-but-plentiful — neither should show up.
+    await _create_item(client, headers, category["id"], name_en="Masala Dosa")
+    await _create_item(
+        client, headers, category["id"], name_en="Chicken Biryani", track_inventory=True, available_qty=50
+    )
+
+    resp = await client.get("/api/v1/dashboard/low-stock-items", headers=headers)
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    item_ids = {r["item_id"] for r in rows}
+    assert item_ids == {low["id"], out["id"]}
+    out_row = next(r for r in rows if r["item_id"] == out["id"])
+    assert out_row["available_qty"] == 0
+
+
 async def test_waiter_role_blocked_from_dashboard(client: AsyncClient, tenant_admin: dict):
     headers = tenant_admin["headers"]
     waiter_user = (

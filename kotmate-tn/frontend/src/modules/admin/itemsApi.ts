@@ -41,6 +41,12 @@ export interface SectionPriceOption {
   resolved_price: number;
 }
 
+export interface ItemImportResult {
+  created: number;
+  updated: number;
+  errors: string[];
+}
+
 export async function listItems(params?: { category_id?: string; search?: string }): Promise<Item[]> {
   return (await api.get<Item[]>("/api/v1/items", { params })).data;
 }
@@ -77,5 +83,27 @@ export async function setSectionPrices(
 ): Promise<SectionPriceOption[]> {
   return (
     await api.put<SectionPriceOption[]>(`/api/v1/items/${itemId}/section-prices`, { prices })
+  ).data;
+}
+
+export async function downloadItemsCsv(): Promise<void> {
+  const response = await api.get("/api/v1/items/export.csv", { responseType: "blob" });
+  const url = URL.createObjectURL(new Blob([response.data], { type: "text/csv" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "items.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function importItemsCsv(file: File): Promise<ItemImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return (
+    await api.post<ItemImportResult>("/api/v1/items/import.csv", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    })
   ).data;
 }

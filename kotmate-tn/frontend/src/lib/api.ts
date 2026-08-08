@@ -2,7 +2,18 @@ import axios, { type InternalAxiosRequestConfig } from "axios";
 
 import { useAuthStore } from "@/modules/auth/authStore";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+
+// Item/hotel-logo `image_url`/`logo_url` values come back from the backend as
+// server-relative paths (e.g. "/uploads/<tenant>/items/<file>.jpg") — rendered as a bare
+// `<img src>` they resolve against the *frontend's* own origin instead of the backend
+// that actually serves /uploads, so the image silently 404s (Phase 18, POS-17). Local
+// blob/data previews and any already-absolute URL pass through unchanged.
+export function resolveAssetUrl(path: string | null | undefined): string | undefined {
+  if (!path) return undefined;
+  if (/^(https?:|blob:|data:)/.test(path)) return path;
+  return `${API_BASE_URL}${path}`;
+}
 
 export const api = axios.create({
   baseURL: API_BASE_URL,

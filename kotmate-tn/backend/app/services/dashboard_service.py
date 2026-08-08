@@ -9,9 +9,12 @@ from app.schemas.dashboard import (
     DashboardSummaryResponse,
     HourlySalesPoint,
     LocationComparisonRow,
+    LowStockItemRow,
+    LowStockItemsResponse,
     MultiLocationComparisonResponse,
     TopItemRow,
 )
+from app.services.item_service import list_low_stock_items
 
 # India-only product (CLAUDE.md: Tamil Nadu) — hardcoding IST rather than adding a
 # per-tenant timezone setting nobody has asked for, so "hourly trend" lines up with an
@@ -75,6 +78,18 @@ async def dashboard_summary(
         average_bill_value=average_bill_value,
         top_items=top_items,
         hourly_trend=hourly_trend,
+    )
+
+
+async def low_stock_items(session: AsyncSession, tenant_id: uuid.UUID) -> LowStockItemsResponse:
+    items = await list_low_stock_items(session, tenant_id)
+    return LowStockItemsResponse(
+        rows=[
+            LowStockItemRow(
+                item_id=item.id, name_en=item.name_en, name_ta=item.name_ta, available_qty=item.available_qty
+            )
+            for item in items
+        ]
     )
 
 

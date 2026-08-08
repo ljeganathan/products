@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { type FormEvent, useState } from "react";
-import { Link } from "react-router-dom";
 
 import { listLocations } from "@/modules/admin/locationsApi";
 import { listSections, type Section } from "@/modules/admin/sectionsApi";
@@ -186,7 +185,7 @@ function TableFormModal({
 
 export function TablesPage() {
   const queryClient = useQueryClient();
-  const { data: tables, isLoading, isError } = useQuery({ queryKey: ["tables"], queryFn: listTables });
+  const { data: tables, isLoading, isError } = useQuery({ queryKey: ["tables"], queryFn: () => listTables() });
   const { data: locations = [] } = useQuery({ queryKey: ["tenant-locations"], queryFn: listLocations });
   const { data: sections = [] } = useQuery({ queryKey: ["sections"], queryFn: listSections });
   const [formTable, setFormTable] = useState<Table | null | "new">(null);
@@ -204,9 +203,6 @@ export function TablesPage() {
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <Link to="/dashboard" className="text-xs text-foreground/50 hover:underline">
-            ← Dashboard
-          </Link>
           <h1 className="mt-1 text-xl font-bold">Table Master</h1>
           <p className="text-sm text-foreground/60">Every table belongs to a physical seating section</p>
         </div>

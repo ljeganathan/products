@@ -5,11 +5,13 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import generate_temp_password, hash_password
 from app.db.session import get_db
-from app.models import Tenant
+from app.models import Role, Tenant, User
 from app.schemas.platform import (
     ChangePlanRequest,
     SubscriptionStatusUpdate,
+    TenantAdminPasswordResetResponse,
     TenantCreateRequest,
     TenantDetail,
     TenantSummary,
@@ -78,6 +80,33 @@ async def update_tenant(
     await db.commit()
     await _reapply_platform_scope(db)
     return await build_tenant_detail(db, tenant)
+
+
+@router.post("/{tenant_id}/reset-admin-password", response_model=TenantAdminPasswordResetResponse)
+async def reset_tenant_admin_password(
+    tenant_id: uuid.UUID, db: AsyncSession = Depends(get_db)
+) -> TenantAdminPasswordResetResponse:
+    """Platform-admin-triggered reset for a tenant's own admin login — there is no
+    self-service/email flow in v1 (CLAUDE.md §5). Resets the tenant's oldest active
+    `tenant_admin` account and returns the one-time password for the platform operator
+    to hand off out-of-band; it is never logged or stored in plaintext.
+    """
+    tenant = await _get_tenant_or_404(db, tenant_id)
+    admin_user = (
+        await db.execute(
+            select(User)
+            .join(Role, Role.id == User.role_id)
+            .where(User.tenant_id == tenant.id, Role.code == "tenant_admin")
+            .order_by(User.created_at)
+        )
+    ).scalars().first()
+    if admin_user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Tenant has no admin account")
+
+    temp_password = generate_temp_password()
+    admin_user.password_hash = hash_password(temp_password)
+    await db.commit()
+    return TenantAdminPasswordResetResponse(admin_login_id=admin_user.user_id, temp_password=temp_password)
 
 
 @router.post("/{tenant_id}/change-plan", response_model=TenantDetail)

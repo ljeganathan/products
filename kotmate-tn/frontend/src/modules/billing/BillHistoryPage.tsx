@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router-dom";
 
 import { formatINR } from "@/lib/utils";
+import { listSections } from "@/modules/admin/sectionsApi";
 import { listTables } from "@/modules/admin/tablesApi";
+import { listUsers } from "@/modules/admin/usersApi";
 import { listWaiters } from "@/modules/admin/waitersApi";
 import { type BillSearchParams, listBills, reprintBill } from "@/modules/pos/billsApi";
 
@@ -12,8 +13,11 @@ const inputClass =
 
 export function BillHistoryPage() {
   const queryClient = useQueryClient();
-  const { data: tables = [] } = useQuery({ queryKey: ["pos-tables"], queryFn: listTables });
-  const { data: waiters = [] } = useQuery({ queryKey: ["pos-waiters"], queryFn: listWaiters });
+  const { data: tables = [] } = useQuery({ queryKey: ["pos-tables"], queryFn: () => listTables() });
+  const { data: waiters = [] } = useQuery({ queryKey: ["pos-waiters"], queryFn: () => listWaiters() });
+  const { data: sections = [] } = useQuery({ queryKey: ["sections"], queryFn: listSections });
+  const { data: users = [] } = useQuery({ queryKey: ["users"], queryFn: listUsers });
+  const cashiers = users.filter((u) => u.role === "pos_user" || u.role === "tenant_admin");
 
   const [filters, setFilters] = useState<BillSearchParams>({});
   const [reprintingId, setReprintingId] = useState<string | null>(null);
@@ -36,16 +40,13 @@ export function BillHistoryPage() {
   return (
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
       <div className="mb-6">
-        <Link to="/dashboard" className="text-xs text-foreground/50 hover:underline">
-          ← Dashboard
-        </Link>
         <h1 className="mt-1 text-xl font-bold">Bill History</h1>
         <p className="text-sm text-foreground/60">
-          Search old bills by number, date, table, or waiter — and reprint any of them.
+          Search old bills by number, date, seating section, waiter, or cashier — and reprint any of them.
         </p>
       </div>
 
-      <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg border border-border bg-surface p-4 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="mb-4 grid grid-cols-2 gap-3 rounded-lg border border-border bg-surface p-4 sm:grid-cols-3 lg:grid-cols-6">
         <input
           placeholder="Bill number"
           className={inputClass}
@@ -66,13 +67,13 @@ export function BillHistoryPage() {
         />
         <select
           className={inputClass}
-          value={filters.table_id ?? ""}
-          onChange={(e) => setFilters((f) => ({ ...f, table_id: e.target.value || undefined }))}
+          value={filters.section_id ?? ""}
+          onChange={(e) => setFilters((f) => ({ ...f, section_id: e.target.value || undefined }))}
         >
-          <option value="">All tables</option>
-          {tables.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.table_number}
+          <option value="">All sections</option>
+          {sections.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name_en}
             </option>
           ))}
         </select>
@@ -85,6 +86,18 @@ export function BillHistoryPage() {
           {waiters.map((w) => (
             <option key={w.id} value={w.id}>
               {w.name}
+            </option>
+          ))}
+        </select>
+        <select
+          className={inputClass}
+          value={filters.pos_user_id ?? ""}
+          onChange={(e) => setFilters((f) => ({ ...f, pos_user_id: e.target.value || undefined }))}
+        >
+          <option value="">All cashiers</option>
+          {cashiers.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} ({c.user_id})
             </option>
           ))}
         </select>

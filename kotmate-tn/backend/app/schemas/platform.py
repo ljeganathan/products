@@ -10,6 +10,8 @@ _PINCODE_RE = r"^[1-9][0-9]{5}$"
 
 class TenantCreateRequest(BaseModel):
     company_name: str = Field(min_length=2, max_length=200)
+    email: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=20)
     door_no: str | None = None
     street: str | None = None
     city: str | None = None
@@ -22,7 +24,8 @@ class TenantCreateRequest(BaseModel):
 
     location_name: str = Field(min_length=2, max_length=200)
 
-    # Local handle only — the API composes the real login id as {tenant_code}-{handle}.
+    # Local handle only — the API composes the real login id as {tenant_code}{handle}
+    # (no separator, CLAUDE.md §5).
     admin_local_handle: str = Field(min_length=2, max_length=50, pattern=r"^[A-Za-z0-9_-]+$")
     admin_name: str = Field(min_length=2, max_length=200)
     admin_password: str = Field(min_length=8)
@@ -81,6 +84,8 @@ class SubscriptionStatusUpdate(BaseModel):
 
 class TenantUpdateRequest(BaseModel):
     company_name: str | None = Field(default=None, min_length=2, max_length=200)
+    email: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=20)
     door_no: str | None = None
     street: str | None = None
     city: str | None = None
@@ -113,6 +118,8 @@ class TenantSummary(BaseModel):
 
 
 class TenantDetail(TenantSummary):
+    email: str | None
+    phone: str | None
     door_no: str | None
     street: str | None
     city: str | None
@@ -122,6 +129,11 @@ class TenantDetail(TenantSummary):
     current_period_start: date | None
     current_period_end: date | None
     created_at: datetime
+
+
+class TenantAdminPasswordResetResponse(BaseModel):
+    admin_login_id: str
+    temp_password: str
 
 
 class PlanResponse(BaseModel):
@@ -171,3 +183,50 @@ class PlatformMetrics(BaseModel):
     total_max_users: int | None
     total_active_locations: int
     total_max_locations: int
+
+
+class InvoiceCreateRequest(BaseModel):
+    tenant_id: uuid.UUID
+    subscription_id: uuid.UUID | None = None
+    amount: float = Field(gt=0)
+    due_date: date
+    description: str | None = Field(default=None, max_length=200)
+
+
+class InvoiceResponse(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    tenant_company_name: str
+    subscription_id: uuid.UUID | None
+    invoice_number: str
+    amount: float
+    status: str
+    issued_date: date
+    due_date: date
+    paid_date: date | None
+    description: str | None
+
+
+class ExpiringSubscriptionAlert(BaseModel):
+    tenant_id: uuid.UUID
+    company_name: str
+    plan_code: str | None
+    current_period_end: date
+    # Negative once the period has already lapsed — the dashboard renders that as
+    # "expired N days ago" instead of a separate boolean flag.
+    days_remaining: int
+
+
+class OverdueInvoiceAlert(BaseModel):
+    invoice_id: uuid.UUID
+    tenant_id: uuid.UUID
+    company_name: str
+    invoice_number: str
+    amount: float
+    due_date: date
+    days_overdue: int
+
+
+class DashboardAlertsResponse(BaseModel):
+    expiring_subscriptions: list[ExpiringSubscriptionAlert]
+    overdue_invoices: list[OverdueInvoiceAlert]

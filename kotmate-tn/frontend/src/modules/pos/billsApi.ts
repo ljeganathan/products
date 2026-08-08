@@ -83,6 +83,8 @@ export interface BillSearchParams {
   table_id?: string;
   waiter_id?: string;
   location_id?: string;
+  section_id?: string;
+  pos_user_id?: string;
 }
 
 export async function previewBill(payload: BillPreviewPayload): Promise<BillPreview> {

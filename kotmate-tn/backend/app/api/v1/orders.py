@@ -1,6 +1,7 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status as http_status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUser, get_current_user, require_role, require_tenant_scope
@@ -13,6 +14,11 @@ from app.services.order_service import (
     get_order_or_404,
     list_orders,
     preview_order_update,
+)
+
+_DUPLICATE_PARTY_DETAIL = (
+    "That party label is already in use for an open order at this table — someone else "
+    "just claimed it. Refresh and pick another."
 )
 
 # waiter/pos_user/tenant_admin can all build a cart; `kitchen` has no POS access
@@ -33,8 +39,12 @@ async def create_tenant_order(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> OrderResponse:
-    result = await create_order(db, current_user.tenant_id, current_user, payload)
-    await db.commit()
+    try:
+        result = await create_order(db, current_user.tenant_id, current_user, payload)
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(http_status.HTTP_409_CONFLICT, _DUPLICATE_PARTY_DETAIL) from exc
     return result
 
 
@@ -42,10 +52,11 @@ async def create_tenant_order(
 async def list_tenant_orders(
     status: str | None = None,
     location_id: uuid.UUID | None = None,
+    table_id: uuid.UUID | None = None,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[OrderResponse]:
-    orders = await list_orders(db, current_user.tenant_id, status, location_id)
+    orders = await list_orders(db, current_user.tenant_id, status, location_id, table_id)
     return [await build_order_response(db, order) for order in orders]
 
 
@@ -72,6 +83,10 @@ async def update_tenant_order(
     if dry_run:
         return await preview_order_update(db, current_user.tenant_id, order, payload)
 
-    result = await apply_order_update(db, current_user.tenant_id, current_user, order, payload)
-    await db.commit()
+    try:
+        result = await apply_order_update(db, current_user.tenant_id, current_user, order, payload)
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(http_status.HTTP_409_CONFLICT, _DUPLICATE_PARTY_DETAIL) from exc
     return result

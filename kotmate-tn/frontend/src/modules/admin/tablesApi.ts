@@ -22,8 +22,8 @@ export interface TableUpdatePayload extends Partial<TableCreatePayload> {
   is_active?: boolean;
 }
 
-export async function listTables(): Promise<Table[]> {
-  return (await api.get<Table[]>("/api/v1/tables")).data;
+export async function listTables(params?: { location_id?: string }): Promise<Table[]> {
+  return (await api.get<Table[]>("/api/v1/tables", { params })).data;
 }
 
 export async function createTable(payload: TableCreatePayload): Promise<Table> {

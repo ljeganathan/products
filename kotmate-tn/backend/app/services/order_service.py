@@ -228,6 +228,7 @@ async def _build_response(
         pos_user_login_id=pos_user.user_id,
         status=order.status,
         hold_label=order.hold_label,
+        party_label=order.party_label,
         items=[_line_response(line) for line in lines],
         subtotal=subtotal,
         waiter_incentive_amount=_incentive_amount(waiter.incentive_rate if waiter else None, subtotal),
@@ -273,6 +274,7 @@ async def create_order(
         pos_user_id=current_user.id,
         status="open",
         hold_label=req.hold_label,
+        party_label=req.party_label,
     )
     session.add(order)
     await session.flush()
@@ -305,13 +307,19 @@ async def get_order_or_404(session: AsyncSession, tenant_id: uuid.UUID, order_id
 
 
 async def list_orders(
-    session: AsyncSession, tenant_id: uuid.UUID, status_filter: str | None, location_id: uuid.UUID | None
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    status_filter: str | None,
+    location_id: uuid.UUID | None,
+    table_id: uuid.UUID | None = None,
 ) -> list[Order]:
     query = select(Order).where(Order.tenant_id == tenant_id)
     if status_filter is not None:
         query = query.where(Order.status == status_filter)
     if location_id is not None:
         query = query.where(Order.location_id == location_id)
+    if table_id is not None:
+        query = query.where(Order.table_id == table_id)
     rows = await session.execute(query.order_by(Order.updated_at.desc()))
     return list(rows.scalars().all())
 
@@ -465,6 +473,7 @@ async def preview_order_update(
         pos_user_id=order.pos_user_id,
         status=data.get("status", order.status),
         hold_label=data.get("hold_label", order.hold_label),
+        party_label=data.get("party_label", order.party_label),
     )
     shell.created_at = order.created_at
 
@@ -496,6 +505,8 @@ async def apply_order_update(
         )
     if "hold_label" in data:
         order.hold_label = data["hold_label"]
+    if "party_label" in data:
+        order.party_label = data["party_label"]
     if "status" in data:
         order.status = data["status"]
     # Picking up/editing an order as pos_user or tenant_admin makes them the

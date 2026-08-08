@@ -17,7 +17,16 @@ Estimates assume one focused full-stack developer (you + Claude Code pair-progra
 | 10 | Settings + Hotel Master + Company Master (multi-location, all tiers) | 2 days |
 | 11 | Reports + Dashboard (incl. waiter/cashier sales + incentive reports) | 3 days |
 | 12 | Import/export, hardening, deployment | 2.5 days |
-| **Total** | | **~30-31 working days (~6 weeks)** |
+| **Total (00-12)** | | **~30-31 working days (~6 weeks)** |
+| 13 | Platform console UX fixes, login-id format, tenant edit/contact, admin password reset | 1 day |
+| 14 | Tenant invoicing + dashboard expiry/overdue alerts | 1.5 days |
+| 15 | Admin nav cleanup, inline Settings printer/tax add, printer width/wifi/bluetooth | 1.5 days |
+| 16 | Item Master overhaul (CSV import/export, add-mode image/pricing, tax class UI, deactivation) | 2 days |
+| 17 | Discount Rules coupon-field fix, Bill History section/cashier filters | 0.5 day |
+| 18 | POS core bug fixes (images, search, category icons, dynamic top-selling, Esc/Clear, payment UX) | 2.5 days |
+| 19 | POS multi-location picker, seat/party splitting, KOT-clubbing verification, Dashboard/Reports location split | 3 days |
+| 20 | Dashboard "Top Item" replacement, POS visual/UX pass | 1 day |
+| **Total (13-20)** | | **~13 working days (~2.5 weeks)** |
 
 **Suggested milestones for demo-ability:**
 - End of Phase 07: internal demo — full POS billing flow (no printing/tax yet) usable on desktop + mobile.

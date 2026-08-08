@@ -4,6 +4,7 @@ export interface Category {
   id: string;
   name_en: string;
   name_ta: string | null;
+  icon_url: string | null;
   display_order: number;
   is_active: boolean;
   created_at: string;
@@ -32,6 +33,16 @@ export async function createCategory(payload: CategoryCreatePayload): Promise<Ca
 
 export async function updateCategory(id: string, payload: CategoryUpdatePayload): Promise<Category> {
   return (await api.patch<Category>(`/api/v1/categories/${id}`, payload)).data;
+}
+
+export async function uploadCategoryIcon(id: string, file: File): Promise<Category> {
+  const form = new FormData();
+  form.append("file", file);
+  return (
+    await api.post<Category>(`/api/v1/categories/${id}/icon`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    })
+  ).data;
 }
 
 export async function reorderCategories(

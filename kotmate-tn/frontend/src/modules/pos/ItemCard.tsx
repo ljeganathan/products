@@ -1,3 +1,4 @@
+import { resolveAssetUrl } from "@/lib/api";
 import { formatINR } from "@/lib/utils";
 import type { PosItem } from "@/modules/pos/posApi";
 import type { StockOverride } from "@/modules/pos/usePosWebSocket";
@@ -65,7 +66,7 @@ export function ItemCard({ item, resolvedPrice, quantityInCart, stockOverride, o
 
       {item.image_url && (
         <img
-          src={item.image_url}
+          src={resolveAssetUrl(item.image_url)}
           alt=""
           className={`w-full rounded-md object-cover ${item.is_combo_tile ? "h-24" : "h-14"}`}
         />

@@ -7,11 +7,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import CurrentUser, get_current_user, require_role, require_tenant_scope
 from app.db.session import get_db
 from app.schemas.tables import TableCreateRequest, TableResponse, TableUpdateRequest
-from app.services.table_service import create_table, get_table_or_404, list_tables, update_table
+from app.services.table_service import (
+    compute_occupied_table_ids,
+    create_table,
+    get_table_or_404,
+    list_tables,
+    update_table,
+)
 
 # Read access is broad (Phase 07 POS needs it for the table selector/floor plan);
 # writes are tenant_admin-only, enforced per-route below.
 router = APIRouter(prefix="/tables", tags=["tables"], dependencies=[Depends(require_tenant_scope)])
+
+
+def _with_computed_status(table, occupied_ids: set[uuid.UUID]) -> TableResponse:
+    return TableResponse.model_validate(table).model_copy(
+        update={"status": "occupied" if table.id in occupied_ids else "free"}
+    )
 
 
 @router.get("", response_model=list[TableResponse])
@@ -21,7 +33,8 @@ async def list_tenant_tables(
     db: AsyncSession = Depends(get_db),
 ) -> list[TableResponse]:
     tables = await list_tables(db, current_user.tenant_id, location_id)
-    return [TableResponse.model_validate(t) for t in tables]
+    occupied_ids = await compute_occupied_table_ids(db, current_user.tenant_id, [t.id for t in tables])
+    return [_with_computed_status(t, occupied_ids) for t in tables]
 
 
 @router.post(
@@ -41,7 +54,7 @@ async def create_tenant_table(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "That table number is already in use at this location"
         ) from exc
-    return TableResponse.model_validate(table)
+    return _with_computed_status(table, set())
 
 
 @router.patch(
@@ -62,4 +75,5 @@ async def update_tenant_table(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "That table number is already in use at this location"
         ) from exc
-    return TableResponse.model_validate(table)
+    occupied_ids = await compute_occupied_table_ids(db, current_user.tenant_id, [table.id])
+    return _with_computed_status(table, occupied_ids)

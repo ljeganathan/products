@@ -77,3 +77,9 @@ class SectionPriceEntry(BaseModel):
 
 class SectionPriceUpdateRequest(BaseModel):
     prices: list[SectionPriceEntry]
+
+
+class ItemImportResult(BaseModel):
+    created: int
+    updated: int
+    errors: list[str]

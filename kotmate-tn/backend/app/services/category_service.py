@@ -1,11 +1,15 @@
 import uuid
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Category
+from app.core.config import get_settings
+from app.models import Category, Tenant
 from app.schemas.categories import CategoryCreateRequest, CategoryReorderRequest, CategoryUpdateRequest
+from app.services.storage import get_storage
+
+_ALLOWED_ICON_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 
 async def list_categories(session: AsyncSession, tenant_id: uuid.UUID) -> list[Category]:
@@ -55,6 +59,28 @@ async def create_category(
 async def update_category(session: AsyncSession, category: Category, req: CategoryUpdateRequest) -> Category:
     for field, value in req.model_dump(exclude_unset=True).items():
         setattr(category, field, value)
+    await session.flush()
+    return category
+
+
+async def upload_category_icon(
+    session: AsyncSession, tenant: Tenant, category: Category, file: UploadFile
+) -> Category:
+    """Unlike item images (Pro+ gated), category icons have no plan check — every tier
+    gets colorful, distinguishable category tabs (CLAUDE.md §9), not just an upsell.
+    """
+    if file.content_type not in _ALLOWED_ICON_CONTENT_TYPES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only JPEG, PNG, or WebP images are allowed")
+
+    content = await file.read()
+    if len(content) > get_settings().MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Image exceeds the maximum upload size")
+
+    storage = get_storage()
+    url = await storage.save(
+        tenant_id=tenant.id, subfolder="categories", filename=file.filename or "upload", content=content
+    )
+    category.icon_url = url
     await session.flush()
     return category
 

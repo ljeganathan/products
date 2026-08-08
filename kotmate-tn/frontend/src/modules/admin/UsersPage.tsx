@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { type FormEvent, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 
 import { listLocations } from "@/modules/admin/locationsApi";
 import {
@@ -425,9 +424,6 @@ export function UsersPage() {
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <Link to="/dashboard" className="text-xs text-foreground/50 hover:underline">
-            ← Dashboard
-          </Link>
           <h1 className="mt-1 text-xl font-bold">User Management</h1>
           <p className="text-sm text-foreground/60">
             {loginId} · Cashier / Waiter / KOT User accounts for this hotel

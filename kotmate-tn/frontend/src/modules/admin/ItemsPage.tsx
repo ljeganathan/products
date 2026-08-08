@@ -1,26 +1,33 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
-import { type FormEvent, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { type ChangeEvent, type FormEvent, useEffect, useRef, useState } from "react";
 
+import { resolveAssetUrl } from "@/lib/api";
 import { listCategories } from "@/modules/admin/categoriesApi";
 import {
   type Item,
   type ItemCreatePayload,
-  type SectionPriceOption,
+  type ItemImportResult,
   createItem,
+  downloadItemsCsv,
   getSectionPrices,
+  importItemsCsv,
   listItems,
   restockItem,
   setSectionPrices,
   updateItem,
   uploadItemImage,
 } from "@/modules/admin/itemsApi";
+import { listTaxRules } from "@/modules/admin/taxRulesApi";
 import { me } from "@/modules/auth/authApi";
 
 const inputClass =
   "min-h-10 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-accent";
 const labelClass = "text-xs font-medium text-foreground/70";
+
+// Small size on purpose (CLAUDE.md §9 dense grid, many items on screen at once) — well
+// under the server's own 5MB ceiling (MAX_UPLOAD_SIZE_BYTES), which stays as a backstop.
+const MAX_IMAGE_BYTES = 1024 * 1024;
 
 function apiErrorMessage(err: unknown, fallback: string): string {
   if (axios.isAxiosError(err) && err.response?.data?.detail) {
@@ -29,11 +36,22 @@ function apiErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
+function suggestNextItemCode(items: Item[]): string {
+  const nums = items
+    .map((i) => i.item_code)
+    .filter((code): code is string => !!code)
+    .map(Number)
+    .filter((n) => !Number.isNaN(n));
+  if (nums.length === 0) return "";
+  return String(Math.max(...nums) + 1);
+}
+
 interface ItemFormState {
   name_en: string;
   name_ta: string;
   category_id: string;
   price: string;
+  tax_class_id: string;
   item_code: string;
   is_top_seller: boolean;
   is_combo_tile: boolean;
@@ -41,13 +59,29 @@ interface ItemFormState {
   available_qty: string;
 }
 
-function emptyForm(defaultCategoryId: string): ItemFormState {
+function formFromItem(item: Item): ItemFormState {
+  return {
+    name_en: item.name_en,
+    name_ta: item.name_ta ?? "",
+    category_id: item.category_id,
+    price: item.price.toString(),
+    tax_class_id: item.tax_class_id ?? "",
+    item_code: item.item_code ?? "",
+    is_top_seller: item.is_top_seller,
+    is_combo_tile: item.is_combo_tile,
+    track_inventory: item.track_inventory,
+    available_qty: item.available_qty?.toString() ?? "",
+  };
+}
+
+function emptyForm(defaultCategoryId: string, suggestedItemCode: string): ItemFormState {
   return {
     name_en: "",
     name_ta: "",
     category_id: defaultCategoryId,
     price: "",
-    item_code: "",
+    tax_class_id: "",
+    item_code: suggestedItemCode,
     is_top_seller: false,
     is_combo_tile: false,
     track_inventory: false,
@@ -62,49 +96,134 @@ function SectionPriceEditor({ itemId, basePrice }: { itemId: string; basePrice: 
     queryFn: () => getSectionPrices(itemId),
   });
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!sections) return;
     const initial: Record<string, string> = {};
     for (const s of sections) initial[s.section_id] = s.override_price?.toString() ?? "";
     setDrafts(initial);
+    setSavedIds(new Set());
   }, [sections]);
 
-  const mutation = useMutation({
-    mutationFn: (section: SectionPriceOption) =>
-      setSectionPrices(itemId, [
-        { section_id: section.section_id, price: drafts[section.section_id] ? Number(drafts[section.section_id]) : null },
-      ]),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["section-prices", itemId] }),
+  const saveAllMutation = useMutation({
+    mutationFn: () =>
+      setSectionPrices(
+        itemId,
+        Object.entries(drafts).map(([section_id, price]) => ({
+          section_id,
+          price: price ? Number(price) : null,
+        })),
+      ),
+    onSuccess: () => {
+      setSavedIds(new Set(Object.keys(drafts)));
+      void queryClient.invalidateQueries({ queryKey: ["section-prices", itemId] });
+    },
   });
+
+  function updateDraft(sectionId: string, value: string) {
+    setDrafts((d) => ({ ...d, [sectionId]: value }));
+    setSavedIds((s) => {
+      if (!s.has(sectionId)) return s;
+      const next = new Set(s);
+      next.delete(sectionId);
+      return next;
+    });
+  }
 
   if (!sections) return <p className="text-xs text-foreground/50">Loading sections…</p>;
 
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-border p-3">
-      {sections.map((section) => (
-        <div key={section.section_id} className="flex items-center gap-3">
-          <span className="w-32 text-sm">{section.section_name_en}</span>
-          <input
-            type="number"
-            min={0}
-            step="0.01"
-            placeholder={`Base ₹${basePrice}`}
-            className={`${inputClass} w-32`}
-            value={drafts[section.section_id] ?? ""}
-            onChange={(e) => setDrafts((d) => ({ ...d, [section.section_id]: e.target.value }))}
-          />
-          <button
-            type="button"
-            disabled={mutation.isPending}
-            onClick={() => mutation.mutate(section)}
-            className="rounded-md border border-border px-3 py-1.5 text-xs font-semibold hover:bg-accent/10"
-          >
-            Save
-          </button>
-          <span className="text-xs text-foreground/50">Resolved: ₹{section.resolved_price}</span>
-        </div>
-      ))}
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 rounded-md border border-border p-3">
+        {sections.map((section) => (
+          <div key={section.section_id} className="flex items-center gap-3">
+            <span className="w-32 text-sm">{section.section_name_en}</span>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              placeholder={`Base ₹${basePrice}`}
+              className={`${inputClass} w-32`}
+              value={drafts[section.section_id] ?? ""}
+              onChange={(e) => updateDraft(section.section_id, e.target.value)}
+            />
+            <span className="text-xs text-foreground/50">Resolved: ₹{section.resolved_price}</span>
+            {savedIds.has(section.section_id) && (
+              <span className="text-xs font-semibold text-accent">Saved ✓</span>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          disabled={saveAllMutation.isPending}
+          onClick={() => saveAllMutation.mutate()}
+          className="self-start rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-accent-foreground disabled:opacity-60"
+        >
+          {saveAllMutation.isPending ? "Saving…" : "Save All Section Prices"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ItemImageEditor({
+  item,
+  onUploaded,
+}: {
+  item: Item;
+  onUploaded: () => void;
+}) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+
+  const imageMutation = useMutation({
+    mutationFn: (file: File) => uploadItemImage(item.id, file),
+    onSuccess: onUploaded,
+    onError: (err) => setImageError(apiErrorMessage(err, "Failed to upload image.")),
+  });
+
+  function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageError(null);
+    if (file.size > MAX_IMAGE_BYTES) {
+      setImageError(
+        `Image is ${(file.size / 1024 / 1024).toFixed(1)}MB — please use one under ${MAX_IMAGE_BYTES / 1024 / 1024}MB.`,
+      );
+      e.target.value = "";
+      return;
+    }
+    setPreviewUrl(URL.createObjectURL(file));
+    imageMutation.mutate(file);
+  }
+
+  const displayUrl = previewUrl ?? item.image_url;
+
+  return (
+    <div className="flex items-center gap-3">
+      {displayUrl && (
+        <img
+          src={resolveAssetUrl(displayUrl)}
+          alt={item.name_en}
+          className="h-20 w-20 rounded-md border border-border object-cover"
+        />
+      )}
+      <div className="flex flex-col gap-1">
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onChange={handleFileChange}
+          className="text-xs"
+        />
+        <p className="text-[11px] text-foreground/50">
+          Max {MAX_IMAGE_BYTES / 1024 / 1024}MB — keep it small, the POS grid shows many items at once.
+        </p>
+        {imageMutation.isPending && <p className="text-xs text-foreground/50">Uploading…</p>}
+        {imageError && <p className="text-xs text-chili">{imageError}</p>}
+      </div>
     </div>
   );
 }
@@ -112,91 +231,74 @@ function SectionPriceEditor({ itemId, basePrice }: { itemId: string; basePrice: 
 function ItemFormModal({
   editingItem,
   categories,
+  taxRules,
   itemImagesEnabled,
   sectionPricingEnabled,
+  suggestedItemCode,
   onClose,
 }: {
   editingItem: Item | null;
   categories: { id: string; name_en: string }[];
+  taxRules: { id: string; name: string }[];
   itemImagesEnabled: boolean;
   sectionPricingEnabled: boolean;
+  suggestedItemCode: string;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  // `item` is the persisted row we're now editing — null only for a brand-new item that
+  // hasn't been saved yet. The first successful Save in "add" mode flips this to the
+  // newly created item (Admin-5) so image upload / per-section pricing become available
+  // immediately, without closing and reopening the modal.
+  const [item, setItem] = useState<Item | null>(editingItem);
   const [form, setForm] = useState<ItemFormState>(
-    editingItem
-      ? {
-          name_en: editingItem.name_en,
-          name_ta: editingItem.name_ta ?? "",
-          category_id: editingItem.category_id,
-          price: editingItem.price.toString(),
-          item_code: editingItem.item_code ?? "",
-          is_top_seller: editingItem.is_top_seller,
-          is_combo_tile: editingItem.is_combo_tile,
-          track_inventory: editingItem.track_inventory,
-          available_qty: editingItem.available_qty?.toString() ?? "",
-        }
-      : emptyForm(categories[0]?.id ?? ""),
+    editingItem ? formFromItem(editingItem) : emptyForm(categories[0]?.id ?? "", suggestedItemCode),
   );
   const [error, setError] = useState<string | null>(null);
-  const [imageError, setImageError] = useState<string | null>(null);
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["items"] });
 
-  const createMutation = useMutation({
-    mutationFn: (payload: ItemCreatePayload) => createItem(payload),
-    onSuccess: () => {
-      invalidate();
-      onClose();
-    },
-    onError: (err) => setError(apiErrorMessage(err, "Failed to create item.")),
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: () =>
-      updateItem(editingItem!.id, {
-        name_en: form.name_en,
-        name_ta: form.name_ta || undefined,
-        category_id: form.category_id,
-        price: Number(form.price),
-        item_code: form.item_code || null,
-        is_top_seller: form.is_top_seller,
-        is_combo_tile: form.is_combo_tile,
-        track_inventory: form.track_inventory,
-        available_qty:
-          form.track_inventory && form.available_qty ? Number(form.available_qty) : null,
-      }),
-    onSuccess: () => {
-      invalidate();
-      onClose();
-    },
-    onError: (err) => setError(apiErrorMessage(err, "Failed to update item.")),
-  });
-
-  const imageMutation = useMutation({
-    mutationFn: (file: File) => uploadItemImage(editingItem!.id, file),
-    onSuccess: invalidate,
-    onError: (err) => setImageError(apiErrorMessage(err, "Failed to upload image.")),
-  });
-
-  function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    if (editingItem) {
-      updateMutation.mutate();
-      return;
-    }
-    createMutation.mutate({
+  function buildPayload(): ItemCreatePayload {
+    return {
       name_en: form.name_en,
       name_ta: form.name_ta || undefined,
       category_id: form.category_id,
       price: Number(form.price),
+      tax_class_id: form.tax_class_id || null,
       item_code: form.item_code || undefined,
       is_top_seller: form.is_top_seller,
       is_combo_tile: form.is_combo_tile,
       track_inventory: form.track_inventory,
       available_qty: form.track_inventory && form.available_qty ? Number(form.available_qty) : null,
-    });
+    };
+  }
+
+  const createMutation = useMutation({
+    mutationFn: () => createItem(buildPayload()),
+    onSuccess: (created) => {
+      invalidate();
+      setItem(created);
+    },
+    onError: (err) => setError(apiErrorMessage(err, "Failed to create item.")),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: () => updateItem(item!.id, buildPayload()),
+    onSuccess: (updated) => {
+      invalidate();
+      setItem(updated);
+    },
+    onError: (err) => setError(apiErrorMessage(err, "Failed to update item.")),
+  });
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    if (item) {
+      updateMutation.mutate();
+    } else {
+      createMutation.mutate();
+    }
   }
 
   const isPending = createMutation.isPending || updateMutation.isPending;
@@ -204,7 +306,7 @@ function ItemFormModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-background p-6 shadow-xl">
-        <h2 className="mb-4 text-lg font-bold">{editingItem ? "Edit Item" : "Add Item"}</h2>
+        <h2 className="mb-4 text-lg font-bold">{item ? "Edit Item" : "Add Item"}</h2>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3">
@@ -227,7 +329,7 @@ function ItemFormModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <div className="flex flex-col gap-1.5">
               <label className={labelClass}>Category</label>
               <select
@@ -254,6 +356,21 @@ function ItemFormModal({
                 value={form.price}
                 onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
               />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className={labelClass}>Tax Class</label>
+              <select
+                className={inputClass}
+                value={form.tax_class_id}
+                onChange={(e) => setForm((f) => ({ ...f, tax_class_id: e.target.value }))}
+              >
+                <option value="">Default</option>
+                {taxRules.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className={labelClass}>Item Code</label>
@@ -312,71 +429,57 @@ function ItemFormModal({
             </p>
           )}
 
+          <div className="flex justify-end border-t border-border pt-3">
+            <button
+              type="submit"
+              disabled={isPending}
+              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-accent-foreground disabled:opacity-60"
+            >
+              {isPending ? "Saving…" : item ? "Save Name/Price Changes" : "Create Item to Continue"}
+            </button>
+          </div>
+
+          <div className="border-t border-border pt-3">
+            <h3 className="mb-2 text-sm font-semibold">Item Image</h3>
+            {item ? (
+              itemImagesEnabled ? (
+                <ItemImageEditor item={item} onUploaded={invalidate} />
+              ) : (
+                <p className="text-xs text-foreground/50">
+                  Item images aren't available on your current plan — upgrade to Pro to add photos.
+                </p>
+              )
+            ) : (
+              <p className="text-xs text-foreground/50">Save the item above first to add a photo.</p>
+            )}
+          </div>
+
+          <div className="border-t border-border pt-3">
+            <h3 className="mb-2 text-sm font-semibold">Per-Section Price Override</h3>
+            {item ? (
+              sectionPricingEnabled ? (
+                <SectionPriceEditor itemId={item.id} basePrice={item.price} />
+              ) : (
+                <p className="text-xs text-foreground/50">
+                  Per-section pricing isn't available on your current plan — upgrade to Pro to reprice
+                  items per seating section (e.g. AC vs Non-AC).
+                </p>
+              )
+            ) : (
+              <p className="text-xs text-foreground/50">Save the item above first to set section prices.</p>
+            )}
+          </div>
+
           <div className="flex justify-end gap-2 border-t border-border pt-4">
             <button
               type="button"
               onClick={onClose}
               className="rounded-md border border-border px-4 py-2 text-sm font-semibold hover:bg-accent/10"
             >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isPending}
-              className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground disabled:opacity-60"
-            >
-              {isPending ? "Saving…" : editingItem ? "Save Changes" : "Create Item"}
+              {item ? "Done" : "Cancel"}
             </button>
           </div>
         </form>
-
-        {editingItem && (
-          <div className="mt-6 flex flex-col gap-2 border-t border-border pt-4">
-            <h3 className="text-sm font-semibold">Item Image</h3>
-            {itemImagesEnabled ? (
-              <>
-                {editingItem.image_url && (
-                  <img
-                    src={editingItem.image_url}
-                    alt={editingItem.name_en}
-                    className="h-20 w-20 rounded-md border border-border object-cover"
-                  />
-                )}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      setImageError(null);
-                      imageMutation.mutate(file);
-                    }
-                  }}
-                />
-                {imageMutation.isPending && <p className="text-xs text-foreground/50">Uploading…</p>}
-                {imageError && <p className="text-xs text-chili">{imageError}</p>}
-              </>
-            ) : (
-              <p className="text-xs text-foreground/50">
-                Item images aren't available on your current plan — upgrade to Pro to add photos.
-              </p>
-            )}
-          </div>
-        )}
-
-        {editingItem && (
-          <div className="mt-6 flex flex-col gap-2 border-t border-border pt-4">
-            <h3 className="text-sm font-semibold">Per-Section Price Override</h3>
-            {sectionPricingEnabled ? (
-              <SectionPriceEditor itemId={editingItem.id} basePrice={editingItem.price} />
-            ) : (
-              <p className="text-xs text-foreground/50">
-                Per-section pricing isn't available on your current plan — upgrade to Pro to reprice
-                items per seating section (e.g. AC vs Non-AC).
-              </p>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -426,14 +529,75 @@ function RestockDialog({ item, onClose }: { item: Item; onClose: () => void }) {
   );
 }
 
+function ImportPanel({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [result, setResult] = useState<ItemImportResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: (file: File) => importItemsCsv(file),
+    onSuccess: (res) => {
+      setResult(res);
+      void queryClient.invalidateQueries({ queryKey: ["items"] });
+    },
+    onError: (err) => setError(apiErrorMessage(err, "Import failed.")),
+  });
+
+  function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setResult(null);
+    mutation.mutate(file);
+  }
+
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-surface p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Import Items from CSV</h3>
+        <button type="button" onClick={onClose} className="text-xs font-semibold hover:underline">
+          Close
+        </button>
+      </div>
+      <p className="mb-2 text-xs text-foreground/60">
+        Columns: item_code, name_en, name_ta, category, price, tax_class, is_top_seller, is_combo_tile.
+        Matches existing items by item_code (updates them); new codes create new items. Images aren't
+        handled by import — add those individually after.
+      </p>
+      <input type="file" accept=".csv,text/csv" onChange={handleFileChange} className="text-xs" />
+      {mutation.isPending && <p className="mt-2 text-xs text-foreground/50">Importing…</p>}
+      {error && <p className="mt-2 text-xs text-chili">{error}</p>}
+      {result && (
+        <div className="mt-2 text-xs">
+          <p className="font-semibold text-accent">
+            {result.created} created, {result.updated} updated.
+          </p>
+          {result.errors.length > 0 && (
+            <ul className="mt-1 list-disc pl-4 text-chili">
+              {result.errors.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ItemsPage() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [formItem, setFormItem] = useState<Item | null | "new">(null);
   const [restockingItem, setRestockingItem] = useState<Item | null>(null);
+  const [showImport, setShowImport] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportErrorTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queryClient = useQueryClient();
 
   const { data: meData } = useQuery({ queryKey: ["me"], queryFn: me });
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: listCategories });
+  const { data: taxRules = [] } = useQuery({ queryKey: ["tax-rules"], queryFn: listTaxRules });
   const { data: items, isLoading, isError } = useQuery({
     queryKey: ["items", categoryFilter, search],
     queryFn: () =>
@@ -443,27 +607,64 @@ export function ItemsPage() {
   const categoryNameById = new Map(categories.map((c) => [c.id, c.name_en]));
   const itemImagesEnabled = meData?.features?.item_images === true;
   const sectionPricingEnabled = meData?.features?.section_pricing === true;
+  const itemExportEnabled = meData?.features?.item_export === true;
+  const itemImportEnabled = meData?.features?.item_import === true;
+
+  const toggleActiveMutation = useMutation({
+    mutationFn: (item: Item) => updateItem(item.id, { is_active: !item.is_active }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["items"] }),
+  });
+
+  async function handleExport() {
+    try {
+      await downloadItemsCsv();
+    } catch (err) {
+      setExportError(apiErrorMessage(err, "Export failed."));
+      if (exportErrorTimeout.current) clearTimeout(exportErrorTimeout.current);
+      exportErrorTimeout.current = setTimeout(() => setExportError(null), 4000);
+    }
+  }
 
   return (
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Link to="/dashboard" className="text-xs text-foreground/50 hover:underline">
-            ← Dashboard
-          </Link>
           <h1 className="mt-1 text-xl font-bold">Item Master</h1>
           <p className="text-sm text-foreground/60">
             {meData?.plan_code === "lite" ? "Lite plan — images & section pricing locked" : "Pro features unlocked"}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setFormItem("new")}
-          className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground"
-        >
-          + Add Item
-        </button>
+        <div className="flex items-center gap-2">
+          {itemExportEnabled && (
+            <button
+              type="button"
+              onClick={() => void handleExport()}
+              className="rounded-md border border-border px-4 py-2 text-sm font-semibold hover:bg-accent/10"
+            >
+              Export CSV
+            </button>
+          )}
+          {itemImportEnabled && (
+            <button
+              type="button"
+              onClick={() => setShowImport((v) => !v)}
+              className="rounded-md border border-border px-4 py-2 text-sm font-semibold hover:bg-accent/10"
+            >
+              Import CSV
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setFormItem("new")}
+            className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground"
+          >
+            + Add Item
+          </button>
+        </div>
       </div>
+
+      {exportError && <p className="mb-4 text-sm text-chili">{exportError}</p>}
+      {showImport && <ImportPanel onClose={() => setShowImport(false)} />}
 
       <div className="mb-4 flex gap-3">
         <input
@@ -500,12 +701,13 @@ export function ItemsPage() {
                 <th className="px-4 py-2.5">Price</th>
                 <th className="px-4 py-2.5">Flags</th>
                 <th className="px-4 py-2.5">Stock</th>
+                <th className="px-4 py-2.5">Status</th>
                 <th className="px-4 py-2.5">Actions</th>
               </tr>
             </thead>
             <tbody>
               {items.map((item) => (
-                <tr key={item.id} className="border-t border-border">
+                <tr key={item.id} className={`border-t border-border ${item.is_active ? "" : "opacity-50"}`}>
                   <td className="px-4 py-2.5 font-mono text-xs">{item.item_code || "—"}</td>
                   <td className="px-4 py-2.5">
                     <div>{item.name_en}</div>
@@ -537,6 +739,17 @@ export function ItemsPage() {
                     )}
                   </td>
                   <td className="px-4 py-2.5">
+                    <span
+                      className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                        item.is_active
+                          ? "bg-accent/15 text-accent-foreground"
+                          : "bg-foreground/10 text-foreground/50"
+                      }`}
+                    >
+                      {item.is_active ? "Active" : "Deactivated"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5">
                     <div className="flex gap-3 text-xs font-semibold">
                       <button type="button" onClick={() => setFormItem(item)} className="text-accent hover:underline">
                         Edit
@@ -550,6 +763,13 @@ export function ItemsPage() {
                           Restock
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => toggleActiveMutation.mutate(item)}
+                        className={item.is_active ? "text-chili hover:underline" : "text-accent hover:underline"}
+                      >
+                        {item.is_active ? "Deactivate" : "Reactivate"}
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -563,8 +783,10 @@ export function ItemsPage() {
         <ItemFormModal
           editingItem={formItem === "new" ? null : formItem}
           categories={categories}
+          taxRules={taxRules}
           itemImagesEnabled={itemImagesEnabled}
           sectionPricingEnabled={sectionPricingEnabled}
+          suggestedItemCode={formItem === "new" ? suggestNextItemCode(items ?? []) : ""}
           onClose={() => setFormItem(null)}
         />
       )}

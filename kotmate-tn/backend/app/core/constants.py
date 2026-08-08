@@ -104,10 +104,21 @@ TABLE_STATUSES = ["free", "occupied", "billed"]
 KOT_TICKET_STATUSES = ["new", "preparing", "ready"]
 PRINTER_TARGETS = ["kot", "bill"]
 PRINTER_TYPES = ["thermal", "dotmatrix"]
-PRINTER_CONNECTION_TYPES = ["network", "usb", "local_agent"]
+PRINTER_CONNECTION_TYPES = ["network", "usb", "local_agent", "wifi", "bluetooth"]
+# Common physical paper widths on the market (CLAUDE.md §10, Phase 15) — surfaced as
+# presets in the UI; a printer not matching one of these still stores whatever mm value
+# was typed in via the "Custom" option, so this list is a UI convenience, not a CHECK
+# constraint on `printers.paper_width_mm`. 58/80mm cover the two common thermal roll
+# widths (2"/3"), 241mm covers 9.5" dot-matrix continuous stationery.
+PRINTER_PAPER_WIDTHS_MM = [58, 80, 241]
 DISCOUNT_TYPES = ["flat_percent", "item_level", "coupon"]
 PAYMENT_METHODS = ["upi", "cash", "card"]
 BILL_STATUSES = ["finalized", "void"]
 SUBSCRIPTION_STATUSES = ["active", "suspended", "cancelled"]
 BILLING_CYCLES = ["monthly", "yearly"]
 PAYMENT_STATUSES = ["paid", "pending", "overdue"]
+# Tenant subscription invoices (Phase 14) — distinct from POS `bills.status`
+# (BILL_STATUSES) and from `subscriptions.payment_status` above; an invoice is the
+# platform-owner-facing billing document, a subscription's payment_status is a
+# lighter-weight flag the metrics/dashboard queries already relied on before Phase 14.
+INVOICE_STATUSES = ["draft", "sent", "paid", "overdue"]

@@ -3,6 +3,7 @@ import axios from "axios";
 import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { resolveAssetUrl } from "@/lib/api";
 import { INDIAN_STATES, gstinStateWarning } from "@/lib/constants";
 import { me } from "@/modules/auth/authApi";
 import {
@@ -19,12 +20,16 @@ import {
   listManagedLocations,
   updateLocation,
 } from "@/modules/admin/locationsApi";
+import { PrinterFormModal } from "@/modules/admin/PrintersPage";
+import { type Printer, listPrinters } from "@/modules/admin/printersApi";
+import { type TaxRule, listTaxRules } from "@/modules/admin/taxRulesApi";
+import { TaxRuleFormModal } from "@/modules/admin/TaxRulesPage";
 
 const inputClass =
   "min-h-10 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-accent";
 const labelClass = "text-xs font-medium text-foreground/70";
 
-const TABS = ["General", "Locations", "Printers", "Tax", "Categories"] as const;
+const TABS = ["General", "Locations", "Printers", "Tax"] as const;
 type Tab = (typeof TABS)[number];
 
 function apiErrorMessage(err: unknown, fallback: string): string {
@@ -53,9 +58,6 @@ export function SettingsPage() {
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Link to="/dashboard" className="text-xs text-foreground/50 hover:underline">
-            ← Dashboard
-          </Link>
           <h1 className="mt-1 text-xl font-bold">Settings</h1>
           <p className="text-sm text-foreground/60">
             Company Master, per-location Hotel Master, printers, tax, and categories.
@@ -105,42 +107,106 @@ export function SettingsPage() {
           !locationsLoading && <p className="text-sm text-foreground/60">Add a location first.</p>
         ))}
       {tab === "Locations" && <LocationsTab locations={locations} />}
-      {tab === "Printers" && (
-        <NavOutCard
-          title="Printers"
-          description="Register a KOT printer and/or Bill printer per location — physical printing only fires on plans that include it."
-          href="/admin/printers"
-        />
+      {tab === "Printers" && <PrintersTab locations={activeLocations} />}
+      {tab === "Tax" && <TaxTab />}
+    </div>
+  );
+}
+
+function PrintersTab({ locations }: { locations: LocationDetail[] }) {
+  const { data: printers = [], isLoading } = useQuery({ queryKey: ["printers"], queryFn: listPrinters });
+  const [showForm, setShowForm] = useState(false);
+
+  return (
+    <div className="max-w-lg rounded-lg border border-border bg-surface p-5">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="mb-1 text-base font-bold">Printers</h2>
+          <p className="text-sm text-foreground/60">
+            Register a KOT printer and/or Bill printer per location — physical printing only fires
+            on plans that include it.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          disabled={locations.length === 0}
+          className="shrink-0 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground disabled:opacity-60"
+        >
+          + Add
+        </button>
+      </div>
+
+      {isLoading && <p className="text-sm text-foreground/60">Loading…</p>}
+      {!isLoading && printers.length === 0 && (
+        <p className="text-sm text-foreground/60">No printers registered yet.</p>
       )}
-      {tab === "Tax" && (
-        <NavOutCard
-          title="Tax Rules"
-          description="CGST and SGST are always tracked as two separate rates, applied per your plan's tax mode."
-          href="/admin/tax-rules"
-        />
+      {printers.length > 0 && (
+        <ul className="flex flex-col gap-1.5 text-sm">
+          {printers.map((p: Printer) => (
+            <li key={p.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+              <span className="font-medium">{p.name}</span>
+              <span className="text-xs uppercase text-foreground/50">{p.target}</span>
+            </li>
+          ))}
+        </ul>
       )}
-      {tab === "Categories" && (
-        <NavOutCard
-          title="Categories"
-          description="Organize the item menu into categories shown as tabs on the POS screen."
-          href="/admin/categories"
-        />
+
+      <Link to="/admin/printers" className="mt-4 inline-block text-xs font-semibold text-accent hover:underline">
+        Manage all printers →
+      </Link>
+
+      {showForm && (
+        <PrinterFormModal editingPrinter={null} locations={locations} onClose={() => setShowForm(false)} />
       )}
     </div>
   );
 }
 
-function NavOutCard({ title, description, href }: { title: string; description: string; href: string }) {
+function TaxTab() {
+  const { data: rules = [], isLoading } = useQuery({ queryKey: ["tax-rules"], queryFn: listTaxRules });
+  const [showForm, setShowForm] = useState(false);
+
   return (
     <div className="max-w-lg rounded-lg border border-border bg-surface p-5">
-      <h2 className="mb-1 text-base font-bold">{title}</h2>
-      <p className="mb-4 text-sm text-foreground/60">{description}</p>
-      <Link
-        to={href}
-        className="inline-block rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground"
-      >
-        Open {title} →
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="mb-1 text-base font-bold">Tax Rules</h2>
+          <p className="text-sm text-foreground/60">
+            CGST and SGST are always tracked as two separate rates, applied per your plan's tax mode.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowForm(true)}
+          className="shrink-0 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground"
+        >
+          + Add
+        </button>
+      </div>
+
+      {isLoading && <p className="text-sm text-foreground/60">Loading…</p>}
+      {!isLoading && rules.length === 0 && (
+        <p className="text-sm text-foreground/60">No tax rules yet.</p>
+      )}
+      {rules.length > 0 && (
+        <ul className="flex flex-col gap-1.5 text-sm">
+          {rules.map((r: TaxRule) => (
+            <li key={r.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+              <span className="font-medium">{r.name}</span>
+              <span className="text-xs text-foreground/50">
+                CGST {r.cgst_rate}% · SGST {r.sgst_rate}%
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Link to="/admin/tax-rules" className="mt-4 inline-block text-xs font-semibold text-accent hover:underline">
+        Manage all tax rules →
       </Link>
+
+      {showForm && <TaxRuleFormModal editingRule={null} onClose={() => setShowForm(false)} />}
     </div>
   );
 }
@@ -381,7 +447,7 @@ function PrintPreview({ hotel }: { hotel: HotelMaster }) {
       <div className="rounded-md border border-dashed border-border bg-white p-4 text-center font-mono text-[11px] text-black">
         {hotel.logo_url ? (
           <img
-            src={hotel.logo_url}
+            src={resolveAssetUrl(hotel.logo_url)}
             alt="Hotel logo"
             className="mx-auto mb-2 h-14 w-14 object-contain"
           />

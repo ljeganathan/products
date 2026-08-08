@@ -1,3 +1,5 @@
+import secrets
+import string
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -9,9 +11,19 @@ from app.core.config import get_settings
 
 TokenType = Literal["access", "refresh"]
 
+_TEMP_PASSWORD_ALPHABET = string.ascii_letters + string.digits
+
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def generate_temp_password(length: int = 12) -> str:
+    """One-time admin-reset password (CLAUDE.md §5 — resets are admin-triggered, no
+    self-service email flow in v1). Shown once in the response; caller must hand it to
+    the tenant admin out-of-band and the admin should change it on next login.
+    """
+    return "".join(secrets.choice(_TEMP_PASSWORD_ALPHABET) for _ in range(length))
 
 
 def verify_password(plain_password: str, password_hash: str) -> bool:
@@ -88,6 +100,7 @@ __all__ = [
     "create_access_token",
     "create_refresh_token",
     "decode_token",
+    "generate_temp_password",
     "hash_password",
     "verify_password",
 ]

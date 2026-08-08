@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, text
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,12 +32,30 @@ class Order(UUIDPKMixin, TimestampMixin, Base):
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
     hold_label: Mapped[str | None] = mapped_column(String(100))
+    # Distinguishes concurrent parties at the same physical table (Phase 19, POS-22) —
+    # e.g. "Party 1"/"Party 2" — so each gets its own independent order/KOT/bill. NULL
+    # (the default, single-party path) is unconstrained; a partial unique index (see the
+    # migration) only blocks two *open* orders from claiming the same label on the same
+    # table. `hold_label` above is a free-text note for the Recall search, a different
+    # concept from this table-scoped identity.
+    party_label: Mapped[str | None] = mapped_column(String(30))
 
     __table_args__ = (
         tenant_composite_index("orders"),
         Index("ix_orders_tenant_id_status", "tenant_id", "status"),
         CheckConstraint(
             f"status IN ({', '.join(repr(s) for s in ORDER_STATUSES)})", name="ck_orders_status_valid"
+        ),
+        # Two open parties can't claim the same label at the same table; unconstrained
+        # once status leaves 'open' (a billed/held order shouldn't block reusing a label)
+        # or when table_id/party_label is NULL (non-seating sections, single-party default).
+        Index(
+            "uq_orders_open_table_party",
+            "tenant_id",
+            "table_id",
+            "party_label",
+            unique=True,
+            postgresql_where=text("status = 'open' AND table_id IS NOT NULL AND party_label IS NOT NULL"),
         ),
     )
 

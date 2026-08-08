@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends
 
+from app.api.v1.platform.dashboard import router as dashboard_router
+from app.api.v1.platform.invoices import router as invoices_router
 from app.api.v1.platform.metrics import router as metrics_router
 from app.api.v1.platform.plans import router as plans_router
 from app.api.v1.platform.settings import router as settings_router
@@ -13,3 +15,5 @@ router.include_router(tenants_router)
 router.include_router(plans_router)
 router.include_router(settings_router)
 router.include_router(metrics_router)
+router.include_router(invoices_router)
+router.include_router(dashboard_router)

@@ -135,3 +135,7 @@ class BillSearchParams(BaseModel):
     table_id: uuid.UUID | None = None
     waiter_id: uuid.UUID | None = None
     location_id: uuid.UUID | None = None
+    # Phase 17: seating section (AC/Non-AC/...) and cashier-of-record filters — both
+    # already snapshotted onto every bill, just weren't exposed as search params.
+    section_id: uuid.UUID | None = None
+    pos_user_id: uuid.UUID | None = None

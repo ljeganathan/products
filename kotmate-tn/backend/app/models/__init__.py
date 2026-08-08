@@ -7,6 +7,7 @@ from app.models.bill import Bill, BillItem, Payment
 from app.models.category import Category
 from app.models.discount import DiscountRule
 from app.models.hotel import HotelMaster
+from app.models.invoice import Invoice
 from app.models.item import Item
 from app.models.kot import KotTicket, KotTicketItem
 from app.models.order import Order, OrderItem
@@ -28,6 +29,7 @@ __all__ = [
     "Category",
     "DiscountRule",
     "HotelMaster",
+    "Invoice",
     "Item",
     "KotTicket",
     "KotTicketItem",

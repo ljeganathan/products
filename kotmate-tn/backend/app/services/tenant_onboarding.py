@@ -58,6 +58,8 @@ async def onboard_tenant(session: AsyncSession, req: TenantCreateRequest) -> Ten
     tenant = Tenant(
         tenant_code=tenant_code,
         company_name=req.company_name,
+        email=req.email,
+        phone=req.phone,
         door_no=req.door_no,
         street=req.street,
         city=req.city,
@@ -93,7 +95,7 @@ async def onboard_tenant(session: AsyncSession, req: TenantCreateRequest) -> Ten
         )
     )
 
-    login_id = f"{tenant_code}-{req.admin_local_handle}"
+    login_id = f"{tenant_code}{req.admin_local_handle}"
     session.add(
         User(
             tenant_id=tenant.id,
@@ -237,6 +239,8 @@ async def build_tenant_detail(session: AsyncSession, tenant: Tenant) -> TenantDe
     subscription = await get_active_subscription(session, tenant.id)
     return TenantDetail(
         **summary.model_dump(),
+        email=tenant.email,
+        phone=tenant.phone,
         door_no=tenant.door_no,
         street=tenant.street,
         city=tenant.city,

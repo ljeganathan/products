@@ -6,10 +6,12 @@ import { listCategories } from "@/modules/admin/categoriesApi";
 import { listLocations } from "@/modules/admin/locationsApi";
 import { listTables } from "@/modules/admin/tablesApi";
 import { getMyWaiterProfile, listWaiters } from "@/modules/admin/waitersApi";
+import { me } from "@/modules/auth/authApi";
 import { useAuthStore } from "@/modules/auth/authStore";
+import { UserMenu } from "@/modules/auth/UserMenu";
 import { BillingModal } from "@/modules/pos/BillingModal";
 import { CartPanel } from "@/modules/pos/CartPanel";
-import { CategoryNav, TOP_SELLING_ID } from "@/modules/pos/CategoryNav";
+import { ALL_ITEMS_ID, CategoryNav, TOP_SELLING_ID } from "@/modules/pos/CategoryNav";
 import { ItemCard } from "@/modules/pos/ItemCard";
 import { KotTicketsPopup } from "@/modules/pos/KotTicketsPopup";
 import { sendOrderToKot } from "@/modules/pos/kotApi";
@@ -19,6 +21,7 @@ import {
   type PosItem,
   createOrder,
   getOrder,
+  listOrders,
   listPosItems,
   listPosSections,
   listTopSellers,
@@ -28,7 +31,7 @@ import {
 } from "@/modules/pos/posApi";
 import { RecallPanel } from "@/modules/pos/RecallPanel";
 import { SectionChangeConfirm } from "@/modules/pos/SectionChangeConfirm";
-import { TableWaiterBar } from "@/modules/pos/TableWaiterBar";
+import { type TableSelection, TableWaiterBar } from "@/modules/pos/TableWaiterBar";
 import { usePosWebSocket } from "@/modules/pos/usePosWebSocket";
 
 type SyncState = "idle" | "saving" | "saved" | "error";
@@ -43,10 +46,44 @@ export function POSPage() {
   const queryClient = useQueryClient();
 
   const { data: locations = [] } = useQuery({ queryKey: ["tenant-locations"], queryFn: listLocations });
-  const location = locations[0];
+  // Persisted so a counter machine that's always billing for the same location doesn't
+  // need re-picking after every reload (POS-35); falls back to the tenant's first
+  // location until `locations` loads or the stored id no longer matches a real one.
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(() =>
+    localStorage.getItem("pos-location-id"),
+  );
+  const location = locations.find((l) => l.id === selectedLocationId) ?? locations[0];
+  useEffect(() => {
+    if (location && location.id !== selectedLocationId) {
+      setSelectedLocationId(location.id);
+      localStorage.setItem("pos-location-id", location.id);
+    }
+  }, [location, selectedLocationId]);
+
+  function handleLocationChange(nextId: string) {
+    localStorage.setItem("pos-location-id", nextId);
+    setSelectedLocationId(nextId);
+    // Tables/waiters/open-orders are all location-scoped — anything mid-draft on the
+    // old location's floor plan can't carry over to the new one.
+    setOrder(null);
+    setSectionId("");
+    setTableId(null);
+    setPartyLabel(null);
+    if (!isWaiterRole) setWaiterId(null);
+  }
+
+  const { data: meData } = useQuery({ queryKey: ["me"], queryFn: me });
   const { data: sections = [] } = useQuery({ queryKey: ["pos-sections"], queryFn: listPosSections });
-  const { data: tables = [] } = useQuery({ queryKey: ["pos-tables"], queryFn: listTables });
-  const { data: waiters = [] } = useQuery({ queryKey: ["pos-waiters"], queryFn: listWaiters });
+  const { data: tables = [] } = useQuery({
+    queryKey: ["pos-tables", location?.id],
+    queryFn: () => listTables({ location_id: location!.id }),
+    enabled: !!location,
+  });
+  const { data: waiters = [] } = useQuery({
+    queryKey: ["pos-waiters", location?.id],
+    queryFn: () => listWaiters({ location_id: location!.id }),
+    enabled: !!location,
+  });
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: listCategories });
   const { data: allItems = [] } = useQuery({ queryKey: ["pos-items"], queryFn: () => listPosItems() });
   const { data: topSellers = [] } = useQuery({ queryKey: ["pos-top-sellers"], queryFn: listTopSellers });
@@ -55,10 +92,18 @@ export function POSPage() {
     queryFn: getMyWaiterProfile,
     enabled: role === "waiter",
   });
+  // Drives both the occupied-table badges and the party picker (Phase 19, POS-22) — one
+  // location-scoped fetch rather than a query per table tap.
+  const { data: openOrders = [] } = useQuery({
+    queryKey: ["pos-open-orders", location?.id],
+    queryFn: () => listOrders({ status: "open", location_id: location!.id }),
+    enabled: !!location,
+  });
 
   const [order, setOrder] = useState<Order | null>(null);
   const [sectionId, setSectionId] = useState<string>("");
   const [tableId, setTableId] = useState<string | null>(null);
+  const [partyLabel, setPartyLabel] = useState<string | null>(null);
   const [waiterId, setWaiterId] = useState<string | null>(null);
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -117,7 +162,11 @@ export function POSPage() {
   }, [searchQuery]);
 
   const displayedItems = useMemo(() => {
-    if (activeCategoryId === TOP_SELLING_ID) return topSellers.filter((i) => i.is_top_seller);
+    // `topSellers` is already the resolved list (manually pinned items first, backfilled
+    // with recent best-sellers server-side, POS-31) — re-filtering to is_top_seller here
+    // would silently drop every dynamically-computed item.
+    if (activeCategoryId === TOP_SELLING_ID) return topSellers;
+    if (activeCategoryId === ALL_ITEMS_ID) return allItems;
     return allItems.filter((i) => i.category_id === activeCategoryId);
   }, [activeCategoryId, allItems, topSellers]);
 
@@ -142,11 +191,13 @@ export function POSPage() {
             section_id: sectionId,
             table_id: tableId,
             waiter_id: waiterId,
+            party_label: partyLabel,
             items: nextItems,
           });
       setOrder(result);
       setSyncState("saved");
       void queryClient.invalidateQueries({ queryKey: ["pos-items"] });
+      void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
     } catch (err) {
       setSyncState("error");
       setSyncError(axios.isAxiosError(err) ? String(err.response?.data?.detail ?? err.message) : "Sync failed");
@@ -202,10 +253,34 @@ export function POSPage() {
     setOrder(resumed);
     setSectionId(resumed.section_id);
     setTableId(resumed.table_id);
+    setPartyLabel(resumed.party_label);
     setWaiterId(resumed.waiter_id);
   }
 
-  async function handleSelectTable(newSectionId: string, newTableId: string | null) {
+  async function handleSelectTable(selection: TableSelection) {
+    if (selection.kind === "resume") {
+      // Picking up a specific party's existing order (or one from another device) is
+      // always a full reload of that order — never a repurposing of whatever draft
+      // happened to be in memory (Phase 19, POS-22/POS-25).
+      await loadOrderIntoDraft(selection.orderId);
+      return;
+    }
+
+    if (selection.kind === "new-party") {
+      // Starting a genuinely new party always starts a fresh draft — abandoning the
+      // in-memory order here does not affect its persisted state; it stays open on the
+      // server and remains reachable via Recall/KOT Tickets.
+      setOrder(null);
+      setSectionId(selection.sectionId);
+      setTableId(selection.tableId);
+      setPartyLabel(selection.partyLabel);
+      if (!isWaiterRole) setWaiterId(null);
+      return;
+    }
+
+    // "direct": 0 open orders on this table (or a non-seating section) — unchanged
+    // pre-Phase-19 behaviour, including moving an in-progress draft to a new table.
+    const { sectionId: newSectionId, tableId: newTableId } = selection;
     if (order && order.items.length > 0 && newSectionId !== order.section_id) {
       const preview = await previewOrderUpdate(order.id, {
         section_id: newSectionId,
@@ -218,9 +293,18 @@ export function POSPage() {
     }
     setSectionId(newSectionId);
     setTableId(newTableId);
+    setPartyLabel(null);
     if (order) {
-      const updated = await updateOrder(order.id, { section_id: newSectionId, table_id: newTableId });
+      const updated = await updateOrder(order.id, {
+        section_id: newSectionId,
+        table_id: newTableId,
+        party_label: null,
+      });
       setOrder(updated);
+      // Table occupancy (the picker's gold badge/count) is driven by this same query —
+      // without invalidating it here, a table this order just vacated or claimed keeps
+      // showing its pre-move occupancy until an unrelated cart edit happens to refresh it.
+      void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
     }
   }
 
@@ -229,11 +313,14 @@ export function POSPage() {
     const updated = await updateOrder(order.id, {
       section_id: pendingSectionChange.sectionId,
       table_id: pendingSectionChange.tableId,
+      party_label: null,
     });
     setOrder(updated);
     setSectionId(pendingSectionChange.sectionId);
     setTableId(pendingSectionChange.tableId);
+    setPartyLabel(null);
     setPendingSectionChange(null);
+    void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
   }
 
   async function handleSelectWaiter(newWaiterId: string | null) {
@@ -244,15 +331,22 @@ export function POSPage() {
     }
   }
 
+  async function handleClearCart() {
+    if (!order || order.items.length === 0) return;
+    await syncCart([]);
+  }
+
   async function handleHold() {
     if (!order) return;
     await updateOrder(order.id, { status: "held" });
     setOrder(null);
     setTableId(null);
+    setPartyLabel(null);
     // A waiter login stays locked to themself for the next order; anyone else starts
     // the next bill unassigned rather than showing the just-held order's waiter.
     if (!isWaiterRole) setWaiterId(null);
     setActionNotice("Bill held");
+    void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
   }
 
   async function handleSendKot() {
@@ -277,9 +371,11 @@ export function POSPage() {
     setShowBilling(false);
     setOrder(null);
     setTableId(null);
+    setPartyLabel(null);
     if (!isWaiterRole) setWaiterId(null);
     setActionNotice("Bill finalized");
     void queryClient.invalidateQueries({ queryKey: ["pos-items"] });
+    void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
   }
 
   useEffect(() => {
@@ -320,12 +416,23 @@ export function POSPage() {
       } else if (e.ctrlKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         handleBill();
+      } else if (e.key === "Escape") {
+        // A search/item-code field mid-edit clears itself first — a bare Esc when
+        // nothing's focused there clears the whole draft cart (CLAUDE.md §9, POS-23).
+        if (searchQuery) {
+          setSearchQuery("");
+        } else if (itemCode) {
+          setItemCode("");
+        } else {
+          e.preventDefault();
+          void handleClearCart();
+        }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categories, order]);
+  }, [categories, order, searchQuery, itemCode]);
 
   const cartItemCount = order?.items.reduce((sum, l) => sum + l.quantity, 0) ?? 0;
   const isWaiterRole = role === "waiter";
@@ -337,7 +444,26 @@ export function POSPage() {
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-emerald-900 text-[11px] font-extrabold text-accent-foreground">
             KM
           </span>
-          <span className="text-[13px] font-extrabold leading-none">POS</span>
+          <div className="leading-tight">
+            <p className="truncate text-[13px] font-extrabold" title={meData?.company_name ?? undefined}>
+              {meData?.company_name ?? "POS"}
+            </p>
+            {location && locations.length > 1 ? (
+              <select
+                value={location.id}
+                onChange={(e) => handleLocationChange(e.target.value)}
+                className="max-w-[140px] truncate rounded border-none bg-transparent p-0 text-[10px] font-semibold text-ink-faint outline-none"
+              >
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              location && <p className="truncate text-[10px] font-semibold text-ink-faint">{location.name}</p>
+            )}
+          </div>
         </div>
 
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -389,6 +515,23 @@ export function POSPage() {
         >
           ↺ Recall
         </button>
+
+        <UserMenu
+          links={
+            role === "tenant_admin"
+              ? [
+                  { to: "/dashboard", label: "Dashboard" },
+                  { to: "/reports", label: "Reports" },
+                  { to: "/billing/history", label: "Bill History" },
+                ]
+              : role === "pos_user"
+                ? [
+                    { to: "/reports", label: "Reports" },
+                    { to: "/billing/history", label: "Bill History" },
+                  ]
+                : []
+          }
+        />
       </header>
 
       {itemCodeError && (
@@ -406,8 +549,10 @@ export function POSPage() {
         sections={sections}
         tables={tables}
         waiters={waiters}
+        openOrders={openOrders}
         sectionId={sectionId}
         tableId={tableId}
+        partyLabel={partyLabel}
         waiterId={waiterId}
         waiterLocked={isWaiterRole}
         lockedWaiterName={myWaiterProfile?.name}
@@ -461,6 +606,7 @@ export function POSPage() {
                 onHold={handleHold}
                 onSendKot={handleSendKot}
                 onBill={handleBill}
+                onClear={() => void handleClearCart()}
                 kotSending={kotSending}
                 showSyncIndicator
               />
@@ -502,6 +648,7 @@ export function POSPage() {
                 onHold={handleHold}
                 onSendKot={handleSendKot}
                 onBill={handleBill}
+                onClear={() => void handleClearCart()}
                 kotSending={kotSending}
                 showSyncIndicator
               />

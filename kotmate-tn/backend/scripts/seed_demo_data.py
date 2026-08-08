@@ -342,7 +342,7 @@ async def get_or_create_staff_login(
     role: str,
     incentive_rate: float | None,
 ) -> User:
-    login_id = f"{tenant.tenant_code}-{local_handle}"
+    login_id = f"{tenant.tenant_code}{local_handle}"
     user = (await session.execute(select(User).where(User.user_id == login_id))).scalar_one_or_none()
     if user is not None:
         user.password_hash = hash_password(DEMO_PASSWORD)

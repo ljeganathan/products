@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { type FormEvent, useState } from "react";
-import { Link } from "react-router-dom";
 
 import { listLocations } from "@/modules/admin/locationsApi";
 import {
   PRINTER_CONNECTION_TYPES,
+  PRINTER_PAPER_WIDTHS_MM,
   PRINTER_TARGETS,
   PRINTER_TYPES,
   type Printer,
@@ -19,6 +19,14 @@ const inputClass =
   "min-h-10 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-accent";
 const labelClass = "text-xs font-medium text-foreground/70";
 
+const CONNECTION_LABELS: Record<string, string> = {
+  network: "Network (Ethernet)",
+  wifi: "WiFi",
+  usb: "USB",
+  bluetooth: "Bluetooth",
+  local_agent: "Local Print Agent",
+};
+
 function apiErrorMessage(err: unknown, fallback: string): string {
   if (axios.isAxiosError(err) && err.response?.data?.detail) {
     return String(err.response.data.detail);
@@ -26,15 +34,27 @@ function apiErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
+const CUSTOM_WIDTH = "custom";
+
 interface PrinterFormState {
   location_id: string;
   name: string;
   target: string;
   printer_type: string;
   connection_type: string;
+  ip_address: string;
+  port: string;
+  bluetooth_device_name: string;
 }
 
-function PrinterFormModal({
+function widthOptionFor(paperWidthMm: number | null): string {
+  if (paperWidthMm == null) return String(PRINTER_PAPER_WIDTHS_MM[1]);
+  return (PRINTER_PAPER_WIDTHS_MM as readonly number[]).includes(paperWidthMm)
+    ? String(paperWidthMm)
+    : CUSTOM_WIDTH;
+}
+
+export function PrinterFormModal({
   editingPrinter,
   locations,
   onClose,
@@ -52,6 +72,9 @@ function PrinterFormModal({
           target: editingPrinter.target,
           printer_type: editingPrinter.printer_type,
           connection_type: editingPrinter.connection_type,
+          ip_address: String(editingPrinter.connection_details.ip_address ?? ""),
+          port: String(editingPrinter.connection_details.port ?? ""),
+          bluetooth_device_name: String(editingPrinter.connection_details.device_name ?? ""),
         }
       : {
           location_id: locations[0]?.id ?? "",
@@ -59,13 +82,38 @@ function PrinterFormModal({
           target: PRINTER_TARGETS[0],
           printer_type: PRINTER_TYPES[0],
           connection_type: PRINTER_CONNECTION_TYPES[0],
+          ip_address: "",
+          port: "",
+          bluetooth_device_name: "",
         },
+  );
+  const [widthOption, setWidthOption] = useState(() => widthOptionFor(editingPrinter?.paper_width_mm ?? null));
+  const [customWidth, setCustomWidth] = useState(
+    editingPrinter && widthOptionFor(editingPrinter.paper_width_mm) === CUSTOM_WIDTH
+      ? String(editingPrinter.paper_width_mm)
+      : "",
   );
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: () => {
-      const payload: PrinterCreatePayload = { ...form };
+      const connection_details =
+        form.connection_type === "network" || form.connection_type === "wifi"
+          ? { ip_address: form.ip_address, port: form.port }
+          : form.connection_type === "bluetooth"
+            ? { device_name: form.bluetooth_device_name }
+            : {};
+      const paper_width_mm =
+        widthOption === CUSTOM_WIDTH ? (customWidth ? Number(customWidth) : null) : Number(widthOption);
+      const payload: PrinterCreatePayload = {
+        location_id: form.location_id,
+        name: form.name,
+        target: form.target,
+        printer_type: form.printer_type,
+        connection_type: form.connection_type,
+        connection_details,
+        paper_width_mm,
+      };
       return editingPrinter ? updatePrinter(editingPrinter.id, payload) : createPrinter(payload);
     },
     onSuccess: () => {
@@ -148,11 +196,78 @@ function PrinterFormModal({
                 value={form.connection_type}
                 onChange={(e) => setForm((f) => ({ ...f, connection_type: e.target.value }))}
               >
-                <option value="network">Network</option>
-                <option value="usb">USB</option>
-                <option value="local_agent">Local Print Agent</option>
+                {PRINTER_CONNECTION_TYPES.map((c) => (
+                  <option key={c} value={c}>
+                    {CONNECTION_LABELS[c]}
+                  </option>
+                ))}
               </select>
             </div>
+          </div>
+
+          {(form.connection_type === "network" || form.connection_type === "wifi") && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className={labelClass}>IP Address</label>
+                <input
+                  placeholder="192.168.1.50"
+                  className={inputClass}
+                  value={form.ip_address}
+                  onChange={(e) => setForm((f) => ({ ...f, ip_address: e.target.value }))}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className={labelClass}>Port</label>
+                <input
+                  placeholder="9100"
+                  className={inputClass}
+                  value={form.port}
+                  onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
+                />
+              </div>
+            </div>
+          )}
+
+          {form.connection_type === "bluetooth" && (
+            <div className="flex flex-col gap-1.5">
+              <label className={labelClass}>Paired Device Name</label>
+              <input
+                placeholder="e.g. BT-Printer-58"
+                className={inputClass}
+                value={form.bluetooth_device_name}
+                onChange={(e) => setForm((f) => ({ ...f, bluetooth_device_name: e.target.value }))}
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className={labelClass}>Paper Width</label>
+              <select
+                className={inputClass}
+                value={widthOption}
+                onChange={(e) => setWidthOption(e.target.value)}
+              >
+                {PRINTER_PAPER_WIDTHS_MM.map((w) => (
+                  <option key={w} value={w}>
+                    {w}mm {w === 58 ? "(2″ thermal)" : w === 80 ? "(3″ thermal)" : "(9.5″ dot matrix)"}
+                  </option>
+                ))}
+                <option value={CUSTOM_WIDTH}>Custom…</option>
+              </select>
+            </div>
+            {widthOption === CUSTOM_WIDTH && (
+              <div className="flex flex-col gap-1.5">
+                <label className={labelClass}>Custom Width (mm)</label>
+                <input
+                  type="number"
+                  min="1"
+                  className={inputClass}
+                  value={customWidth}
+                  onChange={(e) => setCustomWidth(e.target.value)}
+                />
+              </div>
+            )}
           </div>
 
           {error && (
@@ -200,9 +315,6 @@ export function PrintersPage() {
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <Link to="/dashboard" className="text-xs text-foreground/50 hover:underline">
-            ← Dashboard
-          </Link>
           <h1 className="mt-1 text-xl font-bold">Printers</h1>
           <p className="text-sm text-foreground/60">
             Register a KOT (kitchen) and/or Bill printer per location — physical printing only
@@ -235,6 +347,7 @@ export function PrintersPage() {
                 <th className="px-4 py-2.5">Target</th>
                 <th className="px-4 py-2.5">Type</th>
                 <th className="px-4 py-2.5">Connection</th>
+                <th className="px-4 py-2.5">Width</th>
                 <th className="px-4 py-2.5">Location</th>
                 <th className="px-4 py-2.5">Status</th>
                 <th className="px-4 py-2.5">Actions</th>
@@ -256,6 +369,9 @@ export function PrintersPage() {
                   <td className="px-4 py-2.5 text-xs capitalize text-foreground/70">{printer.printer_type}</td>
                   <td className="px-4 py-2.5 text-xs capitalize text-foreground/70">
                     {printer.connection_type.replace("_", " ")}
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-foreground/70">
+                    {printer.paper_width_mm ? `${printer.paper_width_mm}mm` : "—"}
                   </td>
                   <td className="px-4 py-2.5 text-xs text-foreground/70">
                     {locationNameById.get(printer.location_id) ?? "—"}

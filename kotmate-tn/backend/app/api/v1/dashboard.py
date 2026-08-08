@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUser, get_current_user, require_role, require_tenant_scope
 from app.db.session import get_db
-from app.schemas.dashboard import DashboardSummaryResponse, MultiLocationComparisonResponse
-from app.services.dashboard_service import dashboard_summary, multi_location_comparison
+from app.schemas.dashboard import DashboardSummaryResponse, LowStockItemsResponse, MultiLocationComparisonResponse
+from app.services.dashboard_service import dashboard_summary, low_stock_items, multi_location_comparison
 from app.services.tenant_onboarding import get_active_plan
 
 # Same access rule as reports (CLAUDE.md §5) — waiter has no dashboard/reports access.
@@ -29,6 +29,17 @@ async def get_dashboard_summary(
     frontend decides whether to render `hourly_trend` as a chart based on the plan.
     """
     return await dashboard_summary(db, current_user.tenant_id, report_date or date.today(), location_id)
+
+
+@router.get("/low-stock-items", response_model=LowStockItemsResponse)
+async def get_low_stock_items(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> LowStockItemsResponse:
+    """Every plan tier (basic soft-inventory awareness, CLAUDE.md §11) — items aren't
+    location-scoped so there's no `location_id` filter, unlike `/summary`.
+    """
+    return await low_stock_items(db, current_user.tenant_id)
 
 
 @router.get("/multi-location", response_model=MultiLocationComparisonResponse)

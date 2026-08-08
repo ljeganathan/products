@@ -63,6 +63,8 @@ async def list_tenant_bills(
     table_id: uuid.UUID | None = None,
     waiter_id: uuid.UUID | None = None,
     location_id: uuid.UUID | None = None,
+    section_id: uuid.UUID | None = None,
+    pos_user_id: uuid.UUID | None = None,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[BillResponse]:
@@ -73,6 +75,8 @@ async def list_tenant_bills(
         table_id=table_id,
         waiter_id=waiter_id,
         location_id=location_id,
+        section_id=section_id,
+        pos_user_id=pos_user_id,
     )
     bills = await search_bills(db, current_user.tenant_id, params)
     return [await build_bill_response(db, bill) for bill in bills]

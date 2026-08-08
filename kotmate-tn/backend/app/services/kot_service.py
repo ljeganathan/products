@@ -20,12 +20,9 @@ from app.models import (
 from app.printing.base import KotTicketLine, KotTicketRenderData
 from app.printing.dispatcher import dispatch_kot_print
 from app.schemas.kot import ActiveKotTicketItem, ActiveKotTicketResponse
+from app.services.item_service import LOW_STOCK_THRESHOLD
 from app.services.order_service import get_order_or_404
 from app.services.tenant_onboarding import get_active_plan
-
-# Low-stock threshold — CLAUDE.md §11: banner/badge once a tracked item's remaining
-# count drops to 5 or fewer.
-_LOW_STOCK_THRESHOLD = 5
 
 
 @dataclass
@@ -118,7 +115,7 @@ async def send_kot(
                     "type": "item_stock",
                     "item_id": str(item.id),
                     "available_qty": new_qty,
-                    "low_stock": new_qty <= _LOW_STOCK_THRESHOLD,
+                    "low_stock": new_qty <= LOW_STOCK_THRESHOLD,
                     "out_of_stock": new_qty <= 0,
                 }
             )

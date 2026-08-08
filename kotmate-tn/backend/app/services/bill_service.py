@@ -510,7 +510,7 @@ async def get_bill_or_404(session: AsyncSession, tenant_id: uuid.UUID, bill_id: 
 
 async def search_bills(session: AsyncSession, tenant_id: uuid.UUID, params: BillSearchParams) -> list[Bill]:
     """Backs the "Old bill search" screen (CLAUDE.md Phase 09 scope) — by bill number,
-    date range, table, or waiter.
+    date range, table, waiter, seating section, or cashier (Phase 17).
     """
     query = select(Bill).where(Bill.tenant_id == tenant_id)
     if params.bill_number:
@@ -525,6 +525,10 @@ async def search_bills(session: AsyncSession, tenant_id: uuid.UUID, params: Bill
         query = query.where(Bill.waiter_id == params.waiter_id)
     if params.location_id:
         query = query.where(Bill.location_id == params.location_id)
+    if params.section_id:
+        query = query.where(Bill.section_id == params.section_id)
+    if params.pos_user_id:
+        query = query.where(Bill.pos_user_id == params.pos_user_id)
     rows = await session.execute(query.order_by(Bill.created_at.desc()))
     return list(rows.scalars().all())
 
