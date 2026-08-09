@@ -270,3 +270,129 @@ async def test_item_response_includes_track_inventory_field(client: AsyncClient,
         await session.execute(text("SELECT set_config('app.is_platform_admin', 'true', true)"))
         row = (await session.execute(select(Item).where(Item.id == uuid.UUID(item["id"])))).scalar_one()
     assert row.track_inventory is False
+
+
+async def test_direct_bill_deducts_stock_when_never_kot_sent(client: AsyncClient, tenant_admin: dict):
+    """A cashier can finalize a bill straight from the cart without ever sending it to
+    the kitchen (a quick walk-in sale) — that line never goes through kot_service.send_kot,
+    so bill_service.finalize_bill must deduct it directly, or the item's stock would
+    never decrement at all.
+    """
+    headers = tenant_admin["headers"]
+    tenant_id = tenant_admin["tenant"]["id"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    category = await _create_category(client, headers)
+    item = await _create_item(
+        client, headers, category["id"], price=20, track_inventory=True, available_qty=10
+    )
+    order = await _create_order(
+        client, headers, location_id, section_id, [{"item_id": item["id"], "quantity": 3}]
+    )
+
+    resp = await client.post(
+        "/api/v1/bills",
+        json={"order_id": order["id"], "payments": [{"method": "cash", "amount": 60.0}]},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+    bill_id = resp.json()["id"]
+
+    items = (await client.get("/api/v1/items", headers=headers)).json()
+    updated = next(i for i in items if i["id"] == item["id"])
+    assert updated["available_qty"] == 7
+
+    rows = await _ledger_rows(tenant_id, item["id"])
+    assert len(rows) == 1
+    assert rows[0].reason == "bill_deduction"
+    assert rows[0].change_qty == -3
+    assert rows[0].reference_bill_id == uuid.UUID(bill_id)
+    assert rows[0].location_id == uuid.UUID(location_id)
+
+
+async def test_kot_sent_item_not_double_deducted_at_bill_time(client: AsyncClient, tenant_admin: dict):
+    headers = tenant_admin["headers"]
+    tenant_id = tenant_admin["tenant"]["id"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    category = await _create_category(client, headers)
+    item = await _create_item(
+        client, headers, category["id"], price=20, track_inventory=True, available_qty=10
+    )
+    order = await _create_order(
+        client, headers, location_id, section_id, [{"item_id": item["id"], "quantity": 3}]
+    )
+
+    kot_resp = await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)
+    assert kot_resp.status_code == 201
+
+    bill_resp = await client.post(
+        "/api/v1/bills",
+        json={"order_id": order["id"], "payments": [{"method": "cash", "amount": 60.0}]},
+        headers=headers,
+    )
+    assert bill_resp.status_code == 201, bill_resp.text
+
+    items = (await client.get("/api/v1/items", headers=headers)).json()
+    updated = next(i for i in items if i["id"] == item["id"])
+    # Deducted once at KOT-send (10 -> 7), NOT again at bill time.
+    assert updated["available_qty"] == 7
+
+    rows = await _ledger_rows(tenant_id, item["id"])
+    assert len(rows) == 1
+    assert rows[0].reason == "kot_deduction"
+
+
+async def test_direct_bill_deduction_floors_at_zero(client: AsyncClient, tenant_admin: dict):
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    category = await _create_category(client, headers)
+    item = await _create_item(
+        client, headers, category["id"], price=20, track_inventory=True, available_qty=2
+    )
+    order = await _create_order(
+        client, headers, location_id, section_id, [{"item_id": item["id"], "quantity": 5}]
+    )
+
+    resp = await client.post(
+        "/api/v1/bills",
+        json={"order_id": order["id"], "payments": [{"method": "cash", "amount": 100.0}]},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    items = (await client.get("/api/v1/items", headers=headers)).json()
+    updated = next(i for i in items if i["id"] == item["id"])
+    assert updated["available_qty"] == 0
+
+
+async def test_direct_bill_deduction_skipped_when_stock_tracking_disabled(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    """Mirrors the KOT-send gate — Pro Max with the tenant switch off should not deduct
+    stock at bill time either, even for a directly-billed (never KOT-sent) line.
+    """
+    headers = pro_max_tenant_admin["headers"]
+    tenant_id = pro_max_tenant_admin["tenant"]["id"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    category = await _create_category(client, headers)
+    item = await _create_item(
+        client, headers, category["id"], price=20, track_inventory=True, available_qty=10
+    )
+    order = await _create_order(
+        client, headers, location_id, section_id, [{"item_id": item["id"], "quantity": 3}]
+    )
+
+    resp = await client.post(
+        "/api/v1/bills",
+        json={"order_id": order["id"], "payments": [{"method": "cash", "amount": 60.0}]},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
+
+    items = (await client.get("/api/v1/items", headers=headers)).json()
+    updated = next(i for i in items if i["id"] == item["id"])
+    assert updated["available_qty"] == 10
+    assert await _ledger_rows(tenant_id, item["id"]) == []

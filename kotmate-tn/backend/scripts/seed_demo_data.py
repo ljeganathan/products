@@ -59,7 +59,6 @@ from app.models import (  # noqa: E402
 )
 from app.schemas.bills import (  # noqa: E402
     BillCreateRequest,
-    BillDiscountInput,
     BillPaymentInput,
     BillPreviewRequest,
 )
@@ -403,7 +402,7 @@ async def _bill_order(
     waiter_id: uuid.UUID | None,
     lines: list[OrderLineInput],
     payment_methods: list[str],
-    discount: BillDiscountInput | None,
+    coupon_code: str | None,
     backdate_days: int = 0,
 ) -> Bill:
     current_user = CurrentUser(
@@ -420,7 +419,7 @@ async def _bill_order(
     await session.commit()
 
     preview = await preview_bill(
-        session, tenant.id, BillPreviewRequest(order_id=order.id, discount=discount)
+        session, tenant.id, BillPreviewRequest(order_id=order.id, coupon_code=coupon_code)
     )
     grand_total = preview.grand_total
     if len(payment_methods) == 1:
@@ -435,7 +434,7 @@ async def _bill_order(
         session,
         tenant.id,
         current_user,
-        BillCreateRequest(order_id=order.id, discount=discount, payments=payments),
+        BillCreateRequest(order_id=order.id, coupon_code=coupon_code, payments=payments),
     )
     await session.commit()
 
@@ -493,20 +492,21 @@ async def ensure_todays_bills(
     )
     created += 1
 
-    flat_discount = BillDiscountInput(type="flat_percent", percent=10)
+    # No explicit discount object needed here anymore — the "Festival Offer" flat rule
+    # created in seed_tenant() is active with no expiry, so it auto-applies to every
+    # bill on its own (Phase 23).
     await _bill_order(
         session, tenant, location_id, section_id, cashier, waiter.id,
         [OrderLineInput(item_id=dosa.id, quantity=2), OrderLineInput(item_id=jamun.id, quantity=1)],
-        ["card"], flat_discount,
+        ["card"], None,
     )
     created += 1
 
     if plan_code == "pro_max" and discount_rule is not None:
-        coupon_discount = BillDiscountInput(type="coupon", coupon_code=discount_rule.coupon_code)
         await _bill_order(
             session, tenant, location_id, section_id, cashier, waiter.id,
             [OrderLineInput(item_id=meals.id, quantity=1), OrderLineInput(item_id=biryani.id, quantity=1)],
-            ["cash", "upi"], coupon_discount,
+            ["cash", "upi"], discount_rule.coupon_code,
         )
     else:
         await _bill_order(

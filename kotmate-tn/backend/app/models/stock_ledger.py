@@ -7,18 +7,19 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 from app.db.mixins import TimestampMixin, UUIDPKMixin, tenant_composite_index, tenant_id_column
 
-_REASONS = ("manual_set", "kot_deduction", "restock")
+_REASONS = ("manual_set", "kot_deduction", "restock", "bill_deduction")
 
 
 class StockLedger(UUIDPKMixin, TimestampMixin, Base):
     """Audit trail for every `items.available_qty` change (extends the Phase 05/08 soft-
-    inventory feature). `change_qty` is signed — negative for the KOT-send deduction,
-    positive/any for a manual set or restock. `location_id` is nullable because items
-    themselves are tenant-wide, not per-location (CLAUDE.md §8) — only populated for
-    `kot_deduction` rows, where the triggering order's location is meaningful.
-    `reference_order_id` (not `reference_bill_id`) is what's populated for
-    `kot_deduction`, since deduction fires at KOT-send, before any bill exists;
-    `reference_bill_id` is kept for schema completeness but unused in this phase.
+    inventory feature). `change_qty` is signed — negative for the KOT-send/bill-time
+    deductions, positive/any for a manual set or restock. `location_id` is nullable
+    because items themselves are tenant-wide, not per-location (CLAUDE.md §8) — only
+    populated for `kot_deduction`/`bill_deduction` rows, where the triggering
+    order/bill's location is meaningful. `kot_deduction` populates `reference_order_id`
+    (deduction fires at KOT-send, before any bill exists); `bill_deduction` populates
+    `reference_bill_id` instead — it covers order_items billed directly without ever
+    being sent to KOT, so a bill (not a KOT ticket) is what triggered the deduction.
     """
 
     __tablename__ = "stock_ledger"

@@ -4,8 +4,12 @@ export interface DiscountRule {
   id: string;
   name: string;
   type: "flat_percent" | "item_level" | "coupon";
+  discount_mode: "percent" | "rupee";
   value: number | null;
+  item_id: string | null;
+  item_name_en: string | null;
   coupon_code: string | null;
+  expires_at: string | null;
   is_active: boolean;
   created_at: string;
 }
@@ -13,14 +17,20 @@ export interface DiscountRule {
 export interface DiscountRuleCreatePayload {
   name: string;
   type: "flat_percent" | "item_level" | "coupon";
+  discount_mode: "percent" | "rupee";
   value?: number | null;
+  item_id?: string | null;
   coupon_code?: string | null;
+  expires_at?: string | null;
 }
 
 export interface DiscountRuleUpdatePayload {
   name?: string;
+  discount_mode?: "percent" | "rupee";
   value?: number | null;
+  item_id?: string | null;
   coupon_code?: string | null;
+  expires_at?: string | null;
   is_active?: boolean;
 }
 

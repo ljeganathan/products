@@ -112,6 +112,7 @@ PRINTER_CONNECTION_TYPES = ["network", "usb", "local_agent", "wifi", "bluetooth"
 # widths (2"/3"), 241mm covers 9.5" dot-matrix continuous stationery.
 PRINTER_PAPER_WIDTHS_MM = [58, 80, 241]
 DISCOUNT_TYPES = ["flat_percent", "item_level", "coupon"]
+DISCOUNT_MODES = ["percent", "rupee"]
 PAYMENT_METHODS = ["upi", "cash", "card"]
 BILL_STATUSES = ["finalized", "void"]
 SUBSCRIPTION_STATUSES = ["active", "suspended", "cancelled"]

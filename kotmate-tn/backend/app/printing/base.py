@@ -126,6 +126,10 @@ class BillRenderData:
     lines: list[BillLine]
     subtotal: float
     discount_amount: float
+    # Breakdown of which discount rule(s) applied, e.g. "Festival Offer: -₹45.00;
+    # Coupon WELCOME10: -₹15.00" — one printed line per "; "-separated segment, so the
+    # customer sees which named offer(s) reduced the bill (CLAUDE.md Phase 23).
+    discount_note: str | None
     cgst_amount: float
     sgst_amount: float
     round_off_amount: float
@@ -174,7 +178,10 @@ def format_bill_text_lines(bill: BillRenderData) -> list[str]:
 
     lines.append("-" * 32)
     lines.append(f"{'Subtotal':<24}{format_inr(bill.subtotal):>8}")
-    if bill.discount_amount:
+    if bill.discount_note:
+        for segment in bill.discount_note.split("; "):
+            lines.append(f"  {segment}")
+    elif bill.discount_amount:
         lines.append(f"{'Discount':<24}{'-' + format_inr(bill.discount_amount):>8}")
     lines.append(f"{'CGST':<24}{format_inr(bill.cgst_amount):>8}")
     lines.append(f"{'SGST':<24}{format_inr(bill.sgst_amount):>8}")

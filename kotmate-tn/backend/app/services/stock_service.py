@@ -42,11 +42,13 @@ async def set_item_stock(
     *,
     location_id: uuid.UUID | None = None,
     reference_order_id: uuid.UUID | None = None,
+    reference_bill_id: uuid.UUID | None = None,
 ) -> Item:
     """The one place that mutates `available_qty` and writes the matching audit row —
-    reused by a manual set (Stock Management tab / Item Master edit), a restock, and
-    the KOT-send deduction, so every stock change is traceable. Giving an item a
-    quantity here also turns tracking on for it (CLAUDE.md §11 extension, Phase 21+).
+    reused by a manual set (Stock Management tab / Item Master edit), a restock, the
+    KOT-send deduction, and the bill-finalize deduction for items billed without ever
+    being sent to KOT, so every stock change is traceable. Giving an item a quantity
+    here also turns tracking on for it (CLAUDE.md §11 extension, Phase 21+).
     """
     previous = item.available_qty or 0
     item.track_inventory = True
@@ -59,6 +61,7 @@ async def set_item_stock(
             change_qty=new_qty - previous,
             reason=reason,
             reference_order_id=reference_order_id,
+            reference_bill_id=reference_bill_id,
         )
     )
     await session.flush()

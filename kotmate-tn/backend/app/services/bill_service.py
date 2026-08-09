@@ -21,6 +21,7 @@ from app.models import (
     SeatingSection,
     Table,
     TaxRule,
+    Tenant,
     TenantLocation,
     User,
     Waiter,
@@ -29,7 +30,6 @@ from app.printing.base import BillLine, BillRenderData
 from app.printing.dispatcher import dispatch_bill_print
 from app.schemas.bills import (
     BillCreateRequest,
-    BillDiscountInput,
     BillItemResponse,
     BillPreviewRequest,
     BillPreviewResponse,
@@ -37,8 +37,14 @@ from app.schemas.bills import (
     BillSearchParams,
     PaymentResponse,
 )
-from app.services.discount_rule_service import get_active_coupon
+from app.services.discount_rule_service import (
+    get_active_coupon,
+    get_active_item_level_rules,
+    get_best_active_flat_rule,
+    rule_amount,
+)
 from app.services.order_service import get_order_or_404
+from app.services.stock_service import is_stock_tracking_enabled, set_item_stock
 from app.services.tax_rule_service import get_default_tax_rule
 from app.services.tenant_onboarding import get_active_plan
 
@@ -58,6 +64,10 @@ class _PricedItem:
     unit_price: float
     quantity: int
     line_total: float
+    # Whether this line was ever sent to KOT — items billed directly (never sent to the
+    # kitchen) still need a stock deduction at finalize time, since kot_service.send_kot
+    # is normally the only place that decrements (see _deduct_stock_for_unsent_items).
+    is_kot_sent: bool
 
 
 @dataclass
@@ -99,56 +109,97 @@ async def _load_priced_items(session: AsyncSession, order: Order) -> list[_Price
                 unit_price=float(oi.unit_price),
                 quantity=oi.quantity,
                 line_total=round(float(oi.unit_price) * oi.quantity, 2),
+                is_kot_sent=oi.is_kot_sent,
             )
         )
     return priced
 
 
+async def _deduct_stock_for_unsent_items(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    plan_features: dict,
+    order: Order,
+    bill_id: uuid.UUID,
+    priced_items: list[_PricedItem],
+) -> None:
+    """Stock normally decrements at KOT-send (kot_service.send_kot) — but a cashier can
+    finalize a bill directly from the cart without ever sending it to the kitchen (a
+    quick walk-in sale), and those lines would otherwise never decrement. This covers
+    exactly that gap: only lines that were never KOT-sent get deducted here, so a line
+    already decremented at KOT-send is never double-deducted.
+    """
+    tenant = (await session.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one()
+    if not is_stock_tracking_enabled(tenant, plan_features):
+        return
+    for priced in priced_items:
+        if priced.is_kot_sent or not priced.item.track_inventory:
+            continue
+        new_qty = max(0, (priced.item.available_qty or 0) - priced.quantity)
+        await set_item_stock(
+            session,
+            tenant_id,
+            priced.item,
+            new_qty,
+            "bill_deduction",
+            location_id=order.location_id,
+            reference_bill_id=bill_id,
+        )
+
+
 async def _compute_discount(
     session: AsyncSession,
     tenant_id: uuid.UUID,
-    allowed_types: list[str],
-    subtotal: float,
+    plan_features: dict,
     priced_items: list[_PricedItem],
-    discount: BillDiscountInput | None,
+    subtotal: float,
+    coupon_code: str | None,
 ) -> tuple[float, str | None]:
-    if discount is None:
-        return 0.0, None
-    if discount.type not in allowed_types:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"Your plan does not support '{discount.type}' discounts — upgrade to unlock it",
-        )
-
-    if discount.type == "flat_percent":
-        amount = round(subtotal * (discount.percent or 0) / 100, 2)
-        return amount, f"flat_percent {discount.percent}%"
-
-    if discount.type == "coupon":
-        rule = await get_active_coupon(session, tenant_id, discount.coupon_code or "")
-        if rule is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or inactive coupon code")
-        amount = round(subtotal * float(rule.value or 0) / 100, 2)
-        return amount, f"coupon {rule.coupon_code} ({rule.value}%)"
-
-    # item_level: order_item_id -> flat rupee amount, capped per line so a discount can
-    # never exceed what that line is actually worth.
-    by_id = {p.order_item_id: p for p in priced_items}
+    """Item-level, flat, and coupon discounts all auto-resolve from currently-active,
+    non-expired `discount_rules` (Phase 23) and stack — each one computed against
+    whatever's left after the previous ones, so `discount_amount` is naturally capped at
+    `subtotal` without a separate clamp. The cashier's only input is an optional coupon
+    code; item-level and flat apply themselves whenever a matching rule is active.
+    """
+    allowed_types = plan_features.get("discount_types", ["flat_percent"])
+    notes: list[str] = []
     total = 0.0
-    for order_item_id_str, requested_amount in (discount.item_amounts or {}).items():
-        try:
-            order_item_id = uuid.UUID(order_item_id_str)
-        except ValueError as exc:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, f"Invalid order_item_id: {order_item_id_str}"
-            ) from exc
-        priced = by_id.get(order_item_id)
-        if priced is None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "item_amounts references an item not on this order"
-            )
-        total += min(max(requested_amount, 0.0), priced.line_total)
-    return round(total, 2), f"item_level across {len(discount.item_amounts or {})} line(s)"
+
+    if "item_level" in allowed_types:
+        rules_by_item = await get_active_item_level_rules(
+            session, tenant_id, {p.item.id for p in priced_items}
+        )
+        for priced in priced_items:
+            rule = rules_by_item.get(priced.item.id)
+            if rule is None:
+                continue
+            amount = round(min(rule_amount(rule, priced.line_total), priced.line_total), 2)
+            if amount > 0:
+                total += amount
+                notes.append(f"{rule.name}: -₹{amount:.2f}")
+
+    if "flat_percent" in allowed_types:
+        remainder = subtotal - total
+        rule = await get_best_active_flat_rule(session, tenant_id, remainder)
+        if rule is not None:
+            amount = round(min(rule_amount(rule, remainder), remainder), 2)
+            if amount > 0:
+                total += amount
+                notes.append(f"{rule.name}: -₹{amount:.2f}")
+
+    if coupon_code:
+        if "coupon" not in allowed_types:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Coupons aren't available on your current plan")
+        rule = await get_active_coupon(session, tenant_id, coupon_code)
+        if rule is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid, inactive, or expired coupon code")
+        remainder = subtotal - total
+        amount = round(min(rule_amount(rule, remainder), remainder), 2)
+        if amount > 0:
+            total += amount
+            notes.append(f"{rule.name}: -₹{amount:.2f}")
+
+    return round(total, 2), "; ".join(notes) if notes else None
 
 
 async def _resolve_line_tax_rule(
@@ -193,13 +244,12 @@ async def _compute_totals(
     tenant_id: uuid.UUID,
     plan_features: dict,
     priced_items: list[_PricedItem],
-    discount_input: BillDiscountInput | None,
+    coupon_code: str | None,
     line_tax_overrides: dict[uuid.UUID, uuid.UUID] | None,
 ) -> tuple[_BillTotals, str | None]:
     subtotal = round(sum(p.line_total for p in priced_items), 2)
-    allowed_discount_types = plan_features.get("discount_types", ["flat_percent"])
-    discount_amount, audit_note = await _compute_discount(
-        session, tenant_id, allowed_discount_types, subtotal, priced_items, discount_input
+    discount_amount, discount_note = await _compute_discount(
+        session, tenant_id, plan_features, priced_items, subtotal, coupon_code
     )
     discount_amount = min(discount_amount, subtotal)
     net_taxable_value = round(subtotal - discount_amount, 2)
@@ -245,7 +295,7 @@ async def _compute_totals(
         grand_total=grand_total,
         net_taxable_value=net_taxable_value,
     )
-    return totals, audit_note
+    return totals, discount_note
 
 
 def _incentive_amount(rate: float | None, net_taxable_value: float) -> float | None:
@@ -284,8 +334,8 @@ async def preview_bill(
     plan_features = plan.features if plan else {}
     priced_items = await _load_priced_items(session, order)
     overrides = {uuid.UUID(k): v for k, v in (req.line_tax_overrides or {}).items()}
-    totals, _ = await _compute_totals(
-        session, tenant_id, plan_features, priced_items, req.discount, overrides
+    totals, discount_note = await _compute_totals(
+        session, tenant_id, plan_features, priced_items, req.coupon_code, overrides
     )
 
     waiter = (
@@ -300,6 +350,7 @@ async def preview_bill(
         items=[_item_response(p) for p in totals.priced_items],
         subtotal=totals.subtotal,
         discount_amount=totals.discount_amount,
+        discount_note=discount_note,
         cgst_amount=totals.cgst_amount,
         sgst_amount=totals.sgst_amount,
         round_off_amount=totals.round_off_amount,
@@ -370,6 +421,7 @@ async def _dispatch_print_for_bill(
         lines=lines,
         subtotal=float(bill.subtotal),
         discount_amount=float(bill.discount_amount),
+        discount_note=bill.discount_note,
         cgst_amount=float(bill.cgst_amount),
         sgst_amount=float(bill.sgst_amount),
         round_off_amount=float(bill.round_off_amount),
@@ -398,8 +450,8 @@ async def finalize_bill(
     plan_features = plan.features if plan else {}
     priced_items = await _load_priced_items(session, order)
     overrides = {uuid.UUID(k): v for k, v in (req.line_tax_overrides or {}).items()}
-    totals, audit_note = await _compute_totals(
-        session, tenant_id, plan_features, priced_items, req.discount, overrides
+    totals, discount_note = await _compute_totals(
+        session, tenant_id, plan_features, priced_items, req.coupon_code, overrides
     )
 
     payments_total = round(sum(p.amount for p in req.payments), 2)
@@ -439,6 +491,7 @@ async def finalize_bill(
         pos_user_id=order.pos_user_id,
         subtotal=totals.subtotal,
         discount_amount=totals.discount_amount,
+        discount_note=discount_note,
         cgst_amount=totals.cgst_amount,
         sgst_amount=totals.sgst_amount,
         round_off_amount=totals.round_off_amount,
@@ -468,6 +521,10 @@ async def finalize_bill(
             Payment(tenant_id=tenant_id, bill_id=bill.id, method=payment.method, amount=payment.amount)
         )
 
+    await _deduct_stock_for_unsent_items(
+        session, tenant_id, plan_features, order, bill.id, totals.priced_items
+    )
+
     # "billed" is set here and only here — every other order-mutating path
     # (schemas/orders.py's EDITABLE_ORDER_STATUSES) explicitly excludes it.
     order.status = "billed"
@@ -483,7 +540,7 @@ async def finalize_bill(
                 details={
                     "discount_amount": totals.discount_amount,
                     "subtotal": totals.subtotal,
-                    "note": audit_note,
+                    "note": discount_note,
                 },
             )
         )
@@ -590,6 +647,7 @@ async def build_bill_response(session: AsyncSession, bill: Bill, printed: bool =
         ],
         subtotal=float(bill.subtotal),
         discount_amount=float(bill.discount_amount),
+        discount_note=bill.discount_note,
         cgst_amount=float(bill.cgst_amount),
         sgst_amount=float(bill.sgst_amount),
         round_off_amount=float(bill.round_off_amount),

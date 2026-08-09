@@ -3,13 +3,6 @@ import { api } from "@/lib/api";
 // Phase 09's billing endpoints: POST /api/v1/bills, POST /api/v1/bills/preview,
 // GET /api/v1/bills (search), GET /api/v1/bills/{id}, POST /api/v1/bills/{id}/reprint.
 
-export interface BillDiscountInput {
-  type: "flat_percent" | "item_level" | "coupon";
-  percent?: number | null;
-  coupon_code?: string | null;
-  item_amounts?: Record<string, number> | null;
-}
-
 export interface BillPaymentInput {
   method: "upi" | "cash" | "card";
   amount: number;
@@ -34,6 +27,7 @@ interface BillTotals {
   items: BillItemLine[];
   subtotal: number;
   discount_amount: number;
+  discount_note: string | null;
   cgst_amount: number;
   sgst_amount: number;
   round_off_amount: number;
@@ -69,7 +63,9 @@ export interface Bill extends BillTotals {
 
 export interface BillPreviewPayload {
   order_id: string;
-  discount?: BillDiscountInput | null;
+  // Item-level and Flat discounts auto-apply from active discount rules — the only
+  // discount input the cashier gives is an optional coupon code.
+  coupon_code?: string | null;
   line_tax_overrides?: Record<string, string> | null;
 }
 

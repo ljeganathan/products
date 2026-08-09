@@ -1,42 +1,9 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import DISCOUNT_TYPES, PAYMENT_METHODS
-
-
-class BillDiscountInput(BaseModel):
-    """One of the three tiers CLAUDE.md §6 gates by plan (`flat_percent` all tiers,
-    `item_level` Pro+, `coupon` Pro Max) — which types are actually accepted for a given
-    tenant is enforced in `bill_service`, not here, since it depends on the tenant's
-    active plan rather than anything the request itself carries.
-    """
-
-    type: str
-    # flat_percent / coupon: percentage off the subtotal.
-    percent: float | None = Field(default=None, ge=0, le=100)
-    coupon_code: str | None = None
-    # item_level: order_item_id (as string) -> flat rupee amount off that line, capped
-    # to the line's own total by the service.
-    item_amounts: dict[str, float] | None = None
-
-    @field_validator("type")
-    @classmethod
-    def _type_valid(cls, v: str) -> str:
-        if v not in DISCOUNT_TYPES:
-            raise ValueError(f"type must be one of {DISCOUNT_TYPES}")
-        return v
-
-    @model_validator(mode="after")
-    def _shape_matches_type(self) -> "BillDiscountInput":
-        if self.type == "flat_percent" and self.percent is None:
-            raise ValueError("percent is required for type=flat_percent")
-        if self.type == "coupon" and not self.coupon_code:
-            raise ValueError("coupon_code is required for type=coupon")
-        if self.type == "item_level" and not self.item_amounts:
-            raise ValueError("item_amounts is required for type=item_level")
-        return self
+from app.core.constants import PAYMENT_METHODS
 
 
 class BillPaymentInput(BaseModel):
@@ -53,7 +20,9 @@ class BillPaymentInput(BaseModel):
 
 class BillCreateRequest(BaseModel):
     order_id: uuid.UUID
-    discount: BillDiscountInput | None = None
+    # Item-level and flat discounts auto-apply from currently-active discount_rules
+    # (Phase 23) — the cashier's only discount input is an optional coupon code.
+    coupon_code: str | None = None
     payments: list[BillPaymentInput] = Field(min_length=1)
     # order_item_id (string) -> tax_rule_id — Pro Max only ("multi_rate_per_item"),
     # rejected by the service on any other tax_mode. Anything above the audit threshold
@@ -72,7 +41,7 @@ class BillPreviewRequest(BaseModel):
     """
 
     order_id: uuid.UUID
-    discount: BillDiscountInput | None = None
+    coupon_code: str | None = None
     line_tax_overrides: dict[str, uuid.UUID] | None = None
 
 
@@ -97,6 +66,9 @@ class BillTotals(BaseModel):
     items: list[BillItemResponse]
     subtotal: float
     discount_amount: float
+    # Human-readable breakdown of which discount rule(s) applied, e.g. "Festival Offer
+    # (10%): -₹45.00; Coupon WELCOME10: -₹15.00" — None when no discount applied.
+    discount_note: str | None = None
     cgst_amount: float
     sgst_amount: float
     round_off_amount: float

@@ -1,12 +1,11 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import axios from "axios";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { formatINR } from "@/lib/utils";
 import { me } from "@/modules/auth/authApi";
 import {
   type Bill,
-  type BillDiscountInput,
   type BillPaymentInput,
   createBill,
   previewBill,
@@ -27,12 +26,6 @@ const PAYMENT_METHODS = [
   { code: "card", label: "Card" },
 ] as const;
 
-const DISCOUNT_TYPE_LABELS: Record<string, string> = {
-  flat_percent: "Flat %",
-  item_level: "Item-level",
-  coupon: "Coupon code",
-};
-
 const AMOUNT_TOLERANCE = 0.01;
 
 export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized }: BillingModalProps) {
@@ -40,59 +33,38 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
   const allowedDiscountTypes = (meData?.features?.discount_types as unknown as string[] | undefined) ?? [
     "flat_percent",
   ];
+  const couponsEnabled = allowedDiscountTypes.includes("coupon");
 
-  const [discountType, setDiscountType] = useState<string>("");
-  const [percent, setPercent] = useState("");
+  // Item-level and Flat discounts auto-apply from active discount rules — the cashier's
+  // only input here is an optional coupon code.
   const [couponCode, setCouponCode] = useState("");
-  const [itemAmounts, setItemAmounts] = useState<Record<string, string>>({});
 
   const [payments, setPayments] = useState<BillPaymentInput[]>([
     { method: initialPaymentMethod, amount: 0 },
   ]);
   const [finalizedBill, setFinalizedBill] = useState<Bill | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Print-preview flow: bill finalizes immediately either way, but when this is on,
-  // printing itself waits for an explicit "Print" click on a preview screen instead of
-  // firing as part of the same request (default off — preserves the one-click flow).
+  // Print-preview flow: when on, finalizing shows an exact print-layout simulation and
+  // waits for an explicit "Print" click before actually dispatching to the printer.
+  // Default off — the normal flow finalizes and prints in the same action, then closes
+  // straight back to POS with no extra confirmation window.
   const [previewBeforePrint, setPreviewBeforePrint] = useState(false);
-  const [printedOnce, setPrintedOnce] = useState(false);
 
-  const discount: BillDiscountInput | null = useMemo(() => {
-    if (!discountType) return null;
-    if (discountType === "flat_percent") {
-      const value = Number(percent);
-      return value > 0 ? { type: "flat_percent", percent: value } : null;
-    }
-    if (discountType === "coupon") {
-      return couponCode.trim() ? { type: "coupon", coupon_code: couponCode.trim() } : null;
-    }
-    // item_level
-    const amounts: Record<string, number> = {};
-    for (const [lineId, raw] of Object.entries(itemAmounts)) {
-      const value = Number(raw);
-      if (value > 0) amounts[lineId] = value;
-    }
-    return Object.keys(amounts).length > 0 ? { type: "item_level", item_amounts: amounts } : null;
-  }, [discountType, percent, couponCode, itemAmounts]);
-
-  // Coupon codes are typed character-by-character, so the raw `discount` above is
-  // invalid for most of that typing — debounce what actually drives the preview
-  // request so the UI doesn't flash a "couldn't calculate totals" error on every
-  // keystroke before the full code is in.
-  const [debouncedDiscount, setDebouncedDiscount] = useState(discount);
+  // Coupon codes are typed character-by-character, so debounce what actually drives the
+  // preview request so the UI doesn't flash a "couldn't calculate totals" error mid-type.
+  const [debouncedCouponCode, setDebouncedCouponCode] = useState(couponCode);
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedDiscount(discount), 400);
+    const timer = setTimeout(() => setDebouncedCouponCode(couponCode.trim()), 400);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(discount)]);
+  }, [couponCode]);
 
   const {
     data: preview,
     isLoading: previewLoading,
     isError: previewError,
   } = useQuery({
-    queryKey: ["bill-preview", order.id, debouncedDiscount],
-    queryFn: () => previewBill({ order_id: order.id, discount: debouncedDiscount }),
+    queryKey: ["bill-preview", order.id, debouncedCouponCode],
+    queryFn: () => previewBill({ order_id: order.id, coupon_code: debouncedCouponCode || undefined }),
     enabled: !finalizedBill,
   });
 
@@ -116,24 +88,31 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
   }, [preview?.grand_total]);
 
   const finalizeMutation = useMutation({
-    mutationFn: () => createBill({ order_id: order.id, discount, payments, skip_print: previewBeforePrint }),
-    onSuccess: (bill) => setFinalizedBill(bill),
+    mutationFn: () =>
+      createBill({
+        order_id: order.id,
+        coupon_code: debouncedCouponCode || undefined,
+        payments,
+        skip_print: previewBeforePrint,
+      }),
+    onSuccess: (bill) => {
+      if (previewBeforePrint) {
+        // Show the print-layout simulation and wait for an explicit Print click.
+        setFinalizedBill(bill);
+      } else {
+        // Already printed as part of finalize (skip_print=false) — no extra window,
+        // straight back to POS.
+        onFinalized();
+      }
+    },
     onError: (err) =>
       setError(axios.isAxiosError(err) ? String(err.response?.data?.detail ?? err.message) : "Billing failed"),
   });
 
-  const reprintMutation = useMutation({
+  const printMutation = useMutation({
     mutationFn: () => reprintBill(finalizedBill!.id),
-    onSuccess: (bill) => {
-      setFinalizedBill(bill);
-      setPrintedOnce(true);
-    },
+    onSuccess: () => onFinalized(),
   });
-
-  // Once finalized, this modal shows one of three stages: the pre-finalize form; if
-  // "preview before print" was checked, a preview-then-print screen; otherwise (or
-  // once that screen's Print has fired) the normal post-bill summary.
-  const showingPreviewBeforePrint = !!finalizedBill && previewBeforePrint && !printedOnce;
 
   useEffect(() => {
     function isTypingTarget(el: EventTarget | null): boolean {
@@ -149,60 +128,73 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
         e.preventDefault();
         if (!finalizedBill) {
           if (preview && balanced && !finalizeMutation.isPending) finalizeMutation.mutate();
-        } else if (showingPreviewBeforePrint) {
-          if (!reprintMutation.isPending) reprintMutation.mutate();
-        } else {
-          onFinalized();
+        } else if (!printMutation.isPending) {
+          printMutation.mutate();
         }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [
-    finalizedBill,
-    showingPreviewBeforePrint,
-    preview,
-    balanced,
-    finalizeMutation,
-    reprintMutation,
-    onClose,
-    onFinalized,
-  ]);
+  }, [finalizedBill, preview, balanced, finalizeMutation, printMutation, onClose, onFinalized]);
 
   function updatePayment(index: number, patch: Partial<BillPaymentInput>) {
     setPayments((prev) => prev.map((p, i) => (i === index ? { ...p, ...patch } : p)));
   }
 
-  if (showingPreviewBeforePrint && finalizedBill) {
+  // Print-preview screen: an exact simulation of the printed bill layout (monospace,
+  // same line structure as backend/app/printing/base.py's format_bill_text_lines), not
+  // just an information summary — so the cashier can verify it before it hits paper.
+  if (finalizedBill) {
+    const discountSegments = finalizedBill.discount_note ? finalizedBill.discount_note.split("; ") : [];
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-        <div className="max-h-[90vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-surface p-5 shadow-pos">
-          <h2 className="mb-1 text-lg font-extrabold">🧾 Bill {finalizedBill.bill_number}</h2>
-          <p className="mb-3 text-xs text-ink-faint">Bill finalized — review before sending to the printer.</p>
-          <ul className="mb-3 flex flex-col gap-1 text-xs">
-            {finalizedBill.items.map((line) => (
-              <li key={line.id ?? line.item_id} className="flex items-center justify-between gap-2">
-                <span className="min-w-0 flex-1 truncate">
-                  {line.name_en} × {line.quantity}
-                </span>
-                <span className="tabular-nums font-semibold">{formatINR(line.line_total)}</span>
-              </li>
-            ))}
-          </ul>
-          <div className="mb-4 rounded-lg bg-surface-2 px-3.5 py-3 text-sm">
-            <Row label="Subtotal" value={finalizedBill.subtotal} />
-            {finalizedBill.discount_amount > 0 && (
-              <Row label="Discount" value={-finalizedBill.discount_amount} />
+        <div className="max-h-[90vh] w-full max-w-xs overflow-y-auto rounded-2xl bg-surface p-4 shadow-pos">
+          <p className="mb-2 text-center text-xs font-bold text-ink-faint">🖨 Print Preview</p>
+          <div className="rounded-lg bg-white p-3 font-mono text-[11px] leading-relaxed text-black">
+            <p className="text-center font-bold">Bill #{finalizedBill.bill_number}</p>
+            {finalizedBill.table_number && (
+              <p className="text-center">
+                {finalizedBill.table_number}
+                {finalizedBill.party_label ? ` ${finalizedBill.party_label}` : ""} ({finalizedBill.section_name_en})
+              </p>
             )}
-            <Row label="CGST" value={finalizedBill.cgst_amount} />
-            <Row label="SGST" value={finalizedBill.sgst_amount} />
-            <Row label="Round Off" value={finalizedBill.round_off_amount} signed />
-            <div className="mt-1.5 flex items-center justify-between border-t border-dashed border-border pt-1.5 text-base font-extrabold">
+            <p className="my-1 border-t border-dashed border-black/40" />
+            {finalizedBill.items.map((line) => (
+              <div key={line.id ?? line.item_id}>
+                <div className="flex justify-between">
+                  <span className="truncate">
+                    {line.quantity} x {line.name_en}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span />
+                  <span>{formatINR(line.line_total)}</span>
+                </div>
+              </div>
+            ))}
+            <p className="my-1 border-t border-dashed border-black/40" />
+            <Row label="Subtotal" value={finalizedBill.subtotal} mono />
+            {discountSegments.map((seg, i) => (
+              <div key={i} className="flex justify-between text-black/80">
+                <span className="truncate">{seg}</span>
+              </div>
+            ))}
+            <Row label="CGST" value={finalizedBill.cgst_amount} mono />
+            <Row label="SGST" value={finalizedBill.sgst_amount} mono />
+            <Row label="Round Off" value={finalizedBill.round_off_amount} signed mono />
+            <div className="mt-1 flex items-center justify-between border-t border-dashed border-black/40 pt-1 font-bold">
               <span>Grand Total</span>
-              <span className="tabular-nums">{formatINR(finalizedBill.grand_total)}</span>
+              <span>{formatINR(finalizedBill.grand_total)}</span>
             </div>
+            <p className="my-1 border-t border-dashed border-black/40" />
+            {finalizedBill.payments.map((p, i) => (
+              <div key={i} className="flex justify-between">
+                <span className="capitalize">{p.method}</span>
+                <span>{formatINR(p.amount)}</span>
+              </div>
+            ))}
           </div>
-          <div className="flex justify-end gap-2">
+          <div className="mt-3 flex justify-end gap-2">
             <button
               type="button"
               onClick={onFinalized}
@@ -212,56 +204,11 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
             </button>
             <button
               type="button"
-              onClick={() => reprintMutation.mutate()}
-              disabled={reprintMutation.isPending}
+              onClick={() => printMutation.mutate()}
+              disabled={printMutation.isPending}
               className="rounded-lg bg-accent px-4 py-2 text-sm font-bold text-accent-foreground disabled:opacity-50"
             >
-              {reprintMutation.isPending ? "Printing…" : "🖨 Print"}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (finalizedBill) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-        <div className="w-full max-w-sm rounded-2xl bg-surface p-5 shadow-pos">
-          <h2 className="mb-1 text-lg font-extrabold text-veg">✅ Bill {finalizedBill.bill_number}</h2>
-          <p className="mb-3 text-xs text-ink-faint">
-            {finalizedBill.printed
-              ? "Sent to the bill printer."
-              : "No bill printer registered for this location — nothing was printed."}
-          </p>
-          <div className="mb-4 rounded-lg bg-surface-2 px-3.5 py-3 text-sm">
-            <Row label="Subtotal" value={finalizedBill.subtotal} />
-            {finalizedBill.discount_amount > 0 && (
-              <Row label="Discount" value={-finalizedBill.discount_amount} />
-            )}
-            <Row label="CGST" value={finalizedBill.cgst_amount} />
-            <Row label="SGST" value={finalizedBill.sgst_amount} />
-            <Row label="Round Off" value={finalizedBill.round_off_amount} signed />
-            <div className="mt-1.5 flex items-center justify-between border-t border-dashed border-border pt-1.5 text-base font-extrabold">
-              <span>Grand Total</span>
-              <span className="tabular-nums">{formatINR(finalizedBill.grand_total)}</span>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => reprintMutation.mutate()}
-              disabled={reprintMutation.isPending}
-              className="rounded-lg border border-border px-4 py-2 text-sm font-bold hover:bg-surface-2 disabled:opacity-50"
-            >
-              {reprintMutation.isPending ? "Printing…" : "🖨 Reprint"}
-            </button>
-            <button
-              type="button"
-              onClick={onFinalized}
-              className="rounded-lg bg-accent px-4 py-2 text-sm font-bold text-accent-foreground"
-            >
-              Done
+              {printMutation.isPending ? "Printing…" : "🖨 Print"}
             </button>
           </div>
         </div>
@@ -274,66 +221,18 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
       <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-surface p-5 shadow-pos">
         <h2 className="mb-3 text-lg font-extrabold">🧾 Finalize Bill</h2>
 
-        {allowedDiscountTypes.length > 0 && (
+        {couponsEnabled && (
           <div className="mb-3 rounded-lg border border-border p-3">
             <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-ink-faint">
-              Discount
+              Coupon Code
             </label>
-            <select
-              value={discountType}
-              onChange={(e) => setDiscountType(e.target.value)}
-              className="mb-2 w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm"
-            >
-              <option value="">No discount</option>
-              {allowedDiscountTypes.map((t) => (
-                <option key={t} value={t}>
-                  {DISCOUNT_TYPE_LABELS[t] ?? t}
-                </option>
-              ))}
-            </select>
-
-            {discountType === "flat_percent" && (
-              <input
-                type="number"
-                min={0}
-                max={100}
-                placeholder="Percent off (e.g. 10)"
-                value={percent}
-                onChange={(e) => setPercent(e.target.value)}
-                className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm"
-              />
-            )}
-            {discountType === "coupon" && (
-              <input
-                type="text"
-                placeholder="Coupon code"
-                value={couponCode}
-                onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
-                className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm uppercase"
-              />
-            )}
-            {discountType === "item_level" && (
-              <ul className="flex flex-col gap-1.5">
-                {order.items
-                  .filter((line) => line.id)
-                  .map((line) => (
-                    <li key={line.id} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="min-w-0 flex-1 truncate">{line.name_en}</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={line.line_total}
-                        placeholder="₹0"
-                        value={itemAmounts[line.id!] ?? ""}
-                        onChange={(e) =>
-                          setItemAmounts((prev) => ({ ...prev, [line.id!]: e.target.value }))
-                        }
-                        className="w-20 rounded-md border border-border bg-background px-2 py-1 text-right"
-                      />
-                    </li>
-                  ))}
-              </ul>
-            )}
+            <input
+              type="text"
+              placeholder="Enter coupon code (optional)"
+              value={couponCode}
+              onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+              className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm uppercase"
+            />
           </div>
         )}
 
@@ -343,7 +242,15 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
           {preview && (
             <>
               <Row label="Subtotal" value={preview.subtotal} />
-              {preview.discount_amount > 0 && <Row label="Discount" value={-preview.discount_amount} />}
+              {preview.discount_note ? (
+                preview.discount_note.split("; ").map((seg, i) => (
+                  <div key={i} className="flex items-center justify-between py-0.5 text-veg">
+                    <span className="text-xs">{seg}</span>
+                  </div>
+                ))
+              ) : (
+                preview.discount_amount > 0 && <Row label="Discount" value={-preview.discount_amount} />
+              )}
               <Row label="CGST" value={preview.cgst_amount} />
               <Row label="SGST" value={preview.sgst_amount} />
               <Row label="Round Off" value={preview.round_off_amount} signed />
@@ -444,8 +351,16 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
   );
 }
 
-function Row({ label, value, signed }: { label: string; value: number; signed?: boolean }) {
+function Row({ label, value, signed, mono }: { label: string; value: number; signed?: boolean; mono?: boolean }) {
   const display = signed && value >= 0 ? `+${formatINR(value)}` : formatINR(value);
+  if (mono) {
+    return (
+      <div className="flex items-center justify-between">
+        <span>{label}</span>
+        <span>{display}</span>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center justify-between py-0.5 text-ink-soft">
       <span>{label}</span>

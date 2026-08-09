@@ -173,21 +173,29 @@ async def test_waiter_cannot_finalize_bill(client: AsyncClient, tenant_admin: di
     assert (await client.get("/api/v1/bills", headers=waiter_headers)).status_code == 403
 
 
-async def test_flat_percent_discount_reduces_taxable_value(client: AsyncClient, tenant_admin: dict):
+async def _create_discount_rule(client: AsyncClient, headers: dict, **overrides) -> dict:
+    payload = {"name": "Test Rule", "type": "flat_percent", "discount_mode": "percent", "value": 10}
+    payload.update(overrides)
+    resp = await client.post("/api/v1/discount-rules", json=payload, headers=headers)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def test_flat_percent_discount_auto_applies(client: AsyncClient, tenant_admin: dict):
     headers = tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     order = await _order_with_200_subtotal(client, headers, location_id, section_id)
+    await _create_discount_rule(client, headers, name="Festival Offer", type="flat_percent", value=10)
 
     preview = await client.post(
-        "/api/v1/bills/preview",
-        json={"order_id": order["id"], "discount": {"type": "flat_percent", "percent": 10}},
-        headers=headers,
+        "/api/v1/bills/preview", json={"order_id": order["id"]}, headers=headers
     )
     assert preview.status_code == 200
     body = preview.json()
     assert body["subtotal"] == 200
     assert body["discount_amount"] == 20.0
+    assert body["discount_note"] == "Festival Offer: -₹20.00"
     # No tax rule registered for this tenant -> zero tax, so grand_total == net taxable.
     assert body["grand_total"] == 180.0
 
@@ -199,31 +207,32 @@ async def test_item_level_discount_blocked_on_lite_allowed_on_pro_max(
     location_id = await _default_location_id(client, lite_headers)
     section_id = await _section_id(client, lite_headers, "AC")
     order = await _order_with_200_subtotal(client, lite_headers, location_id, section_id)
-    line_id = order["items"][0]["id"]
+    item_id = order["items"][0]["item_id"]
+    # Rule creation itself isn't plan-gated (only application at billing time is) — a
+    # Lite tenant can create an item_level rule, it just never auto-applies.
+    await _create_discount_rule(
+        client, lite_headers, name="Item Offer", type="item_level", discount_mode="rupee", value=15,
+        item_id=item_id,
+    )
 
     blocked = await client.post(
-        "/api/v1/bills/preview",
-        json={
-            "order_id": order["id"],
-            "discount": {"type": "item_level", "item_amounts": {line_id: 15}},
-        },
-        headers=lite_headers,
+        "/api/v1/bills/preview", json={"order_id": order["id"]}, headers=lite_headers
     )
-    assert blocked.status_code == 400
+    assert blocked.status_code == 200
+    assert blocked.json()["discount_amount"] == 0.0
 
     pm_headers = pro_max_tenant_admin["headers"]
     pm_location_id = await _default_location_id(client, pm_headers)
     pm_section_id = await _section_id(client, pm_headers, "AC")
     pm_order = await _order_with_200_subtotal(client, pm_headers, pm_location_id, pm_section_id)
-    pm_line_id = pm_order["items"][0]["id"]
+    pm_item_id = pm_order["items"][0]["item_id"]
+    await _create_discount_rule(
+        client, pm_headers, name="Item Offer", type="item_level", discount_mode="rupee", value=15,
+        item_id=pm_item_id,
+    )
 
     allowed = await client.post(
-        "/api/v1/bills/preview",
-        json={
-            "order_id": pm_order["id"],
-            "discount": {"type": "item_level", "item_amounts": {pm_line_id: 15}},
-        },
-        headers=pm_headers,
+        "/api/v1/bills/preview", json={"order_id": pm_order["id"]}, headers=pm_headers
     )
     assert allowed.status_code == 200
     assert allowed.json()["discount_amount"] == 15.0
@@ -234,18 +243,17 @@ async def test_item_level_discount_capped_at_line_total(client: AsyncClient, pro
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     order = await _order_with_200_subtotal(client, headers, location_id, section_id)
-    line_id = order["items"][0]["id"]
+    item_id = order["items"][0]["item_id"]
+    await _create_discount_rule(
+        client, headers, name="Huge Offer", type="item_level", discount_mode="rupee", value=9999,
+        item_id=item_id,
+    )
 
     resp = await client.post(
-        "/api/v1/bills/preview",
-        json={
-            "order_id": order["id"],
-            "discount": {"type": "item_level", "item_amounts": {line_id: 9999}},
-        },
-        headers=headers,
+        "/api/v1/bills/preview", json={"order_id": order["id"]}, headers=headers
     )
     assert resp.status_code == 200
-    # Requested 9999 off a 200-rupee line — capped to the line's own total.
+    # Rule value 9999 off a 200-rupee line — capped to the line's own total.
     assert resp.json()["discount_amount"] == 200.0
 
 
@@ -255,15 +263,13 @@ async def test_coupon_discount_applies_rule_percent(client: AsyncClient, pro_max
     section_id = await _section_id(client, headers, "AC")
     order = await _order_with_200_subtotal(client, headers, location_id, section_id)
 
-    await client.post(
-        "/api/v1/discount-rules",
-        json={"name": "Save10", "type": "coupon", "value": 10, "coupon_code": "SAVE10"},
-        headers=headers,
+    await _create_discount_rule(
+        client, headers, name="Save10", type="coupon", value=10, coupon_code="SAVE10"
     )
 
     resp = await client.post(
         "/api/v1/bills/preview",
-        json={"order_id": order["id"], "discount": {"type": "coupon", "coupon_code": "SAVE10"}},
+        json={"order_id": order["id"], "coupon_code": "SAVE10"},
         headers=headers,
     )
     assert resp.status_code == 200
@@ -271,10 +277,93 @@ async def test_coupon_discount_applies_rule_percent(client: AsyncClient, pro_max
 
     bad_coupon = await client.post(
         "/api/v1/bills/preview",
-        json={"order_id": order["id"], "discount": {"type": "coupon", "coupon_code": "NOPE"}},
+        json={"order_id": order["id"], "coupon_code": "NOPE"},
         headers=headers,
     )
     assert bad_coupon.status_code == 400
+
+
+async def test_expired_flat_rule_does_not_apply(client: AsyncClient, tenant_admin: dict):
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    order = await _order_with_200_subtotal(client, headers, location_id, section_id)
+    await _create_discount_rule(
+        client, headers, name="Expired Offer", type="flat_percent", value=10, expires_at="2020-01-01"
+    )
+
+    resp = await client.post(
+        "/api/v1/bills/preview", json={"order_id": order["id"]}, headers=headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["discount_amount"] == 0.0
+
+
+async def test_deactivated_flat_rule_does_not_apply(client: AsyncClient, tenant_admin: dict):
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    order = await _order_with_200_subtotal(client, headers, location_id, section_id)
+    rule = await _create_discount_rule(client, headers, name="Toggled Off", type="flat_percent", value=10)
+    await client.patch(
+        f"/api/v1/discount-rules/{rule['id']}", json={"is_active": False}, headers=headers
+    )
+
+    resp = await client.post(
+        "/api/v1/bills/preview", json={"order_id": order["id"]}, headers=headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["discount_amount"] == 0.0
+
+
+async def test_multiple_active_flat_rules_best_for_customer_wins(
+    client: AsyncClient, tenant_admin: dict
+):
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    order = await _order_with_200_subtotal(client, headers, location_id, section_id)
+    await _create_discount_rule(client, headers, name="Small Offer", type="flat_percent", value=5)
+    await _create_discount_rule(client, headers, name="Big Offer", type="flat_percent", value=20)
+
+    resp = await client.post(
+        "/api/v1/bills/preview", json={"order_id": order["id"]}, headers=headers
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["discount_amount"] == 40.0
+    assert body["discount_note"] == "Big Offer: -₹40.00"
+
+
+async def test_item_flat_and_coupon_discounts_stack(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    order = await _order_with_200_subtotal(client, headers, location_id, section_id)
+    item_id = order["items"][0]["item_id"]
+
+    await _create_discount_rule(
+        client, headers, name="Item Offer", type="item_level", discount_mode="rupee", value=20,
+        item_id=item_id,
+    )
+    await _create_discount_rule(client, headers, name="Flat Offer", type="flat_percent", value=10)
+    await _create_discount_rule(
+        client, headers, name="Coupon Offer", type="coupon", value=10, coupon_code="STACK10"
+    )
+
+    resp = await client.post(
+        "/api/v1/bills/preview",
+        json={"order_id": order["id"], "coupon_code": "STACK10"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    # item: 20 off 200 -> 180 remaining. flat 10% of 180 = 18 -> 162 remaining.
+    # coupon 10% of 162 = 16.2.
+    assert body["discount_amount"] == 20 + 18 + 16.2
+    assert "Item Offer" in body["discount_note"]
+    assert "Flat Offer" in body["discount_note"]
+    assert "Coupon Offer" in body["discount_note"]
 
 
 async def test_old_bill_search_and_reprint_produces_identical_bill(client: AsyncClient, tenant_admin: dict):
@@ -412,12 +501,12 @@ async def test_audit_log_written_for_large_discount(client: AsyncClient, pro_max
     order = await _create_order(
         client, headers, location_id, section_id, [{"item_id": item["id"], "quantity": 1}]
     )
+    await _create_discount_rule(client, headers, name="Huge Offer", type="flat_percent", value=90)
 
     resp = await client.post(
         "/api/v1/bills",
         json={
             "order_id": order["id"],
-            "discount": {"type": "flat_percent", "percent": 90},
             "payments": [{"method": "cash", "amount": 100.0}],
         },
         headers=headers,

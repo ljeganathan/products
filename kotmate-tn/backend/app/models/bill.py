@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Numeric, String
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -48,6 +48,11 @@ class Bill(UUIDPKMixin, TimestampMixin, Base):
     waiter_incentive_amount: Mapped[float | None] = mapped_column(Numeric(10, 2))
     cashier_incentive_amount: Mapped[float | None] = mapped_column(Numeric(10, 2))
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="finalized")
+    # Human-readable summary of which discount rule(s) auto-applied and how much each
+    # contributed (e.g. "Festival Offer (10%): -₹45.00; Coupon WELCOME10: -₹15.00") —
+    # computed once at finalize time and never recomputed, so a reprint always shows the
+    # same breakdown even if the underlying DiscountRule is edited/deactivated later.
+    discount_note: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         tenant_composite_index("bills"),

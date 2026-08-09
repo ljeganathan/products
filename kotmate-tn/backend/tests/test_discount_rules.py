@@ -42,6 +42,48 @@ async def test_invalid_type_rejected(client: AsyncClient, tenant_admin: dict):
     assert resp.status_code == 422
 
 
+async def test_create_item_level_rule_returns_item_name_immediately(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    """Regression: the create/update responses build item_name_en from a join before
+    committing — building it after commit meant require_tenant_scope's SET LOCAL RLS
+    var was already gone, so the lookup silently returned nothing (same class of bug as
+    kot_service's set_ticket_status, documented in docs/db-schema.md).
+    """
+    headers = pro_max_tenant_admin["headers"]
+    category = (
+        await client.post("/api/v1/categories", json={"name_en": "Mains"}, headers=headers)
+    ).json()
+    item = (
+        await client.post(
+            "/api/v1/items",
+            json={"name_en": "Chicken Biryani", "category_id": category["id"], "price": 220},
+            headers=headers,
+        )
+    ).json()
+
+    create_resp = await client.post(
+        "/api/v1/discount-rules",
+        json={
+            "name": "Biryani Offer",
+            "type": "item_level",
+            "discount_mode": "rupee",
+            "value": 20,
+            "item_id": item["id"],
+        },
+        headers=headers,
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    assert create_resp.json()["item_name_en"] == "Chicken Biryani"
+
+    rule_id = create_resp.json()["id"]
+    update_resp = await client.patch(
+        f"/api/v1/discount-rules/{rule_id}", json={"value": 25}, headers=headers
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["item_name_en"] == "Chicken Biryani"
+
+
 async def test_non_tenant_admin_can_read_but_not_write_discount_rules(
     client: AsyncClient, tenant_admin: dict
 ):

@@ -122,12 +122,14 @@ a generic icon when unset; not plan-gated unlike item images), `display_order`, 
 
 **`stock_ledger`** — audit trail for every `items.available_qty` change (extends the
 above, CLAUDE.md §11). `item_id`, `location_id` (nullable — items aren't
-location-scoped, only populated for `kot_deduction` rows where the triggering order's
-location is meaningful), `change_qty` (signed int, before/after delta), `reason` ∈
-`manual_set`/`kot_deduction`/`restock`, `reference_order_id`/`reference_bill_id` (both
-nullable — `kot_deduction` populates `reference_order_id` since deduction fires at
-KOT-send, before any bill exists; `reference_bill_id` is unused in this phase, kept
-for schema completeness).
+location-scoped, only populated for `kot_deduction`/`bill_deduction` rows where the
+triggering order/bill's location is meaningful), `change_qty` (signed int,
+before/after delta), `reason` ∈ `manual_set`/`kot_deduction`/`restock`/`bill_deduction`,
+`reference_order_id`/`reference_bill_id` (both nullable — `kot_deduction` populates
+`reference_order_id` since deduction fires at KOT-send, before any bill exists;
+`bill_deduction` populates `reference_bill_id` instead, covering order lines billed
+directly without ever being sent to KOT, so stock still decrements exactly once either
+way — see `bill_service._deduct_stock_for_unsent_items`).
 
 **`seating_sections`** — AC / Non-AC / Rooftop / Family / Takeaway / Online Delivery
 (CLAUDE.md §9/§11). `name_en`, `name_ta`, `is_seating` (false for Takeaway/Online
@@ -186,6 +188,7 @@ changes later.
 | party_label | nullable varchar(30) | snapshotted from `orders.party_label` at finalize time (Phase 21), e.g. "Customer-2" — same immutable-history treatment as `table_id`/`section_id`/`waiter_id` |
 | pos_user_id | NOT NULL | cashier-of-record |
 | subtotal, discount_amount | numeric(10,2) | |
+| discount_note | text, nullable | human-readable breakdown of which discount rule(s) applied and how much each contributed (e.g. "Festival Offer: -₹20.00; Coupon WELCOME10: -₹15.00"), computed once at finalize time and reused verbatim on reprint/print — never recomputed |
 | cgst_amount, sgst_amount | numeric(10,2) | **always two distinct columns**, never a merged "GST" amount (CLAUDE.md §9) |
 | round_off_amount | numeric(10,2), signed | explicit rounding delta to the nearest ₹1, always shown on print, never silently absorbed |
 | grand_total | numeric(10,2) | |
@@ -202,8 +205,14 @@ columns, never a single merged GST rate — CLAUDE.md §9), `is_default`, `is_ac
 tenants use one (their default) row; Pro/Pro Max can define several and assign per item
 via `items.tax_class_id`.
 
-**`discount_rules`** — `name`, `type` ∈ flat_percent/item_level/coupon, `value`,
-`coupon_code` (nullable, unique per tenant when set), `is_active`.
+**`discount_rules`** — `name`, `type` ∈ flat_percent/item_level/coupon, `discount_mode`
+∈ percent/rupee, `value`, `item_id` (nullable FK to `items`, only set for `item_level`),
+`coupon_code` (nullable, unique per tenant when set), `expires_at` (nullable date —
+`NULL` = never expires), `is_active`. Rules auto-apply at billing time rather than being
+chosen manually per bill: item-level rules discount their matching line, the
+best-for-customer active flat rule discounts the bill remainder, and an active coupon
+(entered by the cashier) discounts what's left after those — all three stack. See
+`bill_service._compute_discount`.
 
 **`printers`** — `location_id`, `name`, `target` ∈ kot/bill, `printer_type` ∈
 thermal/dotmatrix, `connection_type` ∈ network/usb/local_agent/wifi/bluetooth (wifi +
@@ -288,6 +297,13 @@ for the full chain. Resuming the list for the manual-testing-fix backlog phases:
 15. **`stock management plan feature`** (Phase 22, revision `ffa2fb832bd7`) —
     data-only: JSONB-merges `stock_management: true` onto the seeded `pro`/`pro_max`
     plans' `features` (same pattern as revision 12's `item_import` change).
+16. **`discount rules rework`** (Phase 23, revision `2e705ea88865`) — adds
+    `discount_rules.discount_mode`/`item_id`/`expires_at` and `bills.discount_note`,
+    reworking discounts from fully-manual-at-bill-time to rule-driven auto-apply.
+17. **`stock ledger bill_deduction reason`** (Phase 23, revision `83c69be1edbf`) —
+    extends `stock_ledger`'s `reason` CHECK constraint with `bill_deduction`, covering
+    order lines billed directly without ever being sent to KOT (previously never
+    decremented stock at all — see the `stock_ledger` table description above).
 
 ### Gotcha for Phase 02: setting the RLS session vars
 

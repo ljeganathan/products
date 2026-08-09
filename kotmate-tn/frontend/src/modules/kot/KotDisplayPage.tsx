@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { listItems } from "@/modules/admin/itemsApi";
 import { listLocations } from "@/modules/admin/locationsApi";
@@ -119,7 +120,16 @@ export function KotDisplayPage() {
           </div>
         )}
 
-        <UserMenu links={role === "tenant_admin" ? [{ to: "/dashboard", label: "Dashboard" }] : []} />
+        {role === "tenant_admin" && (
+          <Link
+            to="/dashboard"
+            className="ml-auto flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 text-xs font-bold text-ink-soft hover:border-accent hover:text-accent"
+          >
+            📊 Dashboard
+          </Link>
+        )}
+
+        <UserMenu />
       </header>
 
       {view === "tickets" && lowStockItems.length > 0 && (

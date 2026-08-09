@@ -118,6 +118,7 @@ def test_bill_formatter_hides_tamil_when_toggled_off():
         lines=[BillLine(name_en="Meals", name_ta="சாப்பாடு", quantity=1, unit_price=100.0, line_total=100.0)],
         subtotal=100.0,
         discount_amount=0,
+        discount_note=None,
         cgst_amount=0,
         sgst_amount=0,
         round_off_amount=0,
@@ -132,6 +133,37 @@ def test_bill_formatter_hides_tamil_when_toggled_off():
     )
     lines = format_bill_text_lines(bill)
     assert not any("சாப்பாடு" in line for line in lines)
+
+
+def test_bill_formatter_prints_one_line_per_discount_note_segment():
+    """Phase 23: each auto-applied discount rule's name+amount prints as its own line
+    instead of a single bare "Discount" label.
+    """
+    bill = BillRenderData(
+        bill_number="B1",
+        table_number="T5",
+        section_name_en="AC",
+        created_at=datetime.now(),
+        lines=[BillLine(name_en="Meals", name_ta=None, quantity=1, unit_price=200.0, line_total=200.0)],
+        subtotal=200.0,
+        discount_amount=30.0,
+        discount_note="Festival Offer: -₹20.00; Coupon WELCOME10: -₹10.00",
+        cgst_amount=0,
+        sgst_amount=0,
+        round_off_amount=0,
+        grand_total=170.0,
+        payments=[],
+        hotel_name="Test Hotel",
+        hotel_address_lines=[],
+        gstin=None,
+        upi_id=None,
+        qr_payload=None,
+        show_tamil_names=False,
+    )
+    lines = format_bill_text_lines(bill)
+    assert any("Festival Offer: -₹20.00" in line for line in lines)
+    assert any("Coupon WELCOME10: -₹10.00" in line for line in lines)
+    assert not any(line.strip().startswith("Discount") for line in lines)
 
 
 # --- Phase 21: party_label ("Customer-N") composed into the printed header ---
@@ -169,6 +201,7 @@ def test_bill_header_label_includes_party_label_when_present():
         lines=[],
         subtotal=100.0,
         discount_amount=0,
+        discount_note=None,
         cgst_amount=0,
         sgst_amount=0,
         round_off_amount=0,

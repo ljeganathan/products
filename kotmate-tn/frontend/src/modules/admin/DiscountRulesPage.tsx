@@ -9,6 +9,7 @@ import {
   listDiscountRules,
   updateDiscountRule,
 } from "@/modules/admin/discountRulesApi";
+import { listItems } from "@/modules/admin/itemsApi";
 import { me } from "@/modules/auth/authApi";
 
 const inputClass =
@@ -16,9 +17,9 @@ const inputClass =
 const labelClass = "text-xs font-medium text-foreground/70";
 
 const TYPE_LABELS: Record<string, string> = {
-  flat_percent: "Flat %",
-  item_level: "Item-level",
-  coupon: "Coupon code",
+  flat_percent: "Flat",
+  item_level: "Item",
+  coupon: "Coupon",
 };
 
 function apiErrorMessage(err: unknown, fallback: string): string {
@@ -28,11 +29,21 @@ function apiErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
+function generateCouponCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
 interface DiscountRuleFormState {
   name: string;
   type: "flat_percent" | "item_level" | "coupon";
+  discount_mode: "percent" | "rupee";
   value: string;
+  item_id: string;
   coupon_code: string;
+  expires_at: string;
 }
 
 function DiscountRuleFormModal({
@@ -45,32 +56,52 @@ function DiscountRuleFormModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { data: items } = useQuery({ queryKey: ["items", "all"], queryFn: () => listItems() });
   const [form, setForm] = useState<DiscountRuleFormState>(
     editingRule
       ? {
           name: editingRule.name,
           type: editingRule.type,
+          discount_mode: editingRule.discount_mode,
           value: editingRule.value != null ? String(editingRule.value) : "",
+          item_id: editingRule.item_id ?? "",
           coupon_code: editingRule.coupon_code ?? "",
+          expires_at: editingRule.expires_at ?? "",
         }
-      : { name: "", type: (allowedTypes[0] as DiscountRuleFormState["type"]) ?? "flat_percent", value: "", coupon_code: "" },
+      : {
+          name: "",
+          type: (allowedTypes[0] as DiscountRuleFormState["type"]) ?? "flat_percent",
+          discount_mode: "percent",
+          value: "",
+          item_id: "",
+          coupon_code: "",
+          expires_at: "",
+        },
   );
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: () => {
+      const value = form.value ? Number(form.value) : null;
+      const expires_at = form.expires_at || null;
       if (editingRule) {
         return updateDiscountRule(editingRule.id, {
           name: form.name,
-          value: form.value ? Number(form.value) : null,
+          discount_mode: form.discount_mode,
+          value,
+          item_id: form.type === "item_level" ? form.item_id || null : undefined,
           coupon_code: form.type === "coupon" ? form.coupon_code : undefined,
+          expires_at,
         });
       }
       const payload: DiscountRuleCreatePayload = {
         name: form.name,
         type: form.type,
-        value: form.value ? Number(form.value) : null,
+        discount_mode: form.discount_mode,
+        value,
+        item_id: form.type === "item_level" ? form.item_id || null : null,
         coupon_code: form.type === "coupon" ? form.coupon_code : null,
+        expires_at,
       };
       return createDiscountRule(payload);
     },
@@ -125,31 +156,86 @@ function DiscountRuleFormModal({
             )}
           </div>
 
-          {form.type !== "item_level" && (
+          {form.type === "item_level" && (
             <div className="flex flex-col gap-1.5">
-              <label className={labelClass}>Value (%)</label>
+              <label className={labelClass}>Item</label>
+              <select
+                required
+                className={inputClass}
+                value={form.item_id}
+                onChange={(e) => setForm((f) => ({ ...f, item_id: e.target.value }))}
+              >
+                <option value="">Select an item…</option>
+                {items?.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name_en}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-1.5">
+            <label className={labelClass}>Discount</label>
+            <div className="flex gap-2">
+              <div className="flex overflow-hidden rounded-md border border-border">
+                {(["percent", "rupee"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, discount_mode: mode }))}
+                    className={`min-h-10 px-3 text-sm font-semibold ${
+                      form.discount_mode === mode
+                        ? "bg-accent text-accent-foreground"
+                        : "bg-background text-foreground/70 hover:bg-accent/10"
+                    }`}
+                  >
+                    {mode === "percent" ? "%" : "₹"}
+                  </button>
+                ))}
+              </div>
               <input
                 type="number"
                 min={0}
-                max={100}
-                className={inputClass}
+                max={form.discount_mode === "percent" ? 100 : undefined}
+                placeholder={form.discount_mode === "percent" ? "e.g. 10" : "e.g. 50"}
+                className={`${inputClass} flex-1`}
                 value={form.value}
                 onChange={(e) => setForm((f) => ({ ...f, value: e.target.value }))}
               />
             </div>
-          )}
+          </div>
 
           {form.type === "coupon" && (
             <div className="flex flex-col gap-1.5">
               <label className={labelClass}>Coupon Code</label>
-              <input
-                required
-                className={`${inputClass} uppercase`}
-                value={form.coupon_code}
-                onChange={(e) => setForm((f) => ({ ...f, coupon_code: e.target.value.toUpperCase() }))}
-              />
+              <div className="flex gap-2">
+                <input
+                  required
+                  className={`${inputClass} flex-1 uppercase`}
+                  value={form.coupon_code}
+                  onChange={(e) => setForm((f) => ({ ...f, coupon_code: e.target.value.toUpperCase() }))}
+                />
+                <button
+                  type="button"
+                  onClick={() => setForm((f) => ({ ...f, coupon_code: generateCouponCode() }))}
+                  className="min-h-10 whitespace-nowrap rounded-md border border-accent bg-accent-soft px-3 text-sm font-semibold text-accent hover:bg-accent hover:text-accent-foreground"
+                >
+                  🎲 Generate
+                </button>
+              </div>
             </div>
           )}
+
+          <div className="flex flex-col gap-1.5">
+            <label className={labelClass}>Expires On (optional)</label>
+            <input
+              type="date"
+              className={inputClass}
+              value={form.expires_at}
+              onChange={(e) => setForm((f) => ({ ...f, expires_at: e.target.value }))}
+            />
+          </div>
 
           {error && (
             <p role="alert" className="rounded-md bg-chili/10 px-3 py-2 text-sm text-chili">
@@ -179,6 +265,11 @@ function DiscountRuleFormModal({
   );
 }
 
+function formatValue(rule: DiscountRule): string {
+  if (rule.value == null) return "—";
+  return rule.discount_mode === "rupee" ? `₹${rule.value}` : `${rule.value}%`;
+}
+
 export function DiscountRulesPage() {
   const queryClient = useQueryClient();
   const { data: rules, isLoading, isError } = useQuery({
@@ -203,8 +294,10 @@ export function DiscountRulesPage() {
           <h1 className="mt-1 text-xl font-bold">Discount Rules</h1>
           <p className="text-sm text-foreground/60">
             {allowedTypes.length === 1
-              ? "Your plan (Lite) supports flat % discounts only."
-              : `Your plan supports: ${allowedTypes.map((t) => TYPE_LABELS[t] ?? t).join(", ")}.`}
+              ? "Your plan (Lite) supports Flat discounts only."
+              : `Your plan supports: ${allowedTypes.map((t) => TYPE_LABELS[t] ?? t).join(", ")}.`}{" "}
+            Active rules apply automatically at billing — Flat and Item rules need no cashier action; a
+            Coupon needs the code entered at billing.
           </p>
         </div>
         <button
@@ -230,7 +323,9 @@ export function DiscountRulesPage() {
                 <th className="px-4 py-2.5">Name</th>
                 <th className="px-4 py-2.5">Type</th>
                 <th className="px-4 py-2.5">Value</th>
+                <th className="px-4 py-2.5">Item</th>
                 <th className="px-4 py-2.5">Coupon Code</th>
+                <th className="px-4 py-2.5">Expires</th>
                 <th className="px-4 py-2.5">Status</th>
                 <th className="px-4 py-2.5">Actions</th>
               </tr>
@@ -242,8 +337,10 @@ export function DiscountRulesPage() {
                   <td className="px-4 py-2.5 text-xs text-foreground/70">
                     {TYPE_LABELS[rule.type] ?? rule.type}
                   </td>
-                  <td className="px-4 py-2.5">{rule.value != null ? `${rule.value}%` : "—"}</td>
+                  <td className="px-4 py-2.5">{formatValue(rule)}</td>
+                  <td className="px-4 py-2.5 text-xs">{rule.item_name_en ?? "—"}</td>
                   <td className="px-4 py-2.5 font-mono text-xs">{rule.coupon_code ?? "—"}</td>
+                  <td className="px-4 py-2.5 text-xs">{rule.expires_at ?? "Never"}</td>
                   <td className="px-4 py-2.5">
                     <span
                       className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
