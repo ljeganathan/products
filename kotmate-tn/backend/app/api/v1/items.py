@@ -160,7 +160,7 @@ async def restock_tenant_item(
     db: AsyncSession = Depends(get_db),
 ) -> ItemResponse:
     item = await get_item_or_404(db, current_user.tenant_id, item_id)
-    item = await restock_item(item, payload.available_qty)
+    item = await restock_item(db, current_user.tenant_id, item, payload.available_qty)
     await db.commit()
     return ItemResponse.model_validate(item)
 

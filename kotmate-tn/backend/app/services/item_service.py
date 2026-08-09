@@ -16,6 +16,7 @@ from app.schemas.items import (
     SectionPriceEntry,
     SectionPriceOption,
 )
+from app.services.stock_service import set_item_stock
 from app.services.storage import get_storage
 
 _ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -247,6 +248,12 @@ async def update_item(
             status.HTTP_400_BAD_REQUEST, "available_qty can only be set when track_inventory=true"
         )
 
+    # A real quantity change is routed through set_item_stock so it's ledger-logged
+    # like every other stock write (CLAUDE.md §11 extension) — popped out of the
+    # generic setattr loop below so it isn't written twice.
+    qty_in_payload = "available_qty" in data
+    new_qty = data.pop("available_qty", None)
+
     for field, value in data.items():
         setattr(item, field, value)
 
@@ -254,18 +261,22 @@ async def update_item(
     # behind a disabled flag (CLAUDE.md §11, Phase 05 acceptance criteria).
     if "track_inventory" in data and not data["track_inventory"]:
         item.available_qty = None
+    elif qty_in_payload:
+        if new_qty is not None:
+            await set_item_stock(session, tenant_id, item, new_qty, "manual_set")
+        else:
+            item.available_qty = None
 
     await session.flush()
     return item
 
 
-async def restock_item(item: Item, new_qty: int) -> Item:
+async def restock_item(session: AsyncSession, tenant_id: uuid.UUID, item: Item, new_qty: int) -> Item:
     if not item.track_inventory:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Cannot restock an item that does not have track_inventory enabled"
         )
-    item.available_qty = new_qty
-    return item
+    return await set_item_stock(session, tenant_id, item, new_qty, "restock")
 
 
 async def upload_item_image(

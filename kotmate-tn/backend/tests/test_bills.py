@@ -300,8 +300,66 @@ async def test_old_bill_search_and_reprint_produces_identical_bill(client: Async
     reprint = await client.post(f"/api/v1/bills/{finalized['id']}/reprint", headers=headers)
     assert reprint.status_code == 200
     reprinted = reprint.json()
-    for key in ("bill_number", "subtotal", "cgst_amount", "sgst_amount", "grand_total", "items", "payments"):
+    for key in (
+        "bill_number",
+        "subtotal",
+        "cgst_amount",
+        "sgst_amount",
+        "grand_total",
+        "items",
+        "payments",
+        "party_label",
+    ):
         assert reprinted[key] == finalized[key]
+
+
+async def test_skip_print_finalizes_without_printing_then_reprint_dispatches(
+    client: AsyncClient, tenant_admin: dict
+):
+    """Phase 21 print-preview flow: finalizing with skip_print=True still creates the
+    bill (one bill_number, one Bill row) but withholds the print dispatch until an
+    explicit reprint call — proving "finalize silently, then reprint" is safe to reuse
+    as the preview-then-print mechanism rather than inventing a second print path.
+    """
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    await client.post(
+        "/api/v1/printers",
+        json={
+            "location_id": location_id,
+            "name": "Counter Bill Printer",
+            "target": "bill",
+            "printer_type": "thermal",
+            "connection_type": "network",
+        },
+        headers=headers,
+    )
+    order = await _order_with_200_subtotal(client, headers, location_id, section_id)
+
+    finalized = (
+        await client.post(
+            "/api/v1/bills",
+            json={
+                "order_id": order["id"],
+                "payments": [{"method": "cash", "amount": 200.0}],
+                "skip_print": True,
+            },
+            headers=headers,
+        )
+    ).json()
+    assert finalized["printed"] is False
+
+    reprint = (await client.post(f"/api/v1/bills/{finalized['id']}/reprint", headers=headers)).json()
+    assert reprint["printed"] is True
+    assert reprint["id"] == finalized["id"]
+    assert reprint["bill_number"] == finalized["bill_number"]
+
+    # Exactly one bill was created — skip_print never triggers a second finalize.
+    search = await client.get(
+        "/api/v1/bills", params={"bill_number": finalized["bill_number"]}, headers=headers
+    )
+    assert len(search.json()) == 1
 
 
 async def test_bill_search_filters_by_section_and_cashier(client: AsyncClient, tenant_admin: dict):

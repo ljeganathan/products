@@ -22,6 +22,7 @@ from app.printing.dispatcher import dispatch_kot_print
 from app.schemas.kot import ActiveKotTicketItem, ActiveKotTicketResponse
 from app.services.item_service import LOW_STOCK_THRESHOLD
 from app.services.order_service import get_order_or_404
+from app.services.stock_service import is_stock_tracking_enabled, set_item_stock
 from app.services.tenant_onboarding import get_active_plan
 
 
@@ -79,6 +80,11 @@ async def send_kot(
 
     section, table = await _load_section_and_table(session, order)
 
+    # Fetched once here (not per-item) — reused below for the stock-deduction gate and
+    # the printing gate, so this only queries the active plan once per KOT send.
+    plan = await get_active_plan(session, tenant.id)
+    stock_tracking = is_stock_tracking_enabled(tenant, plan.features if plan else None)
+
     ticket_number = await _next_ticket_number(session, tenant.id)
     ticket = KotTicket(tenant_id=tenant.id, order_id=order.id, ticket_number=ticket_number, status="new")
     session.add(ticket)
@@ -107,9 +113,17 @@ async def send_kot(
             )
         )
 
-        if item.track_inventory:
+        if item.track_inventory and stock_tracking:
             new_qty = max(0, (item.available_qty or 0) - order_item.quantity)
-            item.available_qty = new_qty
+            await set_item_stock(
+                session,
+                tenant.id,
+                item,
+                new_qty,
+                "kot_deduction",
+                location_id=order.location_id,
+                reference_order_id=order.id,
+            )
             stock_messages.append(
                 {
                     "type": "item_stock",
@@ -125,7 +139,6 @@ async def send_kot(
     # Physical printing is plan-gated (Lite = on-screen ticket only, CLAUDE.md §6) and
     # only fires when the tenant has actually registered a KOT printer for this location.
     printed = False
-    plan = await get_active_plan(session, tenant.id)
     if plan and plan.features.get("kot_printing"):
         printer = (
             await session.execute(
@@ -150,6 +163,7 @@ async def send_kot(
                 created_at=ticket.created_at,
                 lines=render_lines,
                 show_tamil_names=hotel.show_tamil_names if hotel else True,
+                party_label=order.party_label,
             )
             dispatch_kot_print(printer, render_data)
             printed = True
@@ -200,6 +214,7 @@ async def _ticket_response(session: AsyncSession, ticket: KotTicket, order: Orde
         ticket_number=ticket.ticket_number,
         order_id=order.id,
         table_number=table.table_number if table else None,
+        party_label=order.party_label,
         section_name_en=section.name_en,
         status=ticket.status,
         created_at=ticket.created_at,

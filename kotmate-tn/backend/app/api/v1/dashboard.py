@@ -2,12 +2,15 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUser, get_current_user, require_role, require_tenant_scope
 from app.db.session import get_db
+from app.models import Tenant
 from app.schemas.dashboard import DashboardSummaryResponse, LowStockItemsResponse, MultiLocationComparisonResponse
 from app.services.dashboard_service import dashboard_summary, low_stock_items, multi_location_comparison
+from app.services.stock_service import is_stock_tracking_enabled
 from app.services.tenant_onboarding import get_active_plan
 
 # Same access rule as reports (CLAUDE.md §5) — waiter has no dashboard/reports access.
@@ -37,8 +40,14 @@ async def get_low_stock_items(
     db: AsyncSession = Depends(get_db),
 ) -> LowStockItemsResponse:
     """Every plan tier (basic soft-inventory awareness, CLAUDE.md §11) — items aren't
-    location-scoped so there's no `location_id` filter, unlike `/summary`.
+    location-scoped so there's no `location_id` filter, unlike `/summary`. Silently
+    empty (not a 403) when the effective flag is off, matching a Pro/Pro Max tenant
+    turning their switch off — a quiet dashboard widget, not an error.
     """
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))).scalar_one()
+    plan = await get_active_plan(db, current_user.tenant_id)
+    if not is_stock_tracking_enabled(tenant, plan.features if plan else None):
+        return LowStockItemsResponse(rows=[])
     return await low_stock_items(db, current_user.tenant_id)
 
 

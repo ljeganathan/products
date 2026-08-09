@@ -234,6 +234,7 @@ function ItemFormModal({
   taxRules,
   itemImagesEnabled,
   sectionPricingEnabled,
+  stockManagementEnabled,
   suggestedItemCode,
   onClose,
 }: {
@@ -242,6 +243,7 @@ function ItemFormModal({
   taxRules: { id: string; name: string }[];
   itemImagesEnabled: boolean;
   sectionPricingEnabled: boolean;
+  stockManagementEnabled: boolean;
   suggestedItemCode: string;
   onClose: () => void;
 }) {
@@ -404,10 +406,16 @@ function ItemFormModal({
               <input
                 type="checkbox"
                 checked={form.track_inventory}
+                disabled={!stockManagementEnabled}
                 onChange={(e) => setForm((f) => ({ ...f, track_inventory: e.target.checked }))}
               />
               Track stock count
             </label>
+            {!stockManagementEnabled && (
+              <p className="text-xs text-foreground/50">
+                Stock management is off for your account — a tenant_admin can turn it on in Settings.
+              </p>
+            )}
           </div>
 
           {form.track_inventory && (
@@ -607,6 +615,7 @@ export function ItemsPage() {
   const categoryNameById = new Map(categories.map((c) => [c.id, c.name_en]));
   const itemImagesEnabled = meData?.features?.item_images === true;
   const sectionPricingEnabled = meData?.features?.section_pricing === true;
+  const stockManagementEnabled = meData?.stock_tracking_enabled === true;
   const itemExportEnabled = meData?.features?.item_export === true;
   const itemImportEnabled = meData?.features?.item_import === true;
 
@@ -754,7 +763,7 @@ export function ItemsPage() {
                       <button type="button" onClick={() => setFormItem(item)} className="text-accent hover:underline">
                         Edit
                       </button>
-                      {item.track_inventory && (
+                      {item.track_inventory && stockManagementEnabled && (
                         <button
                           type="button"
                           onClick={() => setRestockingItem(item)}
@@ -786,6 +795,7 @@ export function ItemsPage() {
           taxRules={taxRules}
           itemImagesEnabled={itemImagesEnabled}
           sectionPricingEnabled={sectionPricingEnabled}
+          stockManagementEnabled={stockManagementEnabled}
           suggestedItemCode={formItem === "new" ? suggestNextItemCode(items ?? []) : ""}
           onClose={() => setFormItem(null)}
         />

@@ -15,6 +15,7 @@ from app.models.plan import Plan, Subscription
 from app.models.platform_settings import PlatformSettings
 from app.models.printer import Printer
 from app.models.section import ItemSectionPrice, SeatingSection
+from app.models.stock_ledger import StockLedger
 from app.models.table import Table
 from app.models.tax import TaxRule
 from app.models.tenant import Tenant, TenantLocation
@@ -41,6 +42,7 @@ __all__ = [
     "Printer",
     "ItemSectionPrice",
     "SeatingSection",
+    "StockLedger",
     "Table",
     "TaxRule",
     "Tenant",

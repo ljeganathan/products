@@ -44,6 +44,7 @@ class ActiveKotTicketResponse(BaseModel):
     ticket_number: str
     order_id: uuid.UUID
     table_number: str | None
+    party_label: str | None
     section_name_en: str
     status: str
     created_at: datetime

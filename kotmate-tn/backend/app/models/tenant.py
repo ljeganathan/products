@@ -35,6 +35,11 @@ class Tenant(UUIDPKMixin, TimestampMixin, Base):
     state: Mapped[str | None] = mapped_column(String(50))
     pincode: Mapped[str | None] = mapped_column(String(6))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Tenant-wide kill switch for stock-quantity tracking (only meaningful on Pro/Pro
+    # Max — gated separately via plans.features.stock_management). Soft-disable only:
+    # toggling this off never clears items.track_inventory/available_qty, so re-enabling
+    # restores prior config exactly.
+    stock_management_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         CheckConstraint(_STATE_CHECK_SQL, name="ck_tenants_state_valid"),

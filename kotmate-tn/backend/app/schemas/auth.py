@@ -39,3 +39,6 @@ class MeResponse(BaseModel):
     max_users: int | None
     max_locations: int | None
     features: dict | None
+    # Effective stock-quantity-tracking state (tenant toggle AND plan has the feature)
+    # — the single flag every frontend surface should check (CLAUDE.md §11 extension).
+    stock_tracking_enabled: bool

@@ -14,6 +14,7 @@ interface CategoryNavProps {
 interface NavEntry {
   id: string;
   name_en: string;
+  name_ta?: string | null;
   icon: string;
   icon_url?: string | null;
 }
@@ -30,7 +31,13 @@ export function CategoryNav({ categories, activeCategoryId, onSelect, variant }:
   // hotkey mapping in POSPage.tsx, which indexes straight into `categories`.
   const items: NavEntry[] = [
     { id: TOP_SELLING_ID, name_en: "Top Selling", icon: "⭐" },
-    ...categories.map((c) => ({ id: c.id, name_en: c.name_en, icon: "🍽️", icon_url: c.icon_url })),
+    ...categories.map((c) => ({
+      id: c.id,
+      name_en: c.name_en,
+      name_ta: c.name_ta,
+      icon: "🍽️",
+      icon_url: c.icon_url,
+    })),
     { id: ALL_ITEMS_ID, name_en: "All", icon: "📋" },
   ];
 
@@ -42,7 +49,7 @@ export function CategoryNav({ categories, activeCategoryId, onSelect, variant }:
             key={c.id}
             type="button"
             onClick={() => onSelect(c.id)}
-            className={`relative flex min-h-[64px] flex-col items-center justify-center gap-1 rounded-xl border px-1 py-2.5 transition-colors ${
+            className={`relative flex min-h-[72px] flex-col items-center justify-center gap-1 rounded-xl border px-1 py-2.5 transition-colors ${
               activeCategoryId === c.id
                 ? "border-accent bg-accent-soft text-accent"
                 : "border-transparent text-ink-soft hover:bg-surface-2"
@@ -55,6 +62,11 @@ export function CategoryNav({ categories, activeCategoryId, onSelect, variant }:
             )}
             <CategoryIcon entry={c} className="h-6 w-6 text-lg" />
             <span className="text-center text-[10.5px] font-bold leading-tight">{c.name_en}</span>
+            {c.name_ta && (
+              <span className="ta block text-center text-[9.5px] font-medium leading-tight text-ink-soft">
+                {c.name_ta}
+              </span>
+            )}
           </button>
         ))}
       </nav>
@@ -76,6 +88,7 @@ export function CategoryNav({ categories, activeCategoryId, onSelect, variant }:
         >
           <CategoryIcon entry={c} className="h-4 w-4 text-sm" />
           {c.name_en}
+          {c.name_ta && <span className="ta ml-1 text-xs font-medium opacity-80">{c.name_ta}</span>}
         </button>
       ))}
     </nav>

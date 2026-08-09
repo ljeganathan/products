@@ -430,19 +430,10 @@ Two, §3 — and `PMDH-admin` on `/dashboard`/`/reports`)*
   reloads tables/waiters/open-orders scoped to the newly selected location.
 - [ ] Reload the page → the previously selected location is still selected (persisted,
   not reset to the first location every time).
-- [ ] Tap an empty table (e.g. T1) → selects immediately, no extra picker step
-  (unchanged pre-Phase-19 behavior for a table with zero open orders).
-- [ ] Add an item, bill it while table T1 is still selected — but before confirming,
-  cancel and instead: add an item and leave the order open (don't bill). Tap T1 again
-  from the table picker → it now shows a gold badge with a count of 1 and offers a
-  party sub-picker: "Party 1" (resume) and "+ New Party (Party 2)".
-- [ ] Choose "+ New Party" → a brand-new empty cart opens at the same table, tagged
-  "Party 2" (shown as a small badge next to the table number in the header). Add a
-  different item than Party 1's — Party 1's cart is untouched (verify via "Party 1" →
-  resume).
-- [ ] Bill Party 2 only → table T1 stays occupied (badge count drops to 1, Party 1
-  still open) — the table does **not** free up until every party at it has billed.
-- [ ] Bill Party 1 → table T1 now shows fully free (no badge) in the picker.
+- [ ] Tap any table (e.g. T1) → selects immediately, no extra picker step, regardless
+  of whether it already has open orders (Phase 21 — the table picker no longer gates
+  selection on open-order count; that's the Customer bar's job now, see Phase 21's own
+  checklist below for the full customer-selection flow).
 - [ ] Repeat-KOT clubbing: start a fresh order at any table, send one item to KOT, add
   a second different item to the same order, send KOT again → bill the order → the
   final bill contains both items as one bill, not two.
@@ -482,6 +473,97 @@ Two, §3 — and `PMDH-admin` on `/dashboard`/`/reports`)*
   boldest text in the cart panel; Finalize Bill lists UPI before Cash/Card; ₹ amounts
   use lakh/crore comma grouping and only show paise when non-zero (e.g. ₹1,25,000 and
   ₹120 vs ₹120.50).
+
+---
+
+## 22. Phase 21 — POS Manual-Testing Round 2
+
+*(as `PMDH-cashier01`/`PMDH-admin` on `/pos` unless noted — Pro Max Demo Hotel; a Pro-tier
+tenant like `HNR`'s admin login is needed for the Import CSV step)*
+
+- [ ] Hotel name and location text in the POS header are visibly larger than before.
+- [ ] Category rail (desktop) and strip (mobile/tablet) both show the Tamil name under
+  or beside the English name, for any category that has one set.
+- [ ] POS top bar shows only "🍳 KOT Tickets", "↺ Recall", and a new "📊 Dashboard"
+  button (same bordered style as KOT Tickets) — no "Reports"/"Bill History" text links
+  — for both a cashier and an admin login. Clicking Dashboard navigates there.
+- [ ] Type a partial item name (e.g. "cof") in the search box → a dropdown appears
+  below it (not just the item grid filtering) showing up to 8 matches with name,
+  Tamil name, price. ArrowDown/ArrowUp highlights a row; Enter adds the highlighted
+  item and clears the search; clicking a row does the same; Escape closes the
+  dropdown; clicking outside the dropdown also closes it without adding anything.
+- [ ] Add items and open Finalize Bill → pressing Esc closes the modal without
+  billing; pressing Enter (while not focused in an amount/discount field) finalizes
+  the bill, same as clicking "Confirm & Bill".
+- [ ] In Finalize Bill, check "Show print preview before printing" before confirming
+  → the bill finalizes (appears in Bill History) but a preview screen shows totals
+  and items with "Print"/"Skip / Close" buttons instead of jumping straight to the
+  "sent to printer" confirmation; clicking Print dispatches to the printer and shows
+  the normal confirmation after. Leaving the checkbox unchecked behaves exactly as
+  before (one click, prints immediately if a printer is registered).
+- [ ] Add items and click "Add to KOT" → the on-screen cart, table, and customer
+  selection all clear immediately (same as Hold); the order is still resumable via
+  KOT Tickets or by re-selecting the same table + customer slot.
+- [ ] Select a table with seating_capacity 4 (Table Master → check/set a table's
+  capacity) → a "Customer" bar appears next to the table selector showing exactly
+  Customer C1–C4 as a row of chips, not a popup, with C1 auto-selected. Switching to
+  C2 opens an independent empty cart; adding items to C2 and sending to KOT marks
+  its chip with a gold "occupied" dot; switching back to C1 and then C2 resumes each
+  cart with its own items intact.
+- [ ] With Customer 2's order still open, check: the KOT ticket (Kitchen Display card
+  and the "🍳 KOT Tickets" popup) shows "Customer-2" as a small gold badge next to
+  the table number; the POS cart summary (right panel) shows the same badge next to
+  the table number; after billing that order, the printed bill (check the print log
+  in `docker compose logs backend` if no physical printer) shows "T# Customer-2
+  (section)" in its header line.
+- [ ] Bill Customer 1's order too → the table now shows fully free in the table
+  picker (no occupied badge), matching the existing "frees only once every customer
+  has billed" behavior.
+- [ ] Item Master, logged in as a **Pro**-tier tenant admin (e.g. `HNR-HNRADMIN`) →
+  an "Import CSV" button is now visible (previously Pro Max-only); importing a small
+  CSV succeeds. A Lite-tier tenant still sees neither Import nor Export.
+
+---
+
+## 23. Phase 22 — Item Stock/Quantity Management
+
+*(extends the existing soft-inventory feature from Phase 05/08 — this is the new
+audit ledger + tenant switch + KOT screen tab layered on top of it)*
+
+**Lite tenant (`LDH-admin`) — confirm zero behavior change:**
+- [ ] Item Master's "Track stock count" checkbox is enabled/editable exactly as
+  before (no new gating, no hint text about being "off").
+- [ ] Settings has no "Stock" tab.
+- [ ] The KOT screen (`LDH-*` kitchen login) shows a single, un-tabbed Kitchen Orders
+  board — no tab strip at all.
+- [ ] Track an item's stock via Item Master as before, send it to KOT, confirm the
+  count still decrements and the POS/KOT low-stock badges still work exactly as
+  pre-Phase-22.
+
+**Pro Max tenant (`PMDH-admin` / `PMDH-cashier01` / kitchen login) — the new surfaces:**
+- [ ] Settings → a "Stock" tab appears with a single "Enable stock-quantity tracking"
+  checkbox, **unchecked by default**.
+- [ ] With it unchecked: Item Master's "Track stock count" checkbox is disabled with
+  an explanatory hint; no POS/KOT low-stock badges appear anywhere, even for items
+  that already have `track_inventory` set from before; the Dashboard's Low Stock
+  Items widget is empty; the KOT screen shows both "🍳 Kitchen Orders" and
+  "📦 Stock Management" tabs (the tab strip itself is plan-gated, not toggle-gated),
+  but opening Stock Management shows a "turned off" message instead of the item list.
+- [ ] Check the Settings toggle on → Item Master's checkbox becomes editable; the KOT
+  screen's Stock Management tab now lists every active item grouped by category,
+  searchable by name.
+- [ ] In the Stock Management tab, type a quantity for an item that was never tracked
+  before and click Save → it now shows up with a badge on the POS item grid (proving
+  entering a quantity there also turns tracking on for that item).
+- [ ] Send that item to a KOT ticket → the quantity decrements by the ordered amount
+  on the POS/KOT badges, matching pre-existing behavior.
+- [ ] Toggle Settings → Stock off again → badges and the Stock Management tab's
+  access disappear immediately (next reload); toggle back on → the exact same
+  quantities reappear, nothing was lost.
+- [ ] (Optional, if comfortable with a DB client) confirm `stock_ledger` has rows for
+  each of the above actions with the right `reason` (`manual_set` for the tab/edit-form
+  writes, `kot_deduction` for the KOT send, `restock` for Item Master's dedicated
+  Restock button) and that `kot_deduction` rows have `reference_order_id` set.
 
 ---
 

@@ -8,12 +8,20 @@ interface ItemCardProps {
   resolvedPrice: number;
   quantityInCart: number;
   stockOverride?: StockOverride;
+  stockTrackingEnabled: boolean;
   onAdd: (item: PosItem) => void;
 }
 
-export function ItemCard({ item, resolvedPrice, quantityInCart, stockOverride, onAdd }: ItemCardProps) {
+export function ItemCard({
+  item,
+  resolvedPrice,
+  quantityInCart,
+  stockOverride,
+  stockTrackingEnabled,
+  onAdd,
+}: ItemCardProps) {
   const availableQty = stockOverride?.available_qty ?? item.available_qty;
-  const isTracked = item.track_inventory;
+  const isTracked = item.track_inventory && stockTrackingEnabled;
   const isOutOfStock = isTracked && availableQty !== null && availableQty <= 0;
   const isLowStock = isTracked && !isOutOfStock && availableQty !== null && availableQty <= 5;
   const inCart = quantityInCart > 0;

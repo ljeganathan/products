@@ -1,7 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
+import { formatINR } from "@/lib/utils";
 import { listCategories } from "@/modules/admin/categoriesApi";
 import { listLocations } from "@/modules/admin/locationsApi";
 import { listTables } from "@/modules/admin/tablesApi";
@@ -31,7 +33,11 @@ import {
 } from "@/modules/pos/posApi";
 import { RecallPanel } from "@/modules/pos/RecallPanel";
 import { SectionChangeConfirm } from "@/modules/pos/SectionChangeConfirm";
-import { type TableSelection, TableWaiterBar } from "@/modules/pos/TableWaiterBar";
+import {
+  resolveCustomerSlotSelection,
+  type TableSelection,
+  TableWaiterBar,
+} from "@/modules/pos/TableWaiterBar";
 import { usePosWebSocket } from "@/modules/pos/usePosWebSocket";
 
 type SyncState = "idle" | "saving" | "saved" | "error";
@@ -111,6 +117,7 @@ export function POSPage() {
   const [activeCategoryId, setActiveCategoryId] = useState<string>(TOP_SELLING_ID);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<PosItem[]>([]);
+  const [searchHighlight, setSearchHighlight] = useState(0);
   const [itemCode, setItemCode] = useState("");
   const [itemCodeError, setItemCodeError] = useState<string | null>(null);
 
@@ -124,10 +131,12 @@ export function POSPage() {
   const [pendingSectionChange, setPendingSectionChange] = useState<{
     sectionId: string;
     tableId: string | null;
+    partyLabel: string | null;
     preview: Order;
   } | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchWrapperRef = useRef<HTMLDivElement>(null);
   const itemCodeInputRef = useRef<HTMLInputElement>(null);
 
   const stockOverrides = usePosWebSocket(location?.id);
@@ -147,6 +156,7 @@ export function POSPage() {
   }, [role, myWaiterProfile]);
 
   useEffect(() => {
+    setSearchHighlight(0);
     if (!searchQuery) {
       setSearchResults([]);
       return;
@@ -159,6 +169,19 @@ export function POSPage() {
       }
     }, 200);
     return () => clearTimeout(timeout);
+  }, [searchQuery]);
+
+  // Click-outside closes the results dropdown (visibility is just searchQuery-driven,
+  // so "closing" here means clearing the query — Esc already does the same via the
+  // window-level handler below).
+  useEffect(() => {
+    function onPointerDown(e: MouseEvent) {
+      if (searchQuery && !searchWrapperRef.current?.contains(e.target as Node)) {
+        setSearchQuery("");
+      }
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
   }, [searchQuery]);
 
   const displayedItems = useMemo(() => {
@@ -220,6 +243,12 @@ export function POSPage() {
     await syncCart(next);
   }
 
+  async function handleSelectSearchResult(item: PosItem) {
+    await handleAddItem(item);
+    setSearchQuery("");
+    searchInputRef.current?.focus();
+  }
+
   async function handleQuantityChange(itemId: string, notes: string | null, newQty: number) {
     const current = toLineInputs(order);
     const next =
@@ -267,9 +296,9 @@ export function POSPage() {
     }
 
     if (selection.kind === "new-party") {
-      // Starting a genuinely new party always starts a fresh draft — abandoning the
+      // Starting a fresh customer slot always starts a fresh draft — abandoning the
       // in-memory order here does not affect its persisted state; it stays open on the
-      // server and remains reachable via Recall/KOT Tickets.
+      // server and remains reachable via Recall/KOT Tickets or its own customer chip.
       setOrder(null);
       setSectionId(selection.sectionId);
       setTableId(selection.tableId);
@@ -278,16 +307,68 @@ export function POSPage() {
       return;
     }
 
-    // "direct": 0 open orders on this table (or a non-seating section) — unchanged
-    // pre-Phase-19 behaviour, including moving an in-progress draft to a new table.
+    // "direct": either a non-seating section (no table, no customer concept) or a
+    // seating table just tapped in the picker.
     const { sectionId: newSectionId, tableId: newTableId } = selection;
+
+    if (newTableId) {
+      const table = tables.find((t) => t.id === newTableId);
+      if (table) {
+        // A draft that hasn't been assigned to any table yet (a walk-in cart started
+        // before a table was picked) gets MOVED onto the tapped table under
+        // Customer-1, with the usual price-change warning if the section differs —
+        // preserves the "start cart, then assign a table" flow. Anything else (no
+        // draft, or a draft that's already seated somewhere else) resolves
+        // independently instead: resume Customer-1's existing order at the new table,
+        // or start fresh there, leaving whatever's currently in the draft untouched
+        // and still open server-side (never silently reassigned to a different table).
+        if (order && order.items.length > 0 && !tableId) {
+          if (newSectionId !== order.section_id) {
+            const preview = await previewOrderUpdate(order.id, {
+              section_id: newSectionId,
+              table_id: newTableId,
+            });
+            if (preview.subtotal_changed) {
+              setPendingSectionChange({
+                sectionId: newSectionId,
+                tableId: newTableId,
+                partyLabel: "Customer-1",
+                preview: preview.order,
+              });
+              return;
+            }
+          }
+          const updated = await updateOrder(order.id, {
+            section_id: newSectionId,
+            table_id: newTableId,
+            party_label: "Customer-1",
+          });
+          setOrder(updated);
+          setSectionId(newSectionId);
+          setTableId(newTableId);
+          setPartyLabel("Customer-1");
+          void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
+          return;
+        }
+        await handleSelectTable(resolveCustomerSlotSelection(table, "Customer-1", openOrders));
+        return;
+      }
+    }
+
+    // Non-seating section (Takeaway/Online Delivery) — unchanged pre-Phase-19/21
+    // behaviour, including moving an in-progress draft to a new non-seating section.
     if (order && order.items.length > 0 && newSectionId !== order.section_id) {
       const preview = await previewOrderUpdate(order.id, {
         section_id: newSectionId,
         table_id: newTableId,
       });
       if (preview.subtotal_changed) {
-        setPendingSectionChange({ sectionId: newSectionId, tableId: newTableId, preview: preview.order });
+        setPendingSectionChange({
+          sectionId: newSectionId,
+          tableId: newTableId,
+          partyLabel: null,
+          preview: preview.order,
+        });
         return;
       }
     }
@@ -313,12 +394,12 @@ export function POSPage() {
     const updated = await updateOrder(order.id, {
       section_id: pendingSectionChange.sectionId,
       table_id: pendingSectionChange.tableId,
-      party_label: null,
+      party_label: pendingSectionChange.partyLabel,
     });
     setOrder(updated);
     setSectionId(pendingSectionChange.sectionId);
     setTableId(pendingSectionChange.tableId);
-    setPartyLabel(null);
+    setPartyLabel(pendingSectionChange.partyLabel);
     setPendingSectionChange(null);
     void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
   }
@@ -354,7 +435,16 @@ export function POSPage() {
     setKotSending(true);
     try {
       const result = await sendOrderToKot(order.id);
+      // Order stays "open" server-side (still reachable via KOT Tickets or by
+      // re-picking the same table+customer) — only the local draft/screen clears,
+      // the same pattern handleHold already uses, so the cashier is immediately
+      // ready for the next table/customer.
+      setOrder(null);
+      setTableId(null);
+      setPartyLabel(null);
+      if (!isWaiterRole) setWaiterId(null);
       setActionNotice(`Sent to kitchen — ticket ${result.ticket_number}`);
+      void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
     } catch {
       setActionNotice("Kitchen printing lands in the next phase (KOT/Printing)");
     } finally {
@@ -445,14 +535,14 @@ export function POSPage() {
             KM
           </span>
           <div className="leading-tight">
-            <p className="truncate text-[13px] font-extrabold" title={meData?.company_name ?? undefined}>
+            <p className="truncate text-base font-extrabold" title={meData?.company_name ?? undefined}>
               {meData?.company_name ?? "POS"}
             </p>
             {location && locations.length > 1 ? (
               <select
                 value={location.id}
                 onChange={(e) => handleLocationChange(e.target.value)}
-                className="max-w-[140px] truncate rounded border-none bg-transparent p-0 text-[10px] font-semibold text-ink-faint outline-none"
+                className="max-w-[160px] truncate rounded border-none bg-transparent p-0 text-xs font-semibold text-ink-faint outline-none"
               >
                 {locations.map((loc) => (
                   <option key={loc.id} value={loc.id}>
@@ -461,25 +551,73 @@ export function POSPage() {
                 ))}
               </select>
             ) : (
-              location && <p className="truncate text-[10px] font-semibold text-ink-faint">{location.name}</p>
+              location && <p className="truncate text-xs font-semibold text-ink-faint">{location.name}</p>
             )}
           </div>
         </div>
 
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
-          <label className="flex min-h-9 flex-1 max-w-[320px] items-center gap-2 rounded-lg border border-border bg-surface-2 px-3">
-            <span className="text-xs">🔎</span>
-            <input
-              ref={searchInputRef}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search items…"
-              className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-ink-faint"
-            />
-            <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 text-[9.5px] font-bold text-ink-faint">
-              Ctrl K
-            </kbd>
-          </label>
+          <div ref={searchWrapperRef} className="relative max-w-[320px] flex-1">
+            <label className="flex min-h-9 items-center gap-2 rounded-lg border border-border bg-surface-2 px-3">
+              <span className="text-xs">🔎</span>
+              <input
+                ref={searchInputRef}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (searchResults.length === 0) return;
+                  const max = Math.min(searchResults.length, 8) - 1;
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setSearchHighlight((h) => Math.min(h + 1, max));
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setSearchHighlight((h) => Math.max(h - 1, 0));
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleSelectSearchResult(searchResults[searchHighlight]);
+                  }
+                }}
+                placeholder="Search items…"
+                className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-ink-faint"
+              />
+              <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 text-[9.5px] font-bold text-ink-faint">
+                Ctrl K
+              </kbd>
+            </label>
+
+            {searchQuery && (
+              <ul className="absolute left-0 right-0 top-full z-40 mt-1 max-h-80 overflow-y-auto rounded-lg border border-border bg-surface shadow-pos">
+                {searchResults.slice(0, 8).map((item, i) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => void handleSelectSearchResult(item)}
+                      onMouseEnter={() => setSearchHighlight(i)}
+                      className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm ${
+                        i === searchHighlight ? "bg-accent-soft text-accent" : "hover:bg-surface-2"
+                      }`}
+                    >
+                      <span className="min-w-0 flex-1 truncate">
+                        <span className="font-bold">{item.name_en}</span>
+                        {item.item_code && (
+                          <span className="ml-1.5 font-mono text-[10px] text-ink-faint">#{item.item_code}</span>
+                        )}
+                        {item.name_ta && <span className="ta block text-xs font-medium text-ink-soft">{item.name_ta}</span>}
+                      </span>
+                      <span className="shrink-0 text-xs font-extrabold tabular-nums">
+                        {formatINR(resolvedPriceFor(item))}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+                {searchResults.length === 0 && (
+                  <li className="px-3 py-2 text-xs text-ink-faint">No items found</li>
+                )}
+              </ul>
+            )}
+          </div>
 
           <label className="hidden min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 md:flex">
             <span className="text-xs">#️⃣</span>
@@ -515,23 +653,16 @@ export function POSPage() {
         >
           ↺ Recall
         </button>
+        {(role === "pos_user" || role === "tenant_admin") && (
+          <Link
+            to="/dashboard"
+            className="flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 text-xs font-bold text-ink-soft hover:border-accent hover:text-accent"
+          >
+            📊 Dashboard
+          </Link>
+        )}
 
-        <UserMenu
-          links={
-            role === "tenant_admin"
-              ? [
-                  { to: "/dashboard", label: "Dashboard" },
-                  { to: "/reports", label: "Reports" },
-                  { to: "/billing/history", label: "Bill History" },
-                ]
-              : role === "pos_user"
-                ? [
-                    { to: "/reports", label: "Reports" },
-                    { to: "/billing/history", label: "Bill History" },
-                  ]
-                : []
-          }
-        />
+        <UserMenu />
       </header>
 
       {itemCodeError && (
@@ -589,6 +720,7 @@ export function POSPage() {
                   resolvedPrice={resolvedPriceFor(item)}
                   quantityInCart={quantityInCartFor(item)}
                   stockOverride={stockOverrides[item.id]}
+                  stockTrackingEnabled={meData?.stock_tracking_enabled === true}
                   onAdd={handleAddItem}
                 />
               ))}

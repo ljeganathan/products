@@ -132,3 +132,54 @@ def test_bill_formatter_hides_tamil_when_toggled_off():
     )
     lines = format_bill_text_lines(bill)
     assert not any("சாப்பாடு" in line for line in lines)
+
+
+# --- Phase 21: party_label ("Customer-N") composed into the printed header ---
+
+
+def test_kot_header_label_includes_party_label_when_present():
+    ticket = KotTicketRenderData(
+        ticket_number="T1",
+        table_number="T5",
+        section_name_en="AC",
+        created_at=datetime.now(),
+        party_label="Customer-2",
+    )
+    assert ticket.header_label == "T5 Customer-2 (AC)"
+
+
+def test_kot_header_label_omits_party_label_when_absent():
+    # Non-seating sections, or any order predating this feature — format matches the
+    # pre-Phase-21 output exactly.
+    ticket = KotTicketRenderData(
+        ticket_number="T1",
+        table_number="T5",
+        section_name_en="AC",
+        created_at=datetime.now(),
+    )
+    assert ticket.header_label == "T5 (AC)"
+
+
+def test_bill_header_label_includes_party_label_when_present():
+    bill = BillRenderData(
+        bill_number="B1",
+        table_number="T5",
+        section_name_en="AC",
+        created_at=datetime.now(),
+        lines=[],
+        subtotal=100.0,
+        discount_amount=0,
+        cgst_amount=0,
+        sgst_amount=0,
+        round_off_amount=0,
+        grand_total=100.0,
+        payments=[],
+        hotel_name="Test Hotel",
+        hotel_address_lines=[],
+        gstin=None,
+        upi_id=None,
+        qr_payload=None,
+        show_tamil_names=True,
+        party_label="Customer-2",
+    )
+    assert bill.header_label == "T5 Customer-2 (AC)"

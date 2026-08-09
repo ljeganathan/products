@@ -139,6 +139,11 @@ async def test_plans_list_and_update(client: AsyncClient, owner_headers: dict):
     plans = list_resp.json()
     assert {p["code"] for p in plans} == {"lite", "pro", "pro_max"}
 
+    # Phase 21 product decision: Pro tenants get Item Master CSV import too now, not
+    # just export — locks in the data migration (9c46b3480166) that flipped this.
+    pro = next(p for p in plans if p["code"] == "pro")
+    assert pro["features"]["item_import"] is True
+
     lite = next(p for p in plans if p["code"] == "lite")
     update_resp = await client.patch(
         f"/api/v1/platform/plans/{lite['id']}",

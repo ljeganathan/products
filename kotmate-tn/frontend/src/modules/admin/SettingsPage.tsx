@@ -22,6 +22,7 @@ import {
 } from "@/modules/admin/locationsApi";
 import { PrinterFormModal } from "@/modules/admin/PrintersPage";
 import { type Printer, listPrinters } from "@/modules/admin/printersApi";
+import { updateStockManagementSetting } from "@/modules/admin/stockSettingsApi";
 import { type TaxRule, listTaxRules } from "@/modules/admin/taxRulesApi";
 import { TaxRuleFormModal } from "@/modules/admin/TaxRulesPage";
 
@@ -29,7 +30,7 @@ const inputClass =
   "min-h-10 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-accent";
 const labelClass = "text-xs font-medium text-foreground/70";
 
-const TABS = ["General", "Locations", "Printers", "Tax"] as const;
+const TABS = ["General", "Locations", "Printers", "Tax", "Stock"] as const;
 type Tab = (typeof TABS)[number];
 
 function apiErrorMessage(err: unknown, fallback: string): string {
@@ -41,6 +42,12 @@ function apiErrorMessage(err: unknown, fallback: string): string {
 
 export function SettingsPage() {
   const [tab, setTab] = useState<Tab>("General");
+  const { data: meData } = useQuery({ queryKey: ["me"], queryFn: me });
+  // Pro/Pro Max-only surface — the underlying badges/decrement stay on for Lite too,
+  // but this whole tab (and its toggle) is a new admin-controlled surface layered on
+  // top, so it's gated on the plan feature specifically, not the effective flag.
+  const stockManagementOnPlan = meData?.features?.stock_management === true;
+  const visibleTabs = TABS.filter((t) => t !== "Stock" || stockManagementOnPlan);
   const { data: locations = [], isLoading: locationsLoading } = useQuery({
     queryKey: ["managed-locations"],
     queryFn: listManagedLocations,
@@ -82,7 +89,7 @@ export function SettingsPage() {
       </div>
 
       <div className="mb-6 flex gap-1 border-b border-border">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t}
             type="button"
@@ -109,6 +116,38 @@ export function SettingsPage() {
       {tab === "Locations" && <LocationsTab locations={locations} />}
       {tab === "Printers" && <PrintersTab locations={activeLocations} />}
       {tab === "Tax" && <TaxTab />}
+      {tab === "Stock" && stockManagementOnPlan && (
+        <StockTab enabled={meData?.stock_tracking_enabled === true} />
+      )}
+    </div>
+  );
+}
+
+function StockTab({ enabled }: { enabled: boolean }) {
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: (next: boolean) => updateStockManagementSetting(next),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+    },
+  });
+
+  return (
+    <div className="max-w-xl rounded-lg border border-border bg-surface p-4">
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={mutation.isPending}
+          onChange={(e) => mutation.mutate(e.target.checked)}
+        />
+        Enable stock-quantity tracking
+      </label>
+      <p className="mt-1 text-xs text-foreground/50">
+        Turns on quantity badges on the POS/KOT screens and the Stock Management tab
+        on the KOT screen. Turning this off never clears any item's tracked quantity
+        or history — turning it back on restores everything exactly as it was.
+      </p>
     </div>
   );
 }

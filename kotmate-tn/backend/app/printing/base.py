@@ -38,6 +38,19 @@ class KotTicketLine:
     notes: str | None = None
 
 
+def _compose_header_label(table_number: str | None, party_label: str | None, section_name_en: str) -> str:
+    """Table number stays the single dominant element (CLAUDE.md §9); the customer
+    label (Phase 21, e.g. "Customer-2") is secondary, section name is tertiary — e.g.
+    "T5 Customer-2 (AC)". Falls back to the pre-Phase-21 format when there's no
+    party_label (non-seating sections, or any order predating this feature).
+    """
+    if not table_number:
+        return section_name_en
+    if party_label:
+        return f"{table_number} {party_label} ({section_name_en})"
+    return f"{table_number} ({section_name_en})"
+
+
 @dataclass
 class KotTicketRenderData:
     """Everything an adapter needs to render one KOT ticket — table number + section
@@ -54,12 +67,12 @@ class KotTicketRenderData:
     # the POS/KDS staff-facing screen, which always shows both languages (CLAUDE.md §9).
     # Defaults True so a location with no Hotel Master saved yet behaves as before.
     show_tamil_names: bool = True
+    # Which customer/party slot at the table this ticket belongs to (Phase 21).
+    party_label: str | None = None
 
     @property
     def header_label(self) -> str:
-        if self.table_number:
-            return f"{self.table_number} ({self.section_name_en})"
-        return self.section_name_en
+        return _compose_header_label(self.table_number, self.party_label, self.section_name_en)
 
 
 def format_kot_text_lines(ticket: KotTicketRenderData) -> list[str]:
@@ -124,12 +137,13 @@ class BillRenderData:
     upi_id: str | None
     qr_payload: str | None
     show_tamil_names: bool
+    # Which customer/party slot at the table this bill belongs to (Phase 21) —
+    # snapshotted onto `bills.party_label` at finalize time, same as table/section/waiter.
+    party_label: str | None = None
 
     @property
     def header_label(self) -> str:
-        if self.table_number:
-            return f"{self.table_number} ({self.section_name_en})"
-        return self.section_name_en
+        return _compose_header_label(self.table_number, self.party_label, self.section_name_en)
 
 
 _PAYMENT_LABELS = {"upi": "UPI", "cash": "Cash", "card": "Card"}

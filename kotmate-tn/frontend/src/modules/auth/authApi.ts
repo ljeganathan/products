@@ -45,6 +45,11 @@ export interface MeResponse {
   max_users: number | null;
   max_locations: number | null;
   features: PlanFeatures | null;
+  // Effective stock-quantity-tracking state (tenant toggle AND plan has the feature —
+  // always true on plans without the feature, since that predates plan-gating and
+  // never changed for them). The single flag to check for POS/KOT badges and the
+  // Item Master "Track stock count" checkbox's editability.
+  stock_tracking_enabled: boolean;
 }
 
 export async function me(): Promise<MeResponse> {

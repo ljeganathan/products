@@ -51,6 +51,11 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
   ]);
   const [finalizedBill, setFinalizedBill] = useState<Bill | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Print-preview flow: bill finalizes immediately either way, but when this is on,
+  // printing itself waits for an explicit "Print" click on a preview screen instead of
+  // firing as part of the same request (default off — preserves the one-click flow).
+  const [previewBeforePrint, setPreviewBeforePrint] = useState(false);
+  const [printedOnce, setPrintedOnce] = useState(false);
 
   const discount: BillDiscountInput | null = useMemo(() => {
     if (!discountType) return null;
@@ -111,7 +116,7 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
   }, [preview?.grand_total]);
 
   const finalizeMutation = useMutation({
-    mutationFn: () => createBill({ order_id: order.id, discount, payments }),
+    mutationFn: () => createBill({ order_id: order.id, discount, payments, skip_print: previewBeforePrint }),
     onSuccess: (bill) => setFinalizedBill(bill),
     onError: (err) =>
       setError(axios.isAxiosError(err) ? String(err.response?.data?.detail ?? err.message) : "Billing failed"),
@@ -119,11 +124,104 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
 
   const reprintMutation = useMutation({
     mutationFn: () => reprintBill(finalizedBill!.id),
-    onSuccess: (bill) => setFinalizedBill(bill),
+    onSuccess: (bill) => {
+      setFinalizedBill(bill);
+      setPrintedOnce(true);
+    },
   });
+
+  // Once finalized, this modal shows one of three stages: the pre-finalize form; if
+  // "preview before print" was checked, a preview-then-print screen; otherwise (or
+  // once that screen's Print has fired) the normal post-bill summary.
+  const showingPreviewBeforePrint = !!finalizedBill && previewBeforePrint && !printedOnce;
+
+  useEffect(() => {
+    function isTypingTarget(el: EventTarget | null): boolean {
+      const tag = (el as HTMLElement | null)?.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (finalizedBill) onFinalized();
+        else onClose();
+      } else if (e.key === "Enter" && !isTypingTarget(e.target)) {
+        e.preventDefault();
+        if (!finalizedBill) {
+          if (preview && balanced && !finalizeMutation.isPending) finalizeMutation.mutate();
+        } else if (showingPreviewBeforePrint) {
+          if (!reprintMutation.isPending) reprintMutation.mutate();
+        } else {
+          onFinalized();
+        }
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    finalizedBill,
+    showingPreviewBeforePrint,
+    preview,
+    balanced,
+    finalizeMutation,
+    reprintMutation,
+    onClose,
+    onFinalized,
+  ]);
 
   function updatePayment(index: number, patch: Partial<BillPaymentInput>) {
     setPayments((prev) => prev.map((p, i) => (i === index ? { ...p, ...patch } : p)));
+  }
+
+  if (showingPreviewBeforePrint && finalizedBill) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="max-h-[90vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-surface p-5 shadow-pos">
+          <h2 className="mb-1 text-lg font-extrabold">🧾 Bill {finalizedBill.bill_number}</h2>
+          <p className="mb-3 text-xs text-ink-faint">Bill finalized — review before sending to the printer.</p>
+          <ul className="mb-3 flex flex-col gap-1 text-xs">
+            {finalizedBill.items.map((line) => (
+              <li key={line.id ?? line.item_id} className="flex items-center justify-between gap-2">
+                <span className="min-w-0 flex-1 truncate">
+                  {line.name_en} × {line.quantity}
+                </span>
+                <span className="tabular-nums font-semibold">{formatINR(line.line_total)}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mb-4 rounded-lg bg-surface-2 px-3.5 py-3 text-sm">
+            <Row label="Subtotal" value={finalizedBill.subtotal} />
+            {finalizedBill.discount_amount > 0 && (
+              <Row label="Discount" value={-finalizedBill.discount_amount} />
+            )}
+            <Row label="CGST" value={finalizedBill.cgst_amount} />
+            <Row label="SGST" value={finalizedBill.sgst_amount} />
+            <Row label="Round Off" value={finalizedBill.round_off_amount} signed />
+            <div className="mt-1.5 flex items-center justify-between border-t border-dashed border-border pt-1.5 text-base font-extrabold">
+              <span>Grand Total</span>
+              <span className="tabular-nums">{formatINR(finalizedBill.grand_total)}</span>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onFinalized}
+              className="rounded-lg border border-border px-4 py-2 text-sm font-bold hover:bg-surface-2"
+            >
+              Skip / Close
+            </button>
+            <button
+              type="button"
+              onClick={() => reprintMutation.mutate()}
+              disabled={reprintMutation.isPending}
+              className="rounded-lg bg-accent px-4 py-2 text-sm font-bold text-accent-foreground disabled:opacity-50"
+            >
+              {reprintMutation.isPending ? "Printing…" : "🖨 Print"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (finalizedBill) {
@@ -314,6 +412,15 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
             {error}
           </p>
         )}
+
+        <label className="mb-3 flex items-center gap-2 text-xs font-semibold text-ink-soft">
+          <input
+            type="checkbox"
+            checked={previewBeforePrint}
+            onChange={(e) => setPreviewBeforePrint(e.target.checked)}
+          />
+          Show print preview before printing
+        </label>
 
         <div className="flex justify-end gap-2">
           <button

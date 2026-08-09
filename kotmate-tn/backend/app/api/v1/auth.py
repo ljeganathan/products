@@ -15,6 +15,7 @@ from app.core.security import (
 from app.db.session import get_db
 from app.models import PlatformSettings, Role, Tenant, User, UserLocationAccess
 from app.schemas.auth import LoginRequest, MeResponse, RefreshRequest, TokenResponse
+from app.services.stock_service import is_stock_tracking_enabled
 from app.services.tenant_onboarding import get_active_plan
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -135,6 +136,7 @@ async def me(
             max_users=None,
             max_locations=None,
             features=None,
+            stock_tracking_enabled=False,
         )
 
     # `/me` serves every tenant-scoped role, not just one — set the RLS session var
@@ -156,6 +158,7 @@ async def me(
         max_users=plan.max_users if plan else None,
         max_locations=plan.max_locations if plan else None,
         features=plan.features if plan else None,
+        stock_tracking_enabled=is_stock_tracking_enabled(tenant, plan.features if plan else None),
     )
 
 

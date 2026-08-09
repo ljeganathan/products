@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,7 +8,10 @@ from app.core.deps import CurrentUser, get_current_user, require_role, require_t
 from app.db.session import get_db
 from app.models import Tenant
 from app.schemas.hotel_master import HotelMasterResponse, HotelMasterUpdateRequest
+from app.schemas.stock import StockManagementSettingsRequest, StockManagementSettingsResponse
 from app.services.hotel_master_service import get_hotel_master, upload_hotel_master_logo, upsert_hotel_master
+from app.services.stock_service import has_stock_management_feature
+from app.services.tenant_onboarding import get_active_plan
 
 # Hotel Master (Phase 10) — tenant_admin-only writes; reads broad since a future
 # customer-facing bill-preview screen or another staff role could reasonably need to
@@ -40,6 +43,31 @@ async def upsert_tenant_hotel_master(
     result = await upsert_hotel_master(db, current_user.tenant_id, payload)
     await db.commit()
     return result
+
+
+@router.patch(
+    "/stock-management",
+    response_model=StockManagementSettingsResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def update_stock_management_setting(
+    payload: StockManagementSettingsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StockManagementSettingsResponse:
+    """The tenant-level kill switch (Pro/Pro Max only) — soft-disable, never touches
+    items.track_inventory/available_qty, so re-enabling restores prior config exactly.
+    """
+    plan = await get_active_plan(db, current_user.tenant_id)
+    if not has_stock_management_feature(plan.features if plan else None):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Stock management isn't available on your current plan. Upgrade to Pro to use it.",
+        )
+    tenant = await _get_tenant(db, current_user)
+    tenant.stock_management_enabled = payload.enabled
+    await db.commit()
+    return StockManagementSettingsResponse(enabled=tenant.stock_management_enabled)
 
 
 @router.post(

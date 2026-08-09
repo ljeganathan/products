@@ -32,6 +32,10 @@ class Bill(UUIDPKMixin, TimestampMixin, Base):
         PgUUID(as_uuid=True), ForeignKey("seating_sections.id"), nullable=False
     )
     waiter_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("waiters.id"))
+    # Which customer/party slot at the table this bill belongs to (Phase 21) — same
+    # snapshot treatment as table_id/section_id/waiter_id, copied from the order at
+    # finalize time so a reprint always matches what was true when the bill was cut.
+    party_label: Mapped[str | None] = mapped_column(String(30))
     pos_user_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )

@@ -3,12 +3,14 @@ import { useState } from "react";
 
 import { listItems } from "@/modules/admin/itemsApi";
 import { listLocations } from "@/modules/admin/locationsApi";
+import { me } from "@/modules/auth/authApi";
 import { useAuthStore } from "@/modules/auth/authStore";
 import { UserMenu } from "@/modules/auth/UserMenu";
 import { type ActiveKotTicket, listActiveKotTickets, updateKotTicketStatus } from "@/modules/pos/kotApi";
 import { useLocationSocket } from "@/modules/realtime/useLocationSocket";
 
 import { KotTicketCard } from "./KotTicketCard";
+import { StockManagementTab } from "./StockManagementTab";
 
 interface StockOverride {
   available_qty: number;
@@ -29,6 +31,13 @@ export function KotDisplayPage() {
   const role = useAuthStore((s) => s.role)!;
   const queryClient = useQueryClient();
   const [stockOverrides, setStockOverrides] = useState<Record<string, StockOverride>>({});
+  const [view, setView] = useState<"tickets" | "stock">("tickets");
+
+  const { data: meData } = useQuery({ queryKey: ["me"], queryFn: me });
+  // Pro/Pro Max-only surface (the tab strip itself) — the badges below stay on for
+  // Lite too, gated separately on the Lite-inclusive effective flag.
+  const stockManagementOnPlan = meData?.features?.stock_management === true;
+  const stockTrackingEnabled = meData?.stock_tracking_enabled === true;
 
   const { data: locations = [] } = useQuery({ queryKey: ["tenant-locations"], queryFn: listLocations });
   const location = locations[0];
@@ -75,7 +84,7 @@ export function KotDisplayPage() {
   // promise at the table. Sourced from the full tracked-item list, not just what's on
   // currently open tickets — a shortage matters even before the next order for it comes in.
   const lowStockItems = items
-    .filter((item) => item.track_inventory)
+    .filter((item) => item.track_inventory && stockTrackingEnabled)
     .map((item) => {
       const override = stockOverrides[item.id];
       const availableQty = override ? override.available_qty : item.available_qty;
@@ -91,10 +100,29 @@ export function KotDisplayPage() {
         </span>
         <span className="text-[13px] font-extrabold leading-none">Kitchen Display</span>
 
+        {stockManagementOnPlan && (
+          <div className="ml-2 flex gap-1">
+            {(["tickets", "stock"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                className={`rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors ${
+                  view === v
+                    ? "border-accent bg-accent-soft text-accent"
+                    : "border-border bg-surface-2 text-ink-soft hover:border-accent"
+                }`}
+              >
+                {v === "tickets" ? "🍳 Kitchen Orders" : "📦 Stock Management"}
+              </button>
+            ))}
+          </div>
+        )}
+
         <UserMenu links={role === "tenant_admin" ? [{ to: "/dashboard", label: "Dashboard" }] : []} />
       </header>
 
-      {lowStockItems.length > 0 && (
+      {view === "tickets" && lowStockItems.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-b border-border bg-chili-soft px-4 py-2">
           <span className="text-xs font-extrabold text-chili">⚠ Low stock:</span>
           {lowStockItems.map((item) => (
@@ -105,6 +133,9 @@ export function KotDisplayPage() {
         </div>
       )}
 
+      {view === "stock" && stockManagementOnPlan ? (
+        <StockManagementTab />
+      ) : (
       <main className="flex-1 overflow-y-auto p-4">
         {isLoading && <p className="text-sm text-ink-faint">Loading tickets…</p>}
 
@@ -142,6 +173,7 @@ export function KotDisplayPage() {
           })}
         </div>
       </main>
+      )}
     </div>
   );
 }

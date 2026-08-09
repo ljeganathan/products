@@ -381,6 +381,7 @@ async def _dispatch_print_for_bill(
         upi_id=hotel.upi_id if hotel else None,
         qr_payload=qr_payload,
         show_tamil_names=hotel.show_tamil_names if hotel else True,
+        party_label=bill.party_label,
     )
     dispatch_bill_print(printer, render_data)
     return True
@@ -434,6 +435,7 @@ async def finalize_bill(
         table_id=order.table_id,
         section_id=order.section_id,
         waiter_id=order.waiter_id,
+        party_label=order.party_label,
         pos_user_id=order.pos_user_id,
         subtotal=totals.subtotal,
         discount_amount=totals.discount_amount,
@@ -492,8 +494,12 @@ async def finalize_bill(
         BillLine(p.item.name_en, p.item.name_ta, p.quantity, p.unit_price, p.line_total)
         for p in totals.priced_items
     ]
-    printed = await _dispatch_print_for_bill(
-        session, tenant_id, order.location_id, bill, section, table, plan_features, lines
+    printed = (
+        await _dispatch_print_for_bill(
+            session, tenant_id, order.location_id, bill, section, table, plan_features, lines
+        )
+        if not req.skip_print
+        else False
     )
 
     return await build_bill_response(session, bill, printed=printed)
@@ -566,6 +572,7 @@ async def build_bill_response(session: AsyncSession, bill: Bill, printed: bool =
         section_name_en=section.name_en,
         waiter_id=bill.waiter_id,
         waiter_name=waiter.name if waiter else None,
+        party_label=bill.party_label,
         pos_user_id=bill.pos_user_id,
         pos_user_login_id=pos_user.user_id,
         status=bill.status,

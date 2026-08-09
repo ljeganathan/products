@@ -136,8 +136,8 @@ async def test_export_csv_on_pro_plan(client: AsyncClient, pro_tenant_admin: dic
     assert "401,Dosai" in body
 
 
-async def test_import_csv_blocked_on_pro_plan(client: AsyncClient, pro_tenant_admin: dict):
-    headers = pro_tenant_admin["headers"]
+async def test_import_csv_blocked_on_lite_plan(client: AsyncClient, tenant_admin: dict):
+    headers = tenant_admin["headers"]
     csv_bytes = b"item_code,name_en,name_ta,category,price,tax_class,is_top_seller,is_combo_tile\n"
     resp = await client.post(
         "/api/v1/items/import.csv",
@@ -145,6 +145,39 @@ async def test_import_csv_blocked_on_pro_plan(client: AsyncClient, pro_tenant_ad
         headers=headers,
     )
     assert resp.status_code == 403
+
+
+async def test_import_csv_creates_and_updates_on_pro_plan(client: AsyncClient, pro_tenant_admin: dict):
+    """Phase 21 product decision: Pro tenants now get Item Master CSV import too, not
+    just export — only Lite remains without it.
+    """
+    headers = pro_tenant_admin["headers"]
+    category = await _create_category(client, headers, name_en="Beverages")
+    existing = await _create_item(
+        client, headers, category["id"], name_en="Old Coffee", price=15, item_code="501"
+    )
+
+    csv_text = (
+        "item_code,name_en,name_ta,category,price,tax_class,is_top_seller,is_combo_tile\n"
+        f"501,Filter Coffee,{'':s},Beverages,25,,false,false\n"
+        "502,Badam Milk,பாதம் பால்,Beverages,40,,true,false\n"
+    )
+
+    resp = await client.post(
+        "/api/v1/items/import.csv",
+        files={"file": ("items.csv", csv_text.encode("utf-8"), "text/csv")},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["created"] == 1
+    assert body["updated"] == 1
+
+    list_resp = await client.get("/api/v1/items", headers=headers)
+    items_by_code = {i["item_code"]: i for i in list_resp.json()}
+    assert items_by_code["501"]["name_en"] == "Filter Coffee"
+    assert items_by_code["501"]["id"] == existing["id"]
+    assert items_by_code["502"]["name_en"] == "Badam Milk"
 
 
 async def test_import_csv_creates_and_updates_on_pro_max_plan(

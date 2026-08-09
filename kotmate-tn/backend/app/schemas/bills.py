@@ -59,6 +59,11 @@ class BillCreateRequest(BaseModel):
     # rejected by the service on any other tax_mode. Anything above the audit threshold
     # is logged to audit_log (CLAUDE.md §11).
     line_tax_overrides: dict[str, uuid.UUID] | None = None
+    # Optional print-preview flow (POS): finalize without dispatching to the printer,
+    # so the cashier can preview totals first — the existing reprint endpoint is used
+    # to actually print once they confirm. Default False preserves the one-call
+    # finalize-and-print flow for every other caller.
+    skip_print: bool = False
 
 
 class BillPreviewRequest(BaseModel):
@@ -116,6 +121,7 @@ class BillResponse(BillTotals):
     section_name_en: str
     waiter_id: uuid.UUID | None
     waiter_name: str | None
+    party_label: str | None
     pos_user_id: uuid.UUID
     pos_user_login_id: str
     status: str

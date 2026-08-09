@@ -15,6 +15,7 @@ from app.api.v1.printers import router as printers_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.sections import router as sections_router
 from app.api.v1.settings import router as settings_router
+from app.api.v1.stock import router as stock_router
 from app.api.v1.tables import router as tables_router
 from app.api.v1.tax_rules import router as tax_rules_router
 from app.api.v1.users import router as users_router
@@ -46,5 +47,6 @@ api_router.include_router(tax_rules_router)
 api_router.include_router(discount_rules_router)
 api_router.include_router(bills_router)
 api_router.include_router(settings_router)
+api_router.include_router(stock_router)
 api_router.include_router(reports_router)
 api_router.include_router(dashboard_router)

@@ -79,6 +79,11 @@ export function CartPanel({
               {order.section_name_en}
             </span>
           )}
+          {order?.party_label && (
+            <span className="rounded-full bg-gold-soft px-2 py-0.5 text-[10px] font-extrabold text-gold">
+              👤 {order.party_label}
+            </span>
+          )}
           {order?.waiter_name && (
             <span className="rounded-full bg-gold-soft px-2 py-0.5 text-[11px] font-bold text-gold">
               🧑‍🍳 {order.waiter_name}

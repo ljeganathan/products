@@ -14,6 +14,7 @@ export interface ActiveKotTicket {
   ticket_number: string;
   order_id: string;
   table_number: string | null;
+  party_label: string | null;
   section_name_en: string;
   status: string;
   created_at: string;

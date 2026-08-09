@@ -59,6 +59,7 @@ product-level rationale — this doc is the implementation-level ERD.
 | state | varchar(50), CHECK ∈ `INDIAN_STATES` | |
 | pincode | varchar(6), CHECK `^[1-9][0-9]{5}$` | |
 | is_active | bool | |
+| stock_management_enabled | bool NOT NULL, default false | tenant-wide soft-disable switch for stock-quantity tracking (Pro/Pro Max only — see `plans.features.stock_management`); toggling never touches `items.track_inventory`/`available_qty` |
 
 ### Tenant-scoped
 
@@ -115,7 +116,18 @@ a generic icon when unset; not plan-gated unlike item images), `display_order`, 
 | item_code | varchar(20), nullable, unique per tenant | POS numeric quick-entry (CLAUDE.md §9) |
 | is_top_seller | bool | feeds the POS "Top Selling" tab |
 | is_combo_tile | bool | Meals/Thali-style combo — rendered as an oversized POS tile (CLAUDE.md §9) |
+| track_inventory | bool, default false | soft stock tracking opt-in per item (CLAUDE.md §11) — free/always-on on every plan tier, predates plan-gating |
+| available_qty | int, nullable | only meaningful while `track_inventory=true`; every change is logged to `stock_ledger` |
 | is_active | bool | |
+
+**`stock_ledger`** — audit trail for every `items.available_qty` change (extends the
+above, CLAUDE.md §11). `item_id`, `location_id` (nullable — items aren't
+location-scoped, only populated for `kot_deduction` rows where the triggering order's
+location is meaningful), `change_qty` (signed int, before/after delta), `reason` ∈
+`manual_set`/`kot_deduction`/`restock`, `reference_order_id`/`reference_bill_id` (both
+nullable — `kot_deduction` populates `reference_order_id` since deduction fires at
+KOT-send, before any bill exists; `reference_bill_id` is unused in this phase, kept
+for schema completeness).
 
 **`seating_sections`** — AC / Non-AC / Rooftop / Family / Takeaway / Online Delivery
 (CLAUDE.md §9/§11). `name_en`, `name_ta`, `is_seating` (false for Takeaway/Online
@@ -139,12 +151,15 @@ with `status='open'` (Phase 19), so it can't drift out of sync with actual order
 (nullable — null for non-seating sections), `section_id` (always set — drives price
 resolution), `waiter_id` (nullable), `pos_user_id` (cashier-of-record, NOT NULL),
 `status` ∈ open/held/billed, `hold_label`, `party_label` (nullable varchar(30) —
-distinguishes concurrent parties/bills at the same table, Phase 19, CLAUDE.md §11).
-Indexed on (`tenant_id`, `status`) for the recall list query. Partial unique index
-`uq_orders_open_table_party` on (`tenant_id`, `table_id`, `party_label`) WHERE
+distinguishes concurrent customers/bills at the same table, Phase 19, CLAUDE.md §11).
+Values are "Customer-1"/"Customer-2"/… as of Phase 21 (was "Party 1"/"Party 2" under
+the original Phase 19 UI — the column itself didn't change, only what the frontend
+writes into it, so old and new label styles can coexist harmlessly in historical
+data). Indexed on (`tenant_id`, `status`) for the recall list query. Partial unique
+index `uq_orders_open_table_party` on (`tenant_id`, `table_id`, `party_label`) WHERE
 `status='open' AND table_id IS NOT NULL AND party_label IS NOT NULL` — stops two open
-parties at the same table from colliding on the same label, while leaving non-seating
-orders and single-party (label-less) orders unconstrained.
+customers at the same table from colliding on the same label, while leaving
+non-seating orders and single-customer (label-less) orders unconstrained.
 
 **`order_items`** — `order_id`, `item_id`, **`unit_price`** (snapshotted at add-time from
 the section-resolved price — later item/section-price edits never retroactively change
@@ -168,6 +183,7 @@ changes later.
 | table_id | nullable | |
 | section_id | NOT NULL | printed next to the table number (CLAUDE.md §9/§10) |
 | waiter_id | nullable | |
+| party_label | nullable varchar(30) | snapshotted from `orders.party_label` at finalize time (Phase 21), e.g. "Customer-2" — same immutable-history treatment as `table_id`/`section_id`/`waiter_id` |
 | pos_user_id | NOT NULL | cashier-of-record |
 | subtotal, discount_amount | numeric(10,2) | |
 | cgst_amount, sgst_amount | numeric(10,2) | **always two distinct columns**, never a merged "GST" amount (CLAUDE.md §9) |
@@ -260,6 +276,18 @@ for the full chain. Resuming the list for the manual-testing-fix backlog phases:
     (nullable varchar(30)) and the partial unique index `uq_orders_open_table_party` on
     (`tenant_id`, `table_id`, `party_label`) WHERE `status='open' AND table_id IS NOT
     NULL AND party_label IS NOT NULL`.
+12. **`pro plan item import`** (Phase 21, revision `9c46b3480166`) — data-only: JSONB-merges
+    `item_import: true` onto the seeded `pro` plan's `features` (Pro tenants now get Item
+    Master CSV import, not just export; only Lite remains without it).
+13. **`bill party label`** (Phase 21, revision `12432d67bb20`) — adds `bills.party_label`
+    (nullable varchar(30)), snapshotted from `orders.party_label` at finalize time.
+14. **`stock ledger and tenant toggle`** (Phase 22, revision `5d52cf46dd81`) — adds the
+    `stock_ledger` table (including its own RLS enable/force/policy statements, same
+    `dd586dfba4be`-predates-this-table reason as `invoices`) and
+    `tenants.stock_management_enabled` (bool, default false).
+15. **`stock management plan feature`** (Phase 22, revision `ffa2fb832bd7`) —
+    data-only: JSONB-merges `stock_management: true` onto the seeded `pro`/`pro_max`
+    plans' `features` (same pattern as revision 12's `item_import` change).
 
 ### Gotcha for Phase 02: setting the RLS session vars
 

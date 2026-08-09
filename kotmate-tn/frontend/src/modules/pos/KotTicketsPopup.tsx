@@ -43,6 +43,11 @@ export function KotTicketsPopup({ onSelectOrder, onClose }: KotTicketsPopupProps
                     <span>
                       <span className="font-mono text-xs text-ink-faint">#{ticket.ticket_number}</span>
                       <span className="ml-2 text-lg font-black">{ticket.table_number ?? "—"}</span>
+                      {ticket.party_label && (
+                        <span className="ml-1.5 rounded-full bg-gold-soft px-1.5 py-0.5 text-[10px] font-extrabold text-gold">
+                          {ticket.party_label}
+                        </span>
+                      )}
                       <span className="ml-1.5 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-extrabold text-accent">
                         {ticket.section_name_en}
                       </span>

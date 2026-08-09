@@ -58,6 +58,7 @@ export interface Bill extends BillTotals {
   section_name_en: string;
   waiter_id: string | null;
   waiter_name: string | null;
+  party_label: string | null;
   pos_user_id: string;
   pos_user_login_id: string;
   status: string;
@@ -74,6 +75,7 @@ export interface BillPreviewPayload {
 
 export interface BillCreatePayload extends BillPreviewPayload {
   payments: BillPaymentInput[];
+  skip_print?: boolean;
 }
 
 export interface BillSearchParams {
