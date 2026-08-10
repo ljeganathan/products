@@ -27,8 +27,12 @@ class HotelMasterUpdateRequest(BaseModel):
     gstin: str | None = Field(default=None, pattern=_GSTIN_RE)
     upi_id: str | None = Field(default=None, max_length=100)
     show_tamil_names: bool = True
+    # Printed centered near the end of the bill (e.g. "Thank You & Visit Again..!!!").
+    # None/omitted falls back to a generic default at print time (bill_service.py), not
+    # here — this field only carries an explicit override.
+    receipt_footer_message: str | None = Field(default=None, max_length=200)
 
-    @field_validator("pincode", "gstin", "state", mode="before")
+    @field_validator("pincode", "gstin", "state", "receipt_footer_message", mode="before")
     @classmethod
     def _blank_to_none(cls, v: str | None) -> str | None:
         # The settings form sends "" for an untouched optional field rather than
@@ -60,6 +64,7 @@ class HotelMasterResponse(BaseModel):
     logo_url: str | None = None
     upi_id: str | None = None
     show_tamil_names: bool = True
+    receipt_footer_message: str | None = None
     # Non-blocking (CLAUDE.md Phase 10 acceptance criteria: "warn, don't hard-block") —
     # None when there's nothing to flag (no GSTIN, no state, or they already agree).
     gstin_state_warning: str | None = None

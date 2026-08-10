@@ -222,7 +222,7 @@ function MultiLocationSection() {
         <p className="text-sm text-foreground/60">No bills across any location for this range.</p>
       )}
       {data && data.rows.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-border">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead className="bg-foreground/5 text-left text-xs uppercase tracking-wide text-foreground/60">
               <tr>

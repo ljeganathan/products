@@ -3,6 +3,7 @@ import axios from "axios";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { dispatchPrintJob } from "@/lib/printDispatch";
 import { formatINR } from "@/lib/utils";
 import { listCategories } from "@/modules/admin/categoriesApi";
 import { listLocations } from "@/modules/admin/locationsApi";
@@ -22,6 +23,7 @@ import {
   type OrderLineInput,
   type PosItem,
   createOrder,
+  getItemByCode,
   getOrder,
   listOrders,
   listPosItems,
@@ -259,10 +261,16 @@ export function POSPage() {
   }
 
   async function handleItemCodeSubmit() {
-    if (!itemCode.trim()) return;
+    const code = itemCode.trim();
+    if (!code) return;
     setItemCodeError(null);
-    const match = allItems.find((i) => i.item_code === itemCode.trim());
-    if (!match) {
+    // Case-insensitive backend lookup (matches item_service.get_item_by_code) rather
+    // than a client-side exact-match scan of `allItems` — that missed any code typed
+    // in a different case, or an item added after the initial items load.
+    let match: PosItem;
+    try {
+      match = await getItemByCode(code);
+    } catch {
       setItemCodeError("No item found with that code");
       return;
     }
@@ -278,6 +286,15 @@ export function POSPage() {
 
   async function loadOrderIntoDraft(orderId: string) {
     const fetched = await getOrder(orderId);
+    if (fetched.status === "billed") {
+      // Defensive: a stale open-orders cache entry can point at an order that's since
+      // been billed elsewhere — never load an already-billed order as an editable
+      // draft, just refresh the cache and let the caller re-resolve (e.g. as a fresh
+      // "new-party" instead of a bogus "resume").
+      if (location) void queryClient.invalidateQueries({ queryKey: ["pos-open-orders", location.id] });
+      setActionNotice("That ticket has already been billed");
+      return;
+    }
     const resumed = fetched.status === "held" ? await updateOrder(orderId, { status: "open" }) : fetched;
     setOrder(resumed);
     setSectionId(resumed.section_id);
@@ -413,7 +430,18 @@ export function POSPage() {
   }
 
   async function handleClearCart() {
-    if (!order || order.items.length === 0) return;
+    if (!order) return;
+    // Items already sent to the kitchen must never be deleted by "Clear" — this order
+    // stays open and reachable via KOT Tickets/Recall exactly as it was; Clear/Esc here
+    // just abandons this local draft view of it (same reset as Hold/Bill-finalized).
+    if (order.items.some((l) => l.is_kot_sent)) {
+      setOrder(null);
+      setTableId(null);
+      setPartyLabel(null);
+      if (!isWaiterRole) setWaiterId(null);
+      return;
+    }
+    if (order.items.length === 0) return;
     await syncCart([]);
   }
 
@@ -435,6 +463,11 @@ export function POSPage() {
     setKotSending(true);
     try {
       const result = await sendOrderToKot(order.id);
+      // usb/local_agent KOT printers only get rendered bytes back from the backend —
+      // it can't reach that printer itself (it's on the counter/kitchen machine, not
+      // the server) — so forward them to the local print-agent or WebUSB here, same as
+      // the POS billing flow (lib/printDispatch.ts).
+      const printWarning = await dispatchPrintJob(result.print_job);
       // Order stays "open" server-side (still reachable via KOT Tickets or by
       // re-picking the same table+customer) — only the local draft/screen clears,
       // the same pattern handleHold already uses, so the cashier is immediately
@@ -443,10 +476,16 @@ export function POSPage() {
       setTableId(null);
       setPartyLabel(null);
       if (!isWaiterRole) setWaiterId(null);
-      setActionNotice(`Sent to kitchen — ticket ${result.ticket_number}`);
+      setActionNotice(
+        printWarning
+          ? `Sent to kitchen — ticket ${result.ticket_number} — ${printWarning}`
+          : `Sent to kitchen — ticket ${result.ticket_number}`,
+      );
       void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
-    } catch {
-      setActionNotice("Kitchen printing lands in the next phase (KOT/Printing)");
+    } catch (err) {
+      setActionNotice(
+        axios.isAxiosError(err) ? String(err.response?.data?.detail ?? err.message) : "Couldn't send to kitchen",
+      );
     } finally {
       setKotSending(false);
     }
@@ -457,13 +496,24 @@ export function POSPage() {
     setShowBilling(true);
   }
 
-  function handleBillFinalized() {
+  function handleBillFinalized(printWarning?: string) {
+    // Optimistically drop the just-billed order from the open-orders cache immediately
+    // — waiting on invalidateQueries' background refetch left a window where the
+    // customer chip (CustomerSelectorBar) still resolved to the now-billed order as
+    // "resume", loading a closed/uneditable order back into the draft instead of
+    // starting fresh for the next customer at that seat.
+    const billedOrderId = order?.id;
+    if (billedOrderId && location) {
+      queryClient.setQueryData<Order[]>(["pos-open-orders", location.id], (prev) =>
+        prev ? prev.filter((o) => o.id !== billedOrderId) : prev,
+      );
+    }
     setShowBilling(false);
     setOrder(null);
     setTableId(null);
     setPartyLabel(null);
     if (!isWaiterRole) setWaiterId(null);
-    setActionNotice("Bill finalized");
+    setActionNotice(printWarning ? `Bill finalized — ${printWarning}` : "Bill finalized");
     void queryClient.invalidateQueries({ queryKey: ["pos-items"] });
     void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
   }
@@ -555,6 +605,26 @@ export function POSPage() {
             )}
           </div>
         </div>
+
+        {/* Mobile-width counterpart of the location picker above — that one is inside
+            a `hidden sm:flex` branding block, so on a phone it never renders at all,
+            leaving no way to tell/change which location a cashier is billing against
+            (matters whenever a phone is used as a real billing terminal, not just a
+            waiter's order-taking device, e.g. with a printer attached — CLAUDE.md §9).
+            `sm:hidden` keeps exactly one of the two pickers visible at any width. */}
+        {location && locations.length > 1 && (
+          <select
+            value={location.id}
+            onChange={(e) => handleLocationChange(e.target.value)}
+            className="min-h-9 max-w-[110px] shrink-0 truncate rounded-lg border border-border bg-surface-2 px-2 text-xs font-semibold text-ink-soft outline-none sm:hidden"
+          >
+            {locations.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name}
+              </option>
+            ))}
+          </select>
+        )}
 
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
           <div ref={searchWrapperRef} className="relative max-w-[320px] flex-1">

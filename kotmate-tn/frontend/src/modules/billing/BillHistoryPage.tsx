@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { dispatchPrintJob } from "@/lib/printDispatch";
 import { formatINR } from "@/lib/utils";
 import { listSections } from "@/modules/admin/sectionsApi";
 import { listTables } from "@/modules/admin/tablesApi";
@@ -21,6 +22,7 @@ export function BillHistoryPage() {
 
   const [filters, setFilters] = useState<BillSearchParams>({});
   const [reprintingId, setReprintingId] = useState<string | null>(null);
+  const [printAgentWarning, setPrintAgentWarning] = useState<string | null>(null);
 
   const { data: bills, isLoading, isError } = useQuery({
     queryKey: ["bills", filters],
@@ -29,9 +31,19 @@ export function BillHistoryPage() {
 
   const reprintMutation = useMutation({
     mutationFn: (id: string) => reprintBill(id),
-    onMutate: (id) => setReprintingId(id),
+    onMutate: (id) => {
+      setReprintingId(id);
+      setPrintAgentWarning(null);
+    },
     onSettled: () => setReprintingId(null),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["bills"] }),
+    onSuccess: async (bill) => {
+      // usb/local_agent printers only get rendered bytes back — the backend can't reach
+      // that printer itself, so forward them via WebUSB or the local print-agent here
+      // (same as the POS billing flow, CLAUDE.md §10).
+      const warning = await dispatchPrintJob(bill.print_job);
+      if (warning) setPrintAgentWarning(warning);
+      void queryClient.invalidateQueries({ queryKey: ["bills"] });
+    },
   });
 
   const tableNumberById = new Map(tables.map((t) => [t.id, t.table_number]));
@@ -105,12 +117,13 @@ export function BillHistoryPage() {
 
       {isLoading && <p className="text-sm text-foreground/60">Loading…</p>}
       {isError && <p className="text-sm text-chili">Failed to load bills.</p>}
+      {printAgentWarning && <p className="mb-3 text-sm text-chili">{printAgentWarning}</p>}
       {bills && bills.length === 0 && !isLoading && (
         <p className="text-sm text-foreground/60">No bills match these filters.</p>
       )}
 
       {bills && bills.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-border">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead className="bg-foreground/5 text-left text-xs uppercase tracking-wide text-foreground/60">
               <tr>

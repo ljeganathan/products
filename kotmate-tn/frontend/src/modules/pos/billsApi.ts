@@ -41,6 +41,16 @@ export interface BillPreview extends BillTotals {
   payments: BillPayment[];
 }
 
+// Raw ESC/POS bytes for a "usb"/"local_agent" bill printer — the backend can't reach
+// that printer itself (it's on the counter machine, not the server), so it hands these
+// bytes back here for the frontend to forward to the local print-agent (lib/printAgent).
+export interface BillPrintJob {
+  printer_id: string;
+  connection_type: "usb" | "local_agent";
+  connection_details: Record<string, unknown>;
+  data_base64: string;
+}
+
 export interface Bill extends BillTotals {
   id: string;
   bill_number: string;
@@ -58,6 +68,7 @@ export interface Bill extends BillTotals {
   status: string;
   payments: BillPayment[];
   printed: boolean;
+  print_job: BillPrintJob | null;
   created_at: string;
 }
 

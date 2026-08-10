@@ -9,7 +9,12 @@ from app.db.session import get_db
 from app.models import Tenant
 from app.schemas.hotel_master import HotelMasterResponse, HotelMasterUpdateRequest
 from app.schemas.stock import StockManagementSettingsRequest, StockManagementSettingsResponse
-from app.services.hotel_master_service import get_hotel_master, upload_hotel_master_logo, upsert_hotel_master
+from app.services.hotel_master_service import (
+    get_hotel_master,
+    remove_hotel_master_logo,
+    upload_hotel_master_logo,
+    upsert_hotel_master,
+)
 from app.services.stock_service import has_stock_management_feature
 from app.services.tenant_onboarding import get_active_plan
 
@@ -83,5 +88,20 @@ async def upload_tenant_hotel_master_logo(
 ) -> HotelMasterResponse:
     tenant = await _get_tenant(db, current_user)
     result = await upload_hotel_master_logo(db, tenant, location_id, file)
+    await db.commit()
+    return result
+
+
+@router.delete(
+    "/hotel-master/{location_id}/logo",
+    response_model=HotelMasterResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def delete_tenant_hotel_master_logo(
+    location_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> HotelMasterResponse:
+    result = await remove_hotel_master_logo(db, current_user.tenant_id, location_id)
     await db.commit()
     return result

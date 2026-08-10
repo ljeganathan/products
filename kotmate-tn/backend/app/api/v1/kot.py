@@ -51,6 +51,7 @@ async def send_order_to_kot(
         section_name_en=result.section_name_en,
         status=result.ticket.status,
         printed=result.printed,
+        print_job=result.print_job,
     )
 
 

@@ -143,11 +143,15 @@ async def search_items(session: AsyncSession, tenant_id: uuid.UUID, q: str, limi
 
 
 async def get_item_by_code(session: AsyncSession, tenant_id: uuid.UUID, item_code: str) -> Item:
-    """Exact-match lookup for the POS numeric item-code quick-entry field (CLAUDE.md §9)."""
+    """Case-insensitive exact-match lookup for the POS item-code quick-entry field
+    (CLAUDE.md §9) — cashiers type codes quickly and shouldn't need to match casing.
+    """
     item = (
         await session.execute(
             select(Item).where(
-                Item.tenant_id == tenant_id, Item.item_code == item_code, Item.is_active.is_(True)
+                Item.tenant_id == tenant_id,
+                func.upper(Item.item_code) == item_code.strip().upper(),
+                Item.is_active.is_(True),
             )
         )
     ).scalar_one_or_none()

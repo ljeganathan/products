@@ -226,7 +226,7 @@ export function CategoriesPage() {
       {isError && <p className="text-sm text-chili">Failed to load categories.</p>}
 
       {categories && (
-        <div className="overflow-hidden rounded-lg border border-border">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead className="bg-foreground/5 text-left text-xs uppercase tracking-wide text-foreground/60">
               <tr>

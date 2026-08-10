@@ -91,8 +91,10 @@ async def export_tenant_items_csv(
     tenant = await _get_tenant(db, current_user)
     plan = await get_active_plan(db, tenant.id)
     csv_text = await export_items_csv(db, tenant.id, plan)
+    # UTF-8 BOM so Excel (which sniffs encoding via system codepage when none is
+    # present) renders Tamil name_ta correctly instead of mojibake.
     return Response(
-        content=csv_text,
+        content=chr(0xFEFF) + csv_text,
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=items.csv"},
     )

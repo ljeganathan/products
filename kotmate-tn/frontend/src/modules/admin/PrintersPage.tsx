@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { type FormEvent, useState } from "react";
 
+import { isWebUSBSupported, pairPrinter } from "@/lib/webusbPrinter";
 import { listLocations } from "@/modules/admin/locationsApi";
 import {
   PRINTER_CONNECTION_TYPES,
@@ -45,6 +46,11 @@ interface PrinterFormState {
   ip_address: string;
   port: string;
   bluetooth_device_name: string;
+  windows_printer_name: string;
+  agent_port: string;
+  usb_vendor_id: string;
+  usb_product_id: string;
+  usb_product_name: string;
 }
 
 function widthOptionFor(paperWidthMm: number | null): string {
@@ -75,6 +81,11 @@ export function PrinterFormModal({
           ip_address: String(editingPrinter.connection_details.ip_address ?? ""),
           port: String(editingPrinter.connection_details.port ?? ""),
           bluetooth_device_name: String(editingPrinter.connection_details.device_name ?? ""),
+          windows_printer_name: String(editingPrinter.connection_details.windows_printer_name ?? ""),
+          agent_port: String(editingPrinter.connection_details.agent_port ?? ""),
+          usb_vendor_id: String(editingPrinter.connection_details.usb_vendor_id ?? ""),
+          usb_product_id: String(editingPrinter.connection_details.usb_product_id ?? ""),
+          usb_product_name: String(editingPrinter.connection_details.usb_product_name ?? ""),
         }
       : {
           location_id: locations[0]?.id ?? "",
@@ -85,6 +96,11 @@ export function PrinterFormModal({
           ip_address: "",
           port: "",
           bluetooth_device_name: "",
+          windows_printer_name: "",
+          agent_port: "",
+          usb_vendor_id: "",
+          usb_product_id: "",
+          usb_product_name: "",
         },
   );
   const [widthOption, setWidthOption] = useState(() => widthOptionFor(editingPrinter?.paper_width_mm ?? null));
@@ -94,6 +110,25 @@ export function PrinterFormModal({
       : "",
   );
   const [error, setError] = useState<string | null>(null);
+  const [pairing, setPairing] = useState(false);
+
+  async function handlePairUsb() {
+    setError(null);
+    setPairing(true);
+    try {
+      const info = await pairPrinter();
+      setForm((f) => ({
+        ...f,
+        usb_vendor_id: String(info.usb_vendor_id),
+        usb_product_id: String(info.usb_product_id),
+        usb_product_name: info.usb_product_name ?? "",
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't pair with a USB printer.");
+    } finally {
+      setPairing(false);
+    }
+  }
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -102,7 +137,18 @@ export function PrinterFormModal({
           ? { ip_address: form.ip_address, port: form.port }
           : form.connection_type === "bluetooth"
             ? { device_name: form.bluetooth_device_name }
-            : {};
+            : form.connection_type === "local_agent"
+              ? {
+                  windows_printer_name: form.windows_printer_name,
+                  ...(form.agent_port ? { agent_port: Number(form.agent_port) } : {}),
+                }
+              : form.connection_type === "usb"
+                ? {
+                    usb_vendor_id: form.usb_vendor_id ? Number(form.usb_vendor_id) : undefined,
+                    usb_product_id: form.usb_product_id ? Number(form.usb_product_id) : undefined,
+                    usb_product_name: form.usb_product_name || undefined,
+                  }
+                : {};
       const paper_width_mm =
         widthOption === CUSTOM_WIDTH ? (customWidth ? Number(customWidth) : null) : Number(widthOption);
       const payload: PrinterCreatePayload = {
@@ -240,6 +286,67 @@ export function PrinterFormModal({
             </div>
           )}
 
+          {form.connection_type === "local_agent" && (
+            <div className="flex flex-col gap-3 rounded-md border border-border bg-foreground/5 p-3">
+              <p className="text-xs text-foreground/60">
+                Requires the KOTMate local print-agent running on the counter PC this printer is
+                plugged into (<code>print-agent/agent.py</code>) — it forwards jobs to this
+                printer's own Windows driver.
+              </p>
+              <div className="flex flex-col gap-1.5">
+                <label className={labelClass}>Windows Printer Name</label>
+                <input
+                  required
+                  placeholder="e.g. POS80 Printer"
+                  className={inputClass}
+                  value={form.windows_printer_name}
+                  onChange={(e) => setForm((f) => ({ ...f, windows_printer_name: e.target.value }))}
+                />
+                <p className="text-[11px] text-foreground/50">
+                  Must match exactly what's shown in Windows' Printers &amp; scanners list.
+                </p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className={labelClass}>Agent Port (optional)</label>
+                <input
+                  placeholder="9123"
+                  className={inputClass}
+                  value={form.agent_port}
+                  onChange={(e) => setForm((f) => ({ ...f, agent_port: e.target.value }))}
+                />
+              </div>
+            </div>
+          )}
+
+          {form.connection_type === "usb" && (
+            <div className="flex flex-col gap-3 rounded-md border border-border bg-foreground/5 p-3">
+              <p className="text-xs text-foreground/60">
+                Connects directly from this browser via WebUSB — no driver or local agent needed,
+                as long as no other driver has already claimed the printer. Works in Chrome/Edge
+                on desktop and in Chrome on Android (with a USB-OTG cable).
+              </p>
+              {!isWebUSBSupported() && (
+                <p className="text-xs font-semibold text-chili">
+                  This browser doesn't support WebUSB — open this page in Chrome or Edge to pair.
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={handlePairUsb}
+                disabled={pairing || !isWebUSBSupported()}
+                className="self-start rounded-md bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground disabled:opacity-60"
+              >
+                {pairing ? "Pairing…" : form.usb_vendor_id ? "Re-pair Printer" : "Pair Printer"}
+              </button>
+              {form.usb_vendor_id && (
+                <p className="text-xs text-foreground/70">
+                  Paired: {form.usb_product_name || "USB printer"} (vendor {form.usb_vendor_id}, product{" "}
+                  {form.usb_product_id})
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <label className={labelClass}>Paper Width</label>
@@ -339,7 +446,7 @@ export function PrintersPage() {
       )}
 
       {printers && printers.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-border">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead className="bg-foreground/5 text-left text-xs uppercase tracking-wide text-foreground/60">
               <tr>

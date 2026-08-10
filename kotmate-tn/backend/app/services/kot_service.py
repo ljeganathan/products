@@ -1,3 +1,4 @@
+import base64
 import uuid
 from dataclasses import dataclass, field
 
@@ -20,6 +21,7 @@ from app.models import (
 from app.printing.base import KotTicketLine, KotTicketRenderData
 from app.printing.dispatcher import dispatch_kot_print
 from app.schemas.kot import ActiveKotTicketItem, ActiveKotTicketResponse
+from app.schemas.printing import PrintJobPayload
 from app.services.item_service import LOW_STOCK_THRESHOLD
 from app.services.order_service import get_order_or_404
 from app.services.stock_service import is_stock_tracking_enabled, set_item_stock
@@ -34,6 +36,8 @@ class KotSendResult:
     section_name_en: str
     printed: bool
     stock_messages: list[dict] = field(default_factory=list)
+    # Populated only for a `usb`/`local_agent` KOT printer — see PrintJobPayload.
+    print_job: PrintJobPayload | None = None
 
 
 async def _next_ticket_number(session: AsyncSession, tenant_id: uuid.UUID) -> str:
@@ -139,6 +143,7 @@ async def send_kot(
     # Physical printing is plan-gated (Lite = on-screen ticket only, CLAUDE.md §6) and
     # only fires when the tenant has actually registered a KOT printer for this location.
     printed = False
+    print_job: PrintJobPayload | None = None
     if plan and plan.features.get("kot_printing"):
         printer = (
             await session.execute(
@@ -164,8 +169,20 @@ async def send_kot(
                 lines=render_lines,
                 show_tamil_names=hotel.show_tamil_names if hotel else True,
                 party_label=order.party_label,
+                paper_width_mm=printer.paper_width_mm,
             )
-            dispatch_kot_print(printer, render_data)
+            content = dispatch_kot_print(printer, render_data)
+            # "usb"/"local_agent" KOT printers are physically attached to the counter
+            # machine, not this backend container — hand the rendered bytes back to the
+            # frontend so it can push them to the local print-agent/WebUSB, same as bill
+            # printing (bill_service.py's _dispatch_print_for_bill).
+            if printer.connection_type in ("usb", "local_agent"):
+                print_job = PrintJobPayload(
+                    printer_id=printer.id,
+                    connection_type=printer.connection_type,
+                    connection_details=printer.connection_details or {},
+                    data_base64=base64.b64encode(content).decode("ascii"),
+                )
             printed = True
 
     return KotSendResult(
@@ -175,6 +192,7 @@ async def send_kot(
         section_name_en=section.name_en,
         printed=printed,
         stock_messages=stock_messages,
+        print_job=print_job,
     )
 
 

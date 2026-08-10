@@ -127,6 +127,22 @@ async def test_login_by_user_id_for_product_owner_and_tenant_admin(client: Async
     assert admin_body["tenant_id"] == str(tenant.id)
 
 
+async def test_login_user_id_is_case_insensitive(client: AsyncClient):
+    async with async_session_maker() as session:
+        await _set_platform_admin(session)
+        tenant = await _seed_tenant(session)
+        login_id = f"{tenant.tenant_code}-Cashier01"
+        await _seed_user(session, tenant=tenant, login_id=login_id, role_code="pos_user")
+        await session.commit()
+
+    for attempt in (login_id.upper(), login_id.lower(), login_id):
+        resp = await client.post(
+            "/api/v1/auth/login", json={"user_id": attempt, "password": "password123"}
+        )
+        assert resp.status_code == 200, attempt
+        assert resp.json()["role"] == "pos_user"
+
+
 async def test_login_rejects_wrong_password_and_unknown_user_id(client: AsyncClient):
     async with async_session_maker() as session:
         await _set_platform_admin(session)

@@ -1,3 +1,4 @@
+import type { BillPrintJob } from "@/modules/pos/billsApi";
 import { api } from "@/lib/api";
 
 // Phase 08's KOT endpoints: POST /api/v1/kot, GET /api/v1/kot/tickets/active,
@@ -21,8 +22,15 @@ export interface ActiveKotTicket {
   items: ActiveKotTicketItem[];
 }
 
-export async function sendOrderToKot(orderId: string): Promise<{ ticket_number: string }> {
-  return (await api.post<{ ticket_number: string }>("/api/v1/kot", { order_id: orderId })).data;
+export interface KotSendResult {
+  ticket_number: string;
+  printed: boolean;
+  // usb/local_agent KOT printers only get rendered bytes back — see BillPrintJob.
+  print_job: BillPrintJob | null;
+}
+
+export async function sendOrderToKot(orderId: string): Promise<KotSendResult> {
+  return (await api.post<KotSendResult>("/api/v1/kot", { order_id: orderId })).data;
 }
 
 export async function listActiveKotTickets(): Promise<ActiveKotTicket[]> {

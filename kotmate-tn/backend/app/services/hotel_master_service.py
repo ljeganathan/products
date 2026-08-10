@@ -71,6 +71,7 @@ def _build_response(row: HotelMaster | None, location_id: uuid.UUID) -> HotelMas
         logo_url=row.logo_url,
         upi_id=row.upi_id,
         show_tamil_names=row.show_tamil_names,
+        receipt_footer_message=row.receipt_footer_message,
         gstin_state_warning=gstin_state_warning(row.gstin, row.state),
         created_at=row.created_at,
     )
@@ -107,6 +108,7 @@ async def upsert_hotel_master(
     row.gstin = req.gstin
     row.upi_id = req.upi_id
     row.show_tamil_names = req.show_tamil_names
+    row.receipt_footer_message = req.receipt_footer_message
 
     await session.flush()
     return _build_response(row, req.location_id)
@@ -141,4 +143,20 @@ async def upload_hotel_master_logo(
     )
     row.logo_url = url
     await session.flush()
+    return _build_response(row, location_id)
+
+
+async def remove_hotel_master_logo(
+    session: AsyncSession, tenant_id: uuid.UUID, location_id: uuid.UUID
+) -> HotelMasterResponse:
+    """Clears the logo reference so printing falls back to the big/bold hotel-name
+    header (escpos_thermal.py) — doesn't delete the underlying file from disk, matching
+    `StorageBackend` not exposing a delete operation (CLAUDE.md §2's storage interface
+    is upload-only for now); an orphaned file there is harmless.
+    """
+    await _validate_location(session, tenant_id, location_id)
+    row = await get_hotel_master_row(session, tenant_id, location_id)
+    if row is not None:
+        row.logo_url = None
+        await session.flush()
     return _build_response(row, location_id)

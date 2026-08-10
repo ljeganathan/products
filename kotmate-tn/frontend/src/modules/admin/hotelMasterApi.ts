@@ -15,6 +15,10 @@ export interface HotelMaster {
   logo_url: string | null;
   upi_id: string | null;
   show_tamil_names: boolean;
+  // Printed centered near the end of the bill (e.g. "Thank You & Visit Again..!!!") —
+  // null means the tenant hasn't set one, and the backend falls back to a generic
+  // default at print time rather than printing nothing.
+  receipt_footer_message: string | null;
   gstin_state_warning: string | null;
   created_at: string | null;
 }
@@ -32,6 +36,7 @@ export interface HotelMasterUpdatePayload {
   gstin?: string | null;
   upi_id?: string | null;
   show_tamil_names: boolean;
+  receipt_footer_message?: string | null;
 }
 
 export async function getHotelMaster(locationId: string): Promise<HotelMaster> {
@@ -52,4 +57,8 @@ export async function uploadHotelMasterLogo(locationId: string, file: File): Pro
       headers: { "Content-Type": "multipart/form-data" },
     })
   ).data;
+}
+
+export async function removeHotelMasterLogo(locationId: string): Promise<HotelMaster> {
+  return (await api.delete<HotelMaster>(`/api/v1/settings/hotel-master/${locationId}/logo`)).data;
 }

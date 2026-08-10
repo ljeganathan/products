@@ -161,9 +161,67 @@ def test_bill_formatter_prints_one_line_per_discount_note_segment():
         show_tamil_names=False,
     )
     lines = format_bill_text_lines(bill)
-    assert any("Festival Offer: -₹20.00" in line for line in lines)
-    assert any("Coupon WELCOME10: -₹10.00" in line for line in lines)
+    # Amount right-aligns in its own column rather than trailing inline after the rule
+    # name, matching every other totals line (Subtotal/CGST/SGST/Round Off). Printed as
+    # "Rs." rather than "₹" — no thermal/dot-matrix printer firmware has the ₹ glyph.
+    assert any("Festival Offer" in line and line.rstrip().endswith("-Rs.20.00") for line in lines)
+    assert any("Coupon WELCOME10" in line and line.rstrip().endswith("-Rs.10.00") for line in lines)
     assert not any(line.strip().startswith("Discount") for line in lines)
+
+
+def test_bill_formatter_includes_waiter_line_when_assigned():
+    bill = BillRenderData(
+        bill_number="B1",
+        table_number="T5",
+        section_name_en="AC",
+        created_at=datetime.now(),
+        lines=[],
+        subtotal=100.0,
+        discount_amount=0,
+        discount_note=None,
+        cgst_amount=0,
+        sgst_amount=0,
+        round_off_amount=0,
+        grand_total=100.0,
+        payments=[],
+        hotel_name="Test Hotel",
+        hotel_address_lines=[],
+        gstin=None,
+        upi_id=None,
+        qr_payload=None,
+        show_tamil_names=True,
+        waiter_name="Ravi",
+    )
+    lines = format_bill_text_lines(bill)
+    # Shares a line with the date/time (two-column header, printer-fixes batch) rather
+    # than being its own standalone line — assert it's present as the left-hand side.
+    assert any(line.startswith("Waiter: Ravi") for line in lines)
+
+
+def test_bill_formatter_omits_waiter_line_when_unassigned():
+    bill = BillRenderData(
+        bill_number="B1",
+        table_number="T5",
+        section_name_en="AC",
+        created_at=datetime.now(),
+        lines=[],
+        subtotal=100.0,
+        discount_amount=0,
+        discount_note=None,
+        cgst_amount=0,
+        sgst_amount=0,
+        round_off_amount=0,
+        grand_total=100.0,
+        payments=[],
+        hotel_name="Test Hotel",
+        hotel_address_lines=[],
+        gstin=None,
+        upi_id=None,
+        qr_payload=None,
+        show_tamil_names=True,
+    )
+    lines = format_bill_text_lines(bill)
+    assert not any(line.startswith("Waiter:") for line in lines)
 
 
 # --- Phase 21: party_label ("Customer-N") composed into the printed header ---

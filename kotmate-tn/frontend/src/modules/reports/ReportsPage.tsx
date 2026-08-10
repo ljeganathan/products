@@ -181,7 +181,7 @@ export function ReportsPage() {
 
 const thClass = "px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-foreground/60";
 const tdClass = "px-4 py-2.5 text-sm";
-const tableWrapClass = "overflow-hidden overflow-x-auto rounded-lg border border-border";
+const tableWrapClass = "overflow-x-auto rounded-lg border border-border";
 const tableClass = "w-full text-sm";
 const theadClass = "bg-foreground/5";
 const totalRowClass = "border-t-2 border-border bg-foreground/5 font-bold";

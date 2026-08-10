@@ -25,7 +25,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://kotmate:kotmate@postgres:5432/kotmate
       APP_DATABASE_URL: postgresql+asyncpg://kotmate_app:kotmate_app@postgres:5432/kotmate
-      CORS_ORIGINS: '["http://localhost:5173"]'
+      CORS_ORIGINS: '["http://localhost:5173", "http://192.168.0.125:5173"]'
     ports:
       - "8000:8000"
     volumes:
@@ -41,7 +41,7 @@ services:
       target: dev
     restart: unless-stopped
     environment:
-      VITE_API_URL: http://localhost:8000
+      VITE_API_URL: http://192.168.0.125:8000
     ports:
       - "5173:5173"
     volumes:

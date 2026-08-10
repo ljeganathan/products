@@ -3,6 +3,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.printing import PrintJobPayload
+
 # "new" is the ticket's own initial state, set at creation — never a valid target for
 # this endpoint; kitchen staff only ever move a ticket forward to preparing/ready.
 _SETTABLE_TICKET_STATUSES = ["preparing", "ready"]
@@ -20,6 +22,7 @@ class KotSendResponse(BaseModel):
     section_name_en: str
     status: str
     printed: bool
+    print_job: PrintJobPayload | None = None
 
 
 class KotTicketStatusUpdate(BaseModel):

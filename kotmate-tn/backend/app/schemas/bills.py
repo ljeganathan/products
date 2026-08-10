@@ -4,6 +4,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import PAYMENT_METHODS
+from app.schemas.printing import PrintJobPayload
 
 
 class BillPaymentInput(BaseModel):
@@ -99,6 +100,7 @@ class BillResponse(BillTotals):
     status: str
     payments: list[PaymentResponse]
     printed: bool
+    print_job: PrintJobPayload | None = None
     created_at: datetime
 
 

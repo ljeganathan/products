@@ -3,7 +3,3 @@ ruff==0.8.4
 pytest==8.3.4
 pytest-asyncio==0.25.0
 httpx==0.28.1
-# scripts/seed_demo_data.py generates placeholder item/logo images — reportlab already
-# pulls Pillow in transitively for prod PDF export, but the seed script depends on it
-# directly, so it's pinned explicitly here too (dev/test tooling only).
-Pillow==11.3.0

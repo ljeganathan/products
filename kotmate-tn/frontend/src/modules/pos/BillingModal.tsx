@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { useEffect, useState } from "react";
 
+import { dispatchPrintJob } from "@/lib/printDispatch";
 import { formatINR } from "@/lib/utils";
 import { me } from "@/modules/auth/authApi";
 import {
@@ -17,7 +18,7 @@ interface BillingModalProps {
   order: Order;
   initialPaymentMethod: "upi" | "cash" | "card";
   onClose: () => void;
-  onFinalized: () => void;
+  onFinalized: (printWarning?: string) => void;
 }
 
 const PAYMENT_METHODS = [
@@ -27,6 +28,25 @@ const PAYMENT_METHODS = [
 ] as const;
 
 const AMOUNT_TOLERANCE = 0.01;
+
+// discount_note segments are "<rule name>: -₹X.XX" — split so the amount can be
+// rendered right-aligned in its own column instead of trailing inline after a
+// variable-length rule name.
+function splitDiscountSegment(segment: string): [string, string] {
+  const idx = segment.lastIndexOf(": ");
+  return idx === -1 ? [segment, ""] : [segment.slice(0, idx), segment.slice(idx + 2)];
+}
+
+function formatBillDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
 
 export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized }: BillingModalProps) {
   const { data: meData } = useQuery({ queryKey: ["me"], queryFn: me });
@@ -95,15 +115,17 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
         payments,
         skip_print: previewBeforePrint,
       }),
-    onSuccess: (bill) => {
+    onSuccess: async (bill) => {
       if (previewBeforePrint) {
         // Show the print-layout simulation and wait for an explicit Print click.
         setFinalizedBill(bill);
-      } else {
-        // Already printed as part of finalize (skip_print=false) — no extra window,
-        // straight back to POS.
-        onFinalized();
+        return;
       }
+      // Already dispatched server-side as part of finalize (skip_print=false) — for a
+      // usb/local_agent printer that dispatch is just rendered bytes waiting on us to
+      // forward them, so do that now before returning to POS.
+      const warning = await dispatchPrintJob(bill.print_job);
+      onFinalized(warning ?? undefined);
     },
     onError: (err) =>
       setError(axios.isAxiosError(err) ? String(err.response?.data?.detail ?? err.message) : "Billing failed"),
@@ -111,7 +133,10 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
 
   const printMutation = useMutation({
     mutationFn: () => reprintBill(finalizedBill!.id),
-    onSuccess: () => onFinalized(),
+    onSuccess: async (bill) => {
+      const warning = await dispatchPrintJob(bill.print_job);
+      onFinalized(warning ?? undefined);
+    },
   });
 
   useEffect(() => {
@@ -158,6 +183,8 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
                 {finalizedBill.party_label ? ` ${finalizedBill.party_label}` : ""} ({finalizedBill.section_name_en})
               </p>
             )}
+            <p className="text-center">{formatBillDateTime(finalizedBill.created_at)}</p>
+            {finalizedBill.waiter_name && <p className="text-center">Waiter: {finalizedBill.waiter_name}</p>}
             <p className="my-1 border-t border-dashed border-black/40" />
             {finalizedBill.items.map((line) => (
               <div key={line.id ?? line.item_id}>
@@ -174,11 +201,15 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
             ))}
             <p className="my-1 border-t border-dashed border-black/40" />
             <Row label="Subtotal" value={finalizedBill.subtotal} mono />
-            {discountSegments.map((seg, i) => (
-              <div key={i} className="flex justify-between text-black/80">
-                <span className="truncate">{seg}</span>
-              </div>
-            ))}
+            {discountSegments.map((seg, i) => {
+              const [label, amount] = splitDiscountSegment(seg);
+              return (
+                <div key={i} className="flex justify-between text-black/80">
+                  <span className="truncate">{label}</span>
+                  <span>{amount}</span>
+                </div>
+              );
+            })}
             <Row label="CGST" value={finalizedBill.cgst_amount} mono />
             <Row label="SGST" value={finalizedBill.sgst_amount} mono />
             <Row label="Round Off" value={finalizedBill.round_off_amount} signed mono />
@@ -197,7 +228,7 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
           <div className="mt-3 flex justify-end gap-2">
             <button
               type="button"
-              onClick={onFinalized}
+              onClick={() => onFinalized()}
               className="rounded-lg border border-border px-4 py-2 text-sm font-bold hover:bg-surface-2"
             >
               Skip / Close
@@ -243,11 +274,15 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
             <>
               <Row label="Subtotal" value={preview.subtotal} />
               {preview.discount_note ? (
-                preview.discount_note.split("; ").map((seg, i) => (
-                  <div key={i} className="flex items-center justify-between py-0.5 text-veg">
-                    <span className="text-xs">{seg}</span>
-                  </div>
-                ))
+                preview.discount_note.split("; ").map((seg, i) => {
+                  const [label, amount] = splitDiscountSegment(seg);
+                  return (
+                    <div key={i} className="flex items-center justify-between py-0.5 text-veg">
+                      <span className="text-xs">{label}</span>
+                      <span className="text-xs font-bold tabular-nums">{amount}</span>
+                    </div>
+                  );
+                })
               ) : (
                 preview.discount_amount > 0 && <Row label="Discount" value={-preview.discount_amount} />
               )}

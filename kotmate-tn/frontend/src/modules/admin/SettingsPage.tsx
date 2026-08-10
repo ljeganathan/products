@@ -10,6 +10,7 @@ import {
   type HotelMaster,
   type HotelMasterUpdatePayload,
   getHotelMaster,
+  removeHotelMasterLogo,
   saveHotelMaster,
   uploadHotelMasterLogo,
 } from "@/modules/admin/hotelMasterApi";
@@ -276,6 +277,7 @@ function GeneralTab({ locationId }: { locationId: string }) {
         gstin: hotel.gstin ?? "",
         upi_id: hotel.upi_id ?? "",
         show_tamil_names: hotel.show_tamil_names,
+        receipt_footer_message: hotel.receipt_footer_message ?? "",
       });
       setSavedWarning(hotel.gstin_state_warning);
     }
@@ -294,6 +296,12 @@ function GeneralTab({ locationId }: { locationId: string }) {
     mutationFn: (file: File) => uploadHotelMasterLogo(locationId, file),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["hotel-master", locationId] }),
     onError: (err) => setError(apiErrorMessage(err, "Failed to upload logo.")),
+  });
+
+  const removeLogoMutation = useMutation({
+    mutationFn: () => removeHotelMasterLogo(locationId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["hotel-master", locationId] }),
+    onError: (err) => setError(apiErrorMessage(err, "Failed to remove logo.")),
   });
 
   function update<K extends keyof HotelMasterUpdatePayload>(key: K, value: HotelMasterUpdatePayload[K]) {
@@ -443,6 +451,21 @@ function GeneralTab({ locationId }: { locationId: string }) {
           </p>
 
           <div className="mt-2 flex flex-col gap-1.5">
+            <label className={labelClass}>Receipt Footer Message</label>
+            <input
+              className={inputClass}
+              placeholder="Thank You & Visit Again..!!!"
+              maxLength={200}
+              value={form.receipt_footer_message ?? ""}
+              onChange={(e) => update("receipt_footer_message", e.target.value)}
+            />
+            <p className="text-xs text-foreground/50">
+              Printed centered near the end of the bill. Leave blank to use the default (&quot;Thank
+              You &amp; Visit Again..!!!&quot;).
+            </p>
+          </div>
+
+          <div className="mt-2 flex flex-col gap-1.5">
             <label className={labelClass}>Logo</label>
             <input
               type="file"
@@ -454,6 +477,16 @@ function GeneralTab({ locationId }: { locationId: string }) {
               className="text-xs"
             />
             {logoMutation.isPending && <p className="text-xs text-foreground/50">Uploading…</p>}
+            {hotel?.logo_url && (
+              <button
+                type="button"
+                onClick={() => removeLogoMutation.mutate()}
+                disabled={removeLogoMutation.isPending}
+                className="self-start text-xs font-semibold text-chili hover:underline disabled:opacity-60"
+              >
+                {removeLogoMutation.isPending ? "Removing…" : "Remove logo"}
+              </button>
+            )}
           </div>
         </fieldset>
 
@@ -541,7 +574,7 @@ function LocationsTab({ locations }: { locations: LocationDetail[] }) {
         </p>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-border">
+      <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full text-sm">
           <thead className="bg-foreground/5 text-left text-xs uppercase tracking-wide text-foreground/60">
             <tr>

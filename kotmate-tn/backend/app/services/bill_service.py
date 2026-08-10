@@ -1,12 +1,15 @@
+import base64
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.deps import CurrentUser
 from app.models import (
     AuditLog,
@@ -37,6 +40,7 @@ from app.schemas.bills import (
     BillSearchParams,
     PaymentResponse,
 )
+from app.schemas.printing import PrintJobPayload
 from app.services.discount_rule_service import (
     get_active_coupon,
     get_active_item_level_rules,
@@ -363,6 +367,30 @@ async def preview_bill(
     )
 
 
+# Printed centered near the end of every bill unless the tenant has set their own
+# `hotel_master.receipt_footer_message` in Settings (printer fixes batch).
+_DEFAULT_RECEIPT_FOOTER_MESSAGE = "Thank You & Visit Again..!!!"
+
+
+def _read_uploaded_file(url: str | None) -> bytes | None:
+    """Resolves a URL previously returned by `storage.save` (e.g.
+    `hotel_master.logo_url`, always `{UPLOAD_URL_PREFIX}/{tenant_id}/{subfolder}/...`)
+    back to bytes on local disk. Returns None for anything that doesn't resolve — a
+    missing/corrupt logo file should never break bill printing, just fall back to the
+    no-logo rendering path.
+    """
+    if not url:
+        return None
+    settings = get_settings()
+    prefix = settings.UPLOAD_URL_PREFIX.rstrip("/") + "/"
+    if not url.startswith(prefix):
+        return None
+    try:
+        return (Path(settings.UPLOAD_DIR) / url[len(prefix) :]).read_bytes()
+    except OSError:
+        return None
+
+
 async def _dispatch_print_for_bill(
     session: AsyncSession,
     tenant_id: uuid.UUID,
@@ -372,7 +400,8 @@ async def _dispatch_print_for_bill(
     table: Table | None,
     plan_features: dict,
     lines: list[BillLine],
-) -> bool:
+    waiter: Waiter | None = None,
+) -> tuple[bool, PrintJobPayload | None]:
     """Bill printing is available on every plan tier (CLAUDE.md §6, unlike Phase 08's
     KOT printing which is Pro/Pro Max only) — gating here is purely "is a bill printer
     registered for this location", the same shape as `kot_service.send_kot`'s printer
@@ -389,7 +418,7 @@ async def _dispatch_print_for_bill(
         )
     ).scalars().first()
     if printer is None:
-        return False
+        return False, None
 
     hotel = (
         await session.execute(select(HotelMaster).where(HotelMaster.location_id == location_id))
@@ -399,19 +428,28 @@ async def _dispatch_print_for_bill(
     ).scalar_one()
 
     hotel_name = hotel.name if hotel else location.name
+    # Door No./Street/City/Pincode on one line, phone on its own line below — both
+    # centered by the thermal adapter (escpos_thermal.py); the printer fixes batch
+    # dropped district (redundant with city for a single-location context) and added
+    # phone as a separate, more prominent line.
     address_parts = (
-        [p for p in [hotel.door_no, hotel.street, hotel.city, hotel.district] if p] if hotel else []
+        [p for p in [hotel.door_no, hotel.street, hotel.city, hotel.pincode] if p] if hotel else []
     )
     address_lines = [", ".join(address_parts)] if address_parts else []
+    if hotel and hotel.phone:
+        address_lines.append(f"Ph: {hotel.phone}")
 
+    payments = (await session.execute(select(Payment).where(Payment.bill_id == bill.id))).scalars().all()
+
+    # "Scan to pay via UPI" only makes sense when the customer actually paid (part of
+    # their bill) via UPI — printing it on a cash/card-only bill was showing a payment
+    # prompt for money that was already settled a different way.
     qr_payload = None
-    if plan_features.get("qr_upi") and hotel and hotel.upi_id:
+    if plan_features.get("qr_upi") and hotel and hotel.upi_id and any(p.method == "upi" for p in payments):
         qr_payload = (
             f"upi://pay?pa={quote(hotel.upi_id)}&pn={quote(hotel_name)}"
             f"&am={float(bill.grand_total):.2f}&cu=INR&tn={quote('Bill ' + bill.bill_number)}"
         )
-
-    payments = (await session.execute(select(Payment).where(Payment.bill_id == bill.id))).scalars().all()
 
     render_data = BillRenderData(
         bill_number=bill.bill_number,
@@ -434,9 +472,27 @@ async def _dispatch_print_for_bill(
         qr_payload=qr_payload,
         show_tamil_names=hotel.show_tamil_names if hotel else True,
         party_label=bill.party_label,
+        waiter_name=waiter.name if waiter else None,
+        paper_width_mm=printer.paper_width_mm,
+        logo_image_bytes=_read_uploaded_file(hotel.logo_url) if hotel else None,
+        footer_message=(hotel.receipt_footer_message if hotel else None) or _DEFAULT_RECEIPT_FOOTER_MESSAGE,
     )
-    dispatch_bill_print(printer, render_data)
-    return True
+    content = dispatch_bill_print(printer, render_data)
+    # "usb" and "local_agent" printers are physically attached to the counter machine,
+    # not this backend container — hand the rendered bytes back to the frontend so it
+    # can push them to the local print-agent (CLAUDE.md §10) instead of the backend
+    # trying (and failing) to reach hardware on someone else's LAN/USB bus.
+    print_job = (
+        PrintJobPayload(
+            printer_id=printer.id,
+            connection_type=printer.connection_type,
+            connection_details=printer.connection_details or {},
+            data_base64=base64.b64encode(content).decode("ascii"),
+        )
+        if printer.connection_type in ("usb", "local_agent")
+        else None
+    )
+    return True, print_job
 
 
 async def finalize_bill(
@@ -551,15 +607,15 @@ async def finalize_bill(
         BillLine(p.item.name_en, p.item.name_ta, p.quantity, p.unit_price, p.line_total)
         for p in totals.priced_items
     ]
-    printed = (
+    printed, print_job = (
         await _dispatch_print_for_bill(
-            session, tenant_id, order.location_id, bill, section, table, plan_features, lines
+            session, tenant_id, order.location_id, bill, section, table, plan_features, lines, waiter
         )
         if not req.skip_print
-        else False
+        else (False, None)
     )
 
-    return await build_bill_response(session, bill, printed=printed)
+    return await build_bill_response(session, bill, printed=printed, print_job=print_job)
 
 
 async def get_bill_or_404(session: AsyncSession, tenant_id: uuid.UUID, bill_id: uuid.UUID) -> Bill:
@@ -596,7 +652,9 @@ async def search_bills(session: AsyncSession, tenant_id: uuid.UUID, params: Bill
     return list(rows.scalars().all())
 
 
-async def build_bill_response(session: AsyncSession, bill: Bill, printed: bool = False) -> BillResponse:
+async def build_bill_response(
+    session: AsyncSession, bill: Bill, printed: bool = False, print_job: PrintJobPayload | None = None
+) -> BillResponse:
     """Renders a persisted bill from its own stored/snapshotted fields — never
     recomputes tax/discount, so a reprint is guaranteed identical to the original
     (CLAUDE.md Phase 09 acceptance criteria).
@@ -660,11 +718,12 @@ async def build_bill_response(session: AsyncSession, bill: Bill, printed: bool =
         ),
         payments=[PaymentResponse(method=p.method, amount=float(p.amount)) for p in payments],
         printed=printed,
+        print_job=print_job,
         created_at=bill.created_at,
     )
 
 
-async def reprint_bill(session: AsyncSession, tenant_id: uuid.UUID, bill: Bill) -> bool:
+async def reprint_bill(session: AsyncSession, tenant_id: uuid.UUID, bill: Bill) -> tuple[bool, PrintJobPayload | None]:
     section = (
         await session.execute(select(SeatingSection).where(SeatingSection.id == bill.section_id))
     ).scalar_one()
@@ -682,8 +741,13 @@ async def reprint_bill(session: AsyncSession, tenant_id: uuid.UUID, bill: Bill) 
         )
         for bi in bill_items
     ]
+    waiter = (
+        (await session.execute(select(Waiter).where(Waiter.id == bill.waiter_id))).scalar_one_or_none()
+        if bill.waiter_id
+        else None
+    )
     plan = await get_active_plan(session, tenant_id)
     plan_features = plan.features if plan else {}
     return await _dispatch_print_for_bill(
-        session, tenant_id, bill.location_id, bill, section, table, plan_features, lines
+        session, tenant_id, bill.location_id, bill, section, table, plan_features, lines, waiter
     )

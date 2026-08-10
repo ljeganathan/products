@@ -1,7 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUser, get_current_user
@@ -84,8 +84,12 @@ def _issue_tokens(*, user: User, role_code: str, location_ids: list[uuid.UUID]) 
 async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
     await _bypass_rls_for_login(db)
 
+    # user_id login is case-insensitive — cashiers on shared counter machines
+    # frequently have caps-lock on or type inconsistently.
     user = (
-        await db.execute(select(User).where(User.user_id == payload.user_id))
+        await db.execute(
+            select(User).where(func.lower(User.user_id) == payload.user_id.strip().lower())
+        )
     ).scalar_one_or_none()
 
     # Same generic error whether the user_id doesn't exist, the password is wrong, or
