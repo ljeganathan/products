@@ -44,6 +44,11 @@ export function LoginPage() {
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 401) {
         setError(t("auth.invalidCredentials"));
+      } else if (axios.isAxiosError(err) && (err.response?.status === 403 || err.response?.status === 503)) {
+        // 403 (subscription expired/suspended) and 503 (maintenance mode) both carry a
+        // specific, actionable message from the backend — showing the generic fallback
+        // here would hide *why* the account is blocked and what to do about it.
+        setError(String(err.response.data?.detail ?? t("auth.genericError")));
       } else {
         setError(t("auth.genericError"));
       }

@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, text
@@ -16,7 +17,7 @@ from app.db.session import get_db
 from app.models import PlatformSettings, Role, Tenant, User, UserLocationAccess
 from app.schemas.auth import LoginRequest, MeResponse, RefreshRequest, TokenResponse
 from app.services.stock_service import is_stock_tracking_enabled
-from app.services.tenant_onboarding import get_active_plan
+from app.services.tenant_onboarding import get_active_plan, get_active_subscription
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -62,6 +63,24 @@ async def _reject_if_maintenance_mode(db: AsyncSession, role_code: str) -> None:
         )
 
 
+async def _reject_if_subscription_expired(db: AsyncSession, tenant_id: uuid.UUID | None) -> None:
+    """Blocks tenant-scoped staff (tenant_admin/pos_user/waiter/kitchen) from logging
+    in — or silently refreshing an existing session past — a lapsed subscription.
+    `get_active_subscription` already only matches `status == "active"` rows, so a
+    manually suspended/cancelled subscription (Platform Console's Subscription Status
+    control) is rejected here too, not just a genuinely expired `current_period_end`.
+    `tenant_id is None` means `product_owner`, who has no subscription to expire.
+    """
+    if tenant_id is None:
+        return
+    subscription = await get_active_subscription(db, tenant_id)
+    if subscription is None or subscription.current_period_end < date.today():
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "This account's subscription is not active. Contact your account admin to renew.",
+        )
+
+
 def _issue_tokens(*, user: User, role_code: str, location_ids: list[uuid.UUID]) -> TokenResponse:
     access_token = create_access_token(
         user_id=user.id,
@@ -99,6 +118,7 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> To
 
     role_code = await _load_role_code(db, user.role_id)
     await _reject_if_maintenance_mode(db, role_code)
+    await _reject_if_subscription_expired(db, user.tenant_id)
     location_ids = await _load_location_ids(db, user.id)
     return _issue_tokens(user=user, role_code=role_code, location_ids=location_ids)
 
@@ -121,6 +141,7 @@ async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)) -
 
     role_code = await _load_role_code(db, user.role_id)
     await _reject_if_maintenance_mode(db, role_code)
+    await _reject_if_subscription_expired(db, user.tenant_id)
     location_ids = await _load_location_ids(db, user.id)
     return _issue_tokens(user=user, role_code=role_code, location_ids=location_ids)
 

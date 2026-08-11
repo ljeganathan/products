@@ -162,6 +162,64 @@ async def test_login_rejects_wrong_password_and_unknown_user_id(client: AsyncCli
     assert unknown_user.status_code == 401
 
 
+async def test_login_blocked_once_subscription_expired(client: AsyncClient):
+    async with async_session_maker() as session:
+        await _set_platform_admin(session)
+        tenant = await _seed_tenant(session)  # current_period_end defaults to today
+        login_id = f"{tenant.tenant_code}-cashier01"
+        await _seed_user(session, tenant=tenant, login_id=login_id, role_code="pos_user")
+        await session.commit()
+
+    # Still valid the day the period ends — expiry is exclusive of "today".
+    still_valid = await client.post(
+        "/api/v1/auth/login", json={"user_id": login_id, "password": "password123"}
+    )
+    assert still_valid.status_code == 200
+
+    async with async_session_maker() as session:
+        await _set_platform_admin(session)
+        subscription = (
+            await session.execute(select(Subscription).where(Subscription.tenant_id == tenant.id))
+        ).scalar_one()
+        subscription.current_period_end = date.today() - timedelta(days=1)
+        await session.commit()
+
+    expired = await client.post(
+        "/api/v1/auth/login", json={"user_id": login_id, "password": "password123"}
+    )
+    assert expired.status_code == 403
+
+    # A product_owner login has no tenant to expire, so it's never affected.
+    async with async_session_maker() as session:
+        await _set_platform_admin(session)
+        owner_login = f"owner-{uuid.uuid4().hex[:8]}"
+        await _seed_user(session, tenant=None, login_id=owner_login, role_code="product_owner")
+        await session.commit()
+
+    owner_resp = await client.post(
+        "/api/v1/auth/login", json={"user_id": owner_login, "password": "password123"}
+    )
+    assert owner_resp.status_code == 200
+
+
+async def test_login_blocked_when_subscription_suspended(client: AsyncClient):
+    async with async_session_maker() as session:
+        await _set_platform_admin(session)
+        tenant = await _seed_tenant(session)
+        login_id = f"{tenant.tenant_code}-admin01"
+        await _seed_user(session, tenant=tenant, login_id=login_id, role_code="tenant_admin")
+        subscription = (
+            await session.execute(select(Subscription).where(Subscription.tenant_id == tenant.id))
+        ).scalar_one()
+        subscription.status = "suspended"
+        await session.commit()
+
+    resp = await client.post(
+        "/api/v1/auth/login", json={"user_id": login_id, "password": "password123"}
+    )
+    assert resp.status_code == 403
+
+
 async def test_duplicate_user_id_same_tenant_rejected_cross_tenant_allowed():
     """Local handles only need to be unique *within* a tenant (CLAUDE.md §5) — the
     global uniqueness constraint is on the *composed* {tenant_code}-{local handle}

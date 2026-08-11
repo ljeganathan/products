@@ -72,7 +72,6 @@ async def _make_tenant_with_lite_plan(session) -> Tenant:
     return tenant
 
 
-@pytest.mark.asyncio
 async def test_rls_blocks_writes_with_no_session_context():
     """Fail-closed check: an INSERT into a tenant-scoped table (RLS applies to
     `categories`, not to `tenants` itself — see docs/db-schema.md) with neither
@@ -85,6 +84,15 @@ async def test_rls_blocks_writes_with_no_session_context():
     here instead of being returned to (and later reused from) the pool other tests
     share — avoids a Windows/ProactorEventLoop asyncpg quirk where closing a connection
     that errored mid-transaction can wedge a *different*, later test's connection.
+
+    No per-test `@pytest.mark.asyncio` override here — that used to give this one test
+    its own function-scoped event loop while every other test in the file/session
+    shares one session-scoped loop (the module-level `pytestmark` below). Mixing loop
+    scopes within a session is exactly what corrupts the shared engine's connection
+    pool when the full suite runs together (surfaces later as "attached to a different
+    loop" errors and a subsequent TooManyConnectionsError cascade) — the throwaway
+    engine below still isolates the RLS-error connection from the shared pool without
+    needing a second event loop to do it.
     """
     engine = create_async_engine(get_settings().APP_DATABASE_URL)
     session_maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -104,7 +112,6 @@ async def test_rls_blocks_writes_with_no_session_context():
         await engine.dispose()
 
 
-@pytest.mark.asyncio
 async def test_tenant_location_user_roundtrip_and_isolation():
     """Acceptance criteria: insert a tenant + location + user (user_id, not email) and
     read it back through an async session; also proves RLS tenant isolation holds.
@@ -158,7 +165,6 @@ async def test_tenant_location_user_roundtrip_and_isolation():
         assert rows == []
 
 
-@pytest.mark.asyncio
 async def test_item_section_price_fallback_and_override():
     """Acceptance criteria: an item with no item_section_prices row resolves to
     items.price; adding an override for one section changes only that section's price.
