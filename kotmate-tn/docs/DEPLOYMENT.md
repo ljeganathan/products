@@ -152,30 +152,40 @@ you have two options:
 - **Manual**: `ssh root@187.127.129.35 "cd ~/products/kotmate-tn && bash scripts/deploy.sh"`
   from PowerShell, or open a normal SSH session and run it there directly.
 
-## 6. CI/CD — gated deploy job (not yet wired up)
+## 6. CI/CD — gated deploy job
 
-storemate-tn's equivalent workflow lives at
-`ljeganathan/products/.github/workflows/storemate-tn-deploy.yml` (root of
-the monorepo — GitHub Actions only reads workflows from a repo's root).
-KOTMate TN currently only has the CI-only workflow
-(`.github/workflows/kotmate-tn-ci.yml`, no deploy job) — adding the deploy
-job means replacing it with a combined "CI & Deploy" workflow, mirroring
-storemate-tn-deploy.yml's shape:
+The workflow that actually runs on GitHub lives at
+`ljeganathan/products/.github/workflows/kotmate-tn-deploy.yml` (root of the
+monorepo — GitHub Actions only reads workflows from a repo's root), replacing
+the old CI-only `kotmate-tn-ci.yml`. It's a combined "CI & Deploy" workflow,
+same shape as storemate-tn-deploy.yml in the same directory:
 
-- Same `backend`/`frontend` test jobs already in `kotmate-tn-ci.yml`.
-- A `deploy` job gated on a GitHub **environment** named `production` with a
-  required reviewer (so every deploy pauses for a manual click) — the same
-  environment storemate-tn's deploy job already uses; adding kotmate-tn's
-  secrets to it doesn't disturb storemate-tn's own secrets.
-- New repo secrets (prefixed `KOTMATE_`, mirroring storemate-tn's own
-  `STOREMATE_*` naming): `KOTMATE_DEPLOY_HOST`, `KOTMATE_DEPLOY_USER`,
-  `KOTMATE_DEPLOY_SSH_KEY`, `KOTMATE_DEPLOY_PATH` (`~/products/kotmate-tn`
-  on this VPS).
+- Same `backend`/`frontend` test jobs as before.
+- A `deploy` job, gated on the GitHub **environment** named `production`
+  (already configured on this repo with a required reviewer for
+  storemate-tn's own deploy job — every deploy pauses for a manual click).
+  Runs after both test jobs pass, only on a push to `main`.
 
-This is a deliberate follow-up step, not part of this scaffolding — it
-touches the shared `products` repo root (outside `kotmate-tn/`) and needs
-new secrets configured before it can run, so it's done as its own explicit
-change once you're ready.
+The workflow file is already pushed, but it can't actually deploy until
+these repo secrets exist — until then, the `deploy` job just fails at the
+SSH step (harmless: `backend`/`frontend` CI still runs and passes normally).
+One-time setup on `ljeganathan/products` (Settings, not code):
+
+1. Settings → Environments → `production` should already exist (confirmed
+   set up for storemate-tn) — if not, create it and add a required reviewer.
+2. Settings → Environments → `production` → Environment secrets → add:
+   - `KOTMATE_DEPLOY_HOST` — `187.127.129.35`
+   - `KOTMATE_DEPLOY_USER` — `root` (this VPS only has a root account, same
+     as storemate-tn's own deploy user)
+   - `KOTMATE_DEPLOY_SSH_KEY` — private half of a **dedicated deploy-only**
+     keypair (`ssh-keygen -t ed25519 -f kotmate_deploy_key -N ""`); add the
+     public half to `~/.ssh/authorized_keys` for `root` on the VPS. Don't
+     reuse a personal key.
+   - `KOTMATE_DEPLOY_PATH` — `~/products/kotmate-tn` (adjust if the clone
+     path on the VPS differs — see §1)
+
+Once those 4 secrets exist: merging to `main` runs tests, waits for
+approval, then SSHes in and runs `scripts/deploy.sh`.
 
 ## 7. Backups (`scripts/backup_db.sh`)
 

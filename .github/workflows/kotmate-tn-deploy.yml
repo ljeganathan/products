@@ -2,10 +2,11 @@
 # monorepo's root (required: Actions only reads .github/workflows/ from a repo's
 # root) and is path-filtered to only trigger on changes under kotmate-tn/. Mirrors
 # the jobs documented in kotmate-tn/.github/workflows/ci.yml (kept there as the
-# per-product reference, from before it moved into this monorepo), adapted for the
-# monorepo layout. No deploy job yet — KOTMate TN hasn't reached its deploy phase
-# (CLAUDE.md §12 Phase 12), unlike StoreMate TN's workflow in this same directory.
-name: KOTMate TN — CI
+# per-product reference) plus the deploy step, adapted for the monorepo layout —
+# same shape as storemate-tn-deploy.yml in this same directory. Replaces the old
+# kotmate-tn-ci.yml now that KOTMate TN has reached its deploy phase
+# (kotmate-tn/docs/DEPLOYMENT.md).
+name: KOTMate TN — CI & Deploy
 
 on:
   push:
@@ -66,3 +67,25 @@ jobs:
       - run: npm install
       - run: npm run lint
       - run: npm run build
+
+  deploy:
+    name: Deploy to Hostinger VPS
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Gates this on manual approval via the "production" environment (already
+    # configured on this repo for storemate-tn's own deploy job — required
+    # reviewer applies here too, adding KOTMATE_* secrets to it doesn't touch
+    # storemate-tn's STOREMATE_* secrets). See kotmate-tn/docs/DEPLOYMENT.md
+    # §6 for the one-time secrets setup this needs before it can actually run.
+    environment: production
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.KOTMATE_DEPLOY_HOST }}
+          username: ${{ secrets.KOTMATE_DEPLOY_USER }}
+          key: ${{ secrets.KOTMATE_DEPLOY_SSH_KEY }}
+          script: |
+            cd ${{ secrets.KOTMATE_DEPLOY_PATH }}
+            bash scripts/deploy.sh
