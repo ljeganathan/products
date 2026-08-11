@@ -209,11 +209,15 @@ export function TableWaiterBar({
   const currentWaiter = waiters.find((w) => w.id === waiterId);
 
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-surface-2 px-4 py-2">
+    // Table/customer/waiter selectors don't fit a phone-width screen side by side —
+    // this scrolls horizontally instead of overlapping/clipping each other (found
+    // during real-device testing), same pattern as the admin tables' overflow fix.
+    // `shrink-0` on each child stops flex from squeezing them into an unreadable mess.
+    <div className="flex items-center gap-2 overflow-x-auto border-b border-border bg-surface-2 px-4 py-2">
       <button
         type="button"
         onClick={() => setPickerOpen("table")}
-        className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 transition-colors hover:border-accent"
+        className="flex shrink-0 items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 transition-colors hover:border-accent"
       >
         <span>🍽️</span>
         <span className="text-xl font-black leading-none tracking-tight">
@@ -245,7 +249,7 @@ export function TableWaiterBar({
         type="button"
         onClick={() => !waiterLocked && setPickerOpen("waiter")}
         disabled={waiterLocked}
-        className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors disabled:cursor-default ${
+        className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors disabled:cursor-default ${
           waiterLocked
             ? "border-gold bg-gold-soft text-gold opacity-90"
             : currentWaiter

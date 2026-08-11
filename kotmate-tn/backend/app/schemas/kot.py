@@ -23,6 +23,7 @@ class KotSendResponse(BaseModel):
     status: str
     printed: bool
     print_job: PrintJobPayload | None = None
+    print_error: str | None = None
 
 
 class KotTicketStatusUpdate(BaseModel):

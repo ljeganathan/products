@@ -99,10 +99,12 @@ async def reprint_tenant_bill(
     db: AsyncSession = Depends(get_db),
 ) -> BillResponse:
     bill = await get_bill_or_404(db, current_user.tenant_id, bill_id)
-    printed, print_job = await reprint_bill(db, current_user.tenant_id, bill)
+    printed, print_job, print_error = await reprint_bill(db, current_user.tenant_id, bill)
     # Build the response before committing — `require_tenant_scope`'s RLS var is
     # SET LOCAL (transaction-scoped, see deps.py), so it's gone once this transaction
     # ends (Phase 08's kot.py hit the identical bug in set_ticket_status).
-    response = await build_bill_response(db, bill, printed=printed, print_job=print_job)
+    response = await build_bill_response(
+        db, bill, printed=printed, print_job=print_job, print_error=print_error
+    )
     await db.commit()
     return response

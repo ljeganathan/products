@@ -31,6 +31,7 @@ from app.models import (
 )
 from app.printing.base import BillLine, BillRenderData
 from app.printing.dispatcher import dispatch_bill_print
+from app.printing.network_transport import send_raw_bytes_over_network
 from app.schemas.bills import (
     BillCreateRequest,
     BillItemResponse,
@@ -401,7 +402,7 @@ async def _dispatch_print_for_bill(
     plan_features: dict,
     lines: list[BillLine],
     waiter: Waiter | None = None,
-) -> tuple[bool, PrintJobPayload | None]:
+) -> tuple[bool, PrintJobPayload | None, str | None]:
     """Bill printing is available on every plan tier (CLAUDE.md §6, unlike Phase 08's
     KOT printing which is Pro/Pro Max only) — gating here is purely "is a bill printer
     registered for this location", the same shape as `kot_service.send_kot`'s printer
@@ -418,7 +419,7 @@ async def _dispatch_print_for_bill(
         )
     ).scalars().first()
     if printer is None:
-        return False, None
+        return False, None, None
 
     hotel = (
         await session.execute(select(HotelMaster).where(HotelMaster.location_id == location_id))
@@ -481,18 +482,28 @@ async def _dispatch_print_for_bill(
     # "usb" and "local_agent" printers are physically attached to the counter machine,
     # not this backend container — hand the rendered bytes back to the frontend so it
     # can push them to the local print-agent (CLAUDE.md §10) instead of the backend
-    # trying (and failing) to reach hardware on someone else's LAN/USB bus.
-    print_job = (
-        PrintJobPayload(
+    # trying (and failing) to reach hardware on someone else's LAN/USB bus. "network"/
+    # "wifi" printers, by contrast, are reachable from here directly over the LAN, so
+    # the backend sends the raw bytes itself via a plain TCP socket (port 9100
+    # "raw"/JetDirect convention) rather than round-tripping through the browser.
+    print_job: PrintJobPayload | None = None
+    print_error: str | None = None
+    if printer.connection_type in ("usb", "local_agent"):
+        print_job = PrintJobPayload(
             printer_id=printer.id,
             connection_type=printer.connection_type,
             connection_details=printer.connection_details or {},
             data_base64=base64.b64encode(content).decode("ascii"),
         )
-        if printer.connection_type in ("usb", "local_agent")
-        else None
-    )
-    return True, print_job
+        printed = True
+    elif printer.connection_type in ("network", "wifi"):
+        details = printer.connection_details or {}
+        print_error = send_raw_bytes_over_network(details.get("ip_address"), details.get("port"), content)
+        printed = print_error is None
+    else:
+        printed = False
+        print_error = f"{printer.connection_type.replace('_', ' ').title()} printing isn't supported yet."
+    return printed, print_job, print_error
 
 
 async def finalize_bill(
@@ -607,15 +618,17 @@ async def finalize_bill(
         BillLine(p.item.name_en, p.item.name_ta, p.quantity, p.unit_price, p.line_total)
         for p in totals.priced_items
     ]
-    printed, print_job = (
+    printed, print_job, print_error = (
         await _dispatch_print_for_bill(
             session, tenant_id, order.location_id, bill, section, table, plan_features, lines, waiter
         )
         if not req.skip_print
-        else (False, None)
+        else (False, None, None)
     )
 
-    return await build_bill_response(session, bill, printed=printed, print_job=print_job)
+    return await build_bill_response(
+        session, bill, printed=printed, print_job=print_job, print_error=print_error
+    )
 
 
 async def get_bill_or_404(session: AsyncSession, tenant_id: uuid.UUID, bill_id: uuid.UUID) -> Bill:
@@ -653,7 +666,11 @@ async def search_bills(session: AsyncSession, tenant_id: uuid.UUID, params: Bill
 
 
 async def build_bill_response(
-    session: AsyncSession, bill: Bill, printed: bool = False, print_job: PrintJobPayload | None = None
+    session: AsyncSession,
+    bill: Bill,
+    printed: bool = False,
+    print_job: PrintJobPayload | None = None,
+    print_error: str | None = None,
 ) -> BillResponse:
     """Renders a persisted bill from its own stored/snapshotted fields — never
     recomputes tax/discount, so a reprint is guaranteed identical to the original
@@ -719,11 +736,14 @@ async def build_bill_response(
         payments=[PaymentResponse(method=p.method, amount=float(p.amount)) for p in payments],
         printed=printed,
         print_job=print_job,
+        print_error=print_error,
         created_at=bill.created_at,
     )
 
 
-async def reprint_bill(session: AsyncSession, tenant_id: uuid.UUID, bill: Bill) -> tuple[bool, PrintJobPayload | None]:
+async def reprint_bill(
+    session: AsyncSession, tenant_id: uuid.UUID, bill: Bill
+) -> tuple[bool, PrintJobPayload | None, str | None]:
     section = (
         await session.execute(select(SeatingSection).where(SeatingSection.id == bill.section_id))
     ).scalar_one()

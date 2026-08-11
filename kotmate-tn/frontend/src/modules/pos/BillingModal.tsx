@@ -123,9 +123,10 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
       }
       // Already dispatched server-side as part of finalize (skip_print=false) — for a
       // usb/local_agent printer that dispatch is just rendered bytes waiting on us to
-      // forward them, so do that now before returning to POS.
-      const warning = await dispatchPrintJob(bill.print_job);
-      onFinalized(warning ?? undefined);
+      // forward them, so do that now before returning to POS. A network/wifi printer
+      // was already attempted server-side; `print_error` carries why if it failed.
+      const warning = (await dispatchPrintJob(bill.print_job)) ?? bill.print_error ?? undefined;
+      onFinalized(warning);
     },
     onError: (err) =>
       setError(axios.isAxiosError(err) ? String(err.response?.data?.detail ?? err.message) : "Billing failed"),
@@ -134,8 +135,8 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
   const printMutation = useMutation({
     mutationFn: () => reprintBill(finalizedBill!.id),
     onSuccess: async (bill) => {
-      const warning = await dispatchPrintJob(bill.print_job);
-      onFinalized(warning ?? undefined);
+      const warning = (await dispatchPrintJob(bill.print_job)) ?? bill.print_error ?? undefined;
+      onFinalized(warning);
     },
   });
 

@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import type { BillPrintJob } from "@/modules/pos/billsApi";
 
 export const PRINTER_TARGETS = ["kot", "bill"] as const;
 export const PRINTER_TYPES = ["thermal", "dotmatrix"] as const;
@@ -51,4 +52,23 @@ export async function createPrinter(payload: PrinterCreatePayload): Promise<Prin
 
 export async function updatePrinter(id: string, payload: PrinterUpdatePayload): Promise<Printer> {
   return (await api.patch<Printer>(`/api/v1/printers/${id}`, payload)).data;
+}
+
+export interface PrinterTestPrintPayload {
+  printer_type: string;
+  connection_type: string;
+  connection_details?: Record<string, unknown>;
+  paper_width_mm?: number | null;
+}
+
+// usb/local_agent connections get rendered bytes back for the browser to dispatch
+// itself (lib/printDispatch.ts) — `printed` is only ever true here for network/wifi,
+// where the backend confirmed delivery itself.
+export interface PrinterTestPrintResult {
+  printed: boolean;
+  print_job: BillPrintJob | null;
+}
+
+export async function testPrintPrinter(payload: PrinterTestPrintPayload): Promise<PrinterTestPrintResult> {
+  return (await api.post<PrinterTestPrintResult>("/api/v1/printers/test-print", payload)).data;
 }

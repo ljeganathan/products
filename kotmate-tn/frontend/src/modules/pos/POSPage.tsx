@@ -3,6 +3,7 @@ import axios from "axios";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
+import logoMark from "@/assets/logo-mark.png";
 import { dispatchPrintJob } from "@/lib/printDispatch";
 import { formatINR } from "@/lib/utils";
 import { listCategories } from "@/modules/admin/categoriesApi";
@@ -128,6 +129,7 @@ export function POSPage() {
   const [showKotTickets, setShowKotTickets] = useState(false);
   const [showBilling, setShowBilling] = useState(false);
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [kotSending, setKotSending] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [pendingSectionChange, setPendingSectionChange] = useState<{
@@ -466,8 +468,9 @@ export function POSPage() {
       // usb/local_agent KOT printers only get rendered bytes back from the backend —
       // it can't reach that printer itself (it's on the counter/kitchen machine, not
       // the server) — so forward them to the local print-agent or WebUSB here, same as
-      // the POS billing flow (lib/printDispatch.ts).
-      const printWarning = await dispatchPrintJob(result.print_job);
+      // the POS billing flow (lib/printDispatch.ts). A network/wifi printer was already
+      // attempted server-side; `print_error` carries why if it failed.
+      const printWarning = (await dispatchPrintJob(result.print_job)) ?? result.print_error ?? undefined;
       // Order stays "open" server-side (still reachable via KOT Tickets or by
       // re-picking the same table+customer) — only the local draft/screen clears,
       // the same pattern handleHold already uses, so the cashier is immediately
@@ -581,9 +584,7 @@ export function POSPage() {
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
       <header className="flex items-center gap-2.5 border-b border-border bg-surface px-4 py-2 shadow-pos">
         <div className="mr-1 hidden items-center gap-2 border-r border-border pr-3 sm:flex">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-emerald-900 text-[11px] font-extrabold text-accent-foreground">
-            KM
-          </span>
+          <img src={logoMark} alt="KOTMate TN" className="h-7 w-7 object-contain" />
           <div className="leading-tight">
             <p className="truncate text-base font-extrabold" title={meData?.company_name ?? undefined}>
               {meData?.company_name ?? "POS"}
@@ -707,30 +708,85 @@ export function POSPage() {
           </label>
         </div>
 
-        {(role === "pos_user" || role === "tenant_admin") && (
+        {/* KOT Tickets / Recall / Dashboard all fit fine on tablet+, but on a phone
+            they were the reason the header overflowed and pushed Dashboard (and
+            sometimes Recall too) off-screen with no way to reach them at all — found
+            during real-device testing. Below `md` they collapse into the "⋮" menu. */}
+        <div className="hidden items-center gap-2.5 md:flex">
+          {(role === "pos_user" || role === "tenant_admin") && (
+            <button
+              type="button"
+              onClick={() => setShowKotTickets(true)}
+              className="flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 text-xs font-bold text-ink-soft hover:border-accent hover:text-accent"
+            >
+              🍳 KOT Tickets
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => setShowKotTickets(true)}
+            onClick={() => setShowRecall(true)}
             className="flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 text-xs font-bold text-ink-soft hover:border-accent hover:text-accent"
           >
-            🍳 KOT Tickets
+            ↺ Recall
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setShowRecall(true)}
-          className="flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 text-xs font-bold text-ink-soft hover:border-accent hover:text-accent"
-        >
-          ↺ Recall
-        </button>
-        {(role === "pos_user" || role === "tenant_admin") && (
-          <Link
-            to="/dashboard"
-            className="flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 text-xs font-bold text-ink-soft hover:border-accent hover:text-accent"
+          {(role === "pos_user" || role === "tenant_admin") && (
+            <Link
+              to="/dashboard"
+              className="flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 text-xs font-bold text-ink-soft hover:border-accent hover:text-accent"
+            >
+              📊 Dashboard
+            </Link>
+          )}
+        </div>
+
+        <div className="relative md:hidden">
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen((v) => !v)}
+            aria-label="More actions"
+            className="flex min-h-9 min-w-9 items-center justify-center rounded-lg border border-border bg-surface-2 text-base font-bold text-ink-soft hover:border-accent hover:text-accent"
           >
-            📊 Dashboard
-          </Link>
-        )}
+            ⋮
+          </button>
+          {mobileMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setMobileMenuOpen(false)} />
+              <div className="absolute right-0 top-full z-50 mt-1.5 flex w-44 flex-col gap-1 rounded-lg border border-border bg-surface p-1.5 shadow-pos">
+                {(role === "pos_user" || role === "tenant_admin") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowKotTickets(true);
+                      setMobileMenuOpen(false);
+                    }}
+                    className="flex min-h-9 items-center gap-2 rounded-md px-2.5 text-left text-xs font-bold text-ink-soft hover:bg-surface-2"
+                  >
+                    🍳 KOT Tickets
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRecall(true);
+                    setMobileMenuOpen(false);
+                  }}
+                  className="flex min-h-9 items-center gap-2 rounded-md px-2.5 text-left text-xs font-bold text-ink-soft hover:bg-surface-2"
+                >
+                  ↺ Recall
+                </button>
+                {(role === "pos_user" || role === "tenant_admin") && (
+                  <Link
+                    to="/dashboard"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="flex min-h-9 items-center gap-2 rounded-md px-2.5 text-xs font-bold text-ink-soft hover:bg-surface-2"
+                  >
+                    📊 Dashboard
+                  </Link>
+                )}
+              </div>
+            </>
+          )}
+        </div>
 
         <UserMenu />
       </header>

@@ -1,11 +1,32 @@
+from datetime import datetime
+
 from app.printing.base import (
     BillRenderData,
     KotTicketRenderData,
     format_bill_text_lines,
     format_kot_text_lines,
+    line_chars_for_paper_width,
 )
 
 _FORM_FEED = "\f"
+
+
+def render_test_print(paper_width_mm: int | None) -> str:
+    """Plain-text counterpart to `escpos_thermal.render_test_print` — no bold/size
+    control codes, just the same content for the Printers settings "Test Print" button.
+    """
+    line_width = line_chars_for_paper_width(paper_width_mm)
+    sep = "-" * line_width
+    lines = [
+        "KOTMate TN",
+        "Test Print",
+        sep,
+        "If you can read this, the",
+        "printer is set up correctly.",
+        sep,
+        datetime.now().strftime("%d-%b-%Y %I:%M %p"),
+    ]
+    return "\n".join(lines) + "\n" + _FORM_FEED
 
 
 def render_kot(ticket: KotTicketRenderData) -> str:

@@ -56,7 +56,7 @@ function groupTicketsByOrder(tickets: ActiveKotTicket[]): GroupedTicket[] {
 export function KotTicketsPopup({ onSelectOrder, onClose }: KotTicketsPopupProps) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["kot-tickets-active"],
-    queryFn: listActiveKotTickets,
+    queryFn: () => listActiveKotTickets(),
     retry: false,
   });
   const grouped = useMemo(() => (data ? groupTicketsByOrder(data) : undefined), [data]);

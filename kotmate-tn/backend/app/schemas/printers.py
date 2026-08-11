@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import PRINTER_CONNECTION_TYPES, PRINTER_TARGETS, PRINTER_TYPES
+from app.schemas.printing import PrintJobPayload
 
 
 class PrinterCreateRequest(BaseModel):
@@ -67,6 +68,40 @@ class PrinterUpdateRequest(BaseModel):
         if v is not None and v not in PRINTER_CONNECTION_TYPES:
             raise ValueError(f"connection_type must be one of {PRINTER_CONNECTION_TYPES}")
         return v
+
+
+class PrinterTestPrintRequest(BaseModel):
+    """Backs the Printers settings page's "Test Print" button — takes the same shape as
+    `PrinterCreateRequest` rather than a saved printer id, so it works while adding a
+    brand-new printer (not yet saved) just as well as editing an existing one.
+    """
+
+    printer_type: str
+    connection_type: str
+    connection_details: dict = Field(default_factory=dict)
+    paper_width_mm: int | None = Field(default=None, gt=0)
+
+    @field_validator("printer_type")
+    @classmethod
+    def _printer_type_valid(cls, v: str) -> str:
+        if v not in PRINTER_TYPES:
+            raise ValueError(f"printer_type must be one of {PRINTER_TYPES}")
+        return v
+
+    @field_validator("connection_type")
+    @classmethod
+    def _connection_type_valid(cls, v: str) -> str:
+        if v not in PRINTER_CONNECTION_TYPES:
+            raise ValueError(f"connection_type must be one of {PRINTER_CONNECTION_TYPES}")
+        return v
+
+
+class PrinterTestPrintResponse(BaseModel):
+    # True only when the backend itself confirmed delivery (network/wifi). For
+    # usb/local_agent printers this is always False and the browser must dispatch
+    # `print_job` (lib/printDispatch.ts) before it knows whether the test actually printed.
+    printed: bool
+    print_job: PrintJobPayload | None = None
 
 
 class PrinterResponse(BaseModel):

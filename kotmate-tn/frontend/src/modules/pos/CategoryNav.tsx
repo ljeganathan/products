@@ -43,7 +43,11 @@ export function CategoryNav({ categories, activeCategoryId, onSelect, variant }:
 
   if (variant === "rail") {
     return (
-      <nav className="flex w-[92px] flex-none flex-col gap-1.5 overflow-y-auto border-r border-border bg-surface p-2">
+      // Desktop-only (CLAUDE.md §9: tablet/mobile both use the horizontal "strip"
+      // variant instead) — without `hidden lg:flex` this rendered unconditionally,
+      // showing alongside the strip variant below `lg` (POSPage.tsx wraps that one in
+      // `lg:hidden`) and wasting a fixed 92px of width on a phone/tablet screen.
+      <nav className="hidden w-[92px] flex-none flex-col gap-1.5 overflow-y-auto border-r border-border bg-surface p-2 lg:flex">
         {items.map((c, index) => (
           <button
             key={c.id}

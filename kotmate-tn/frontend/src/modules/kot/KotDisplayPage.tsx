@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import logoMark from "@/assets/logo-mark.png";
+import { playNewTicketSound } from "@/lib/notifySound";
 import { listItems } from "@/modules/admin/itemsApi";
 import { listLocations } from "@/modules/admin/locationsApi";
 import { me } from "@/modules/auth/authApi";
@@ -40,12 +42,40 @@ export function KotDisplayPage() {
   const stockManagementOnPlan = meData?.features?.stock_management === true;
   const stockTrackingEnabled = meData?.stock_tracking_enabled === true;
 
-  const { data: locations = [] } = useQuery({ queryKey: ["tenant-locations"], queryFn: listLocations });
-  const location = locations[0];
+  const { data: locations = [], isLoading: locationsLoading } = useQuery({
+    queryKey: ["tenant-locations"],
+    queryFn: listLocations,
+  });
+  // Persisted per-device, same pattern as POSPage's location picker (POS-35) — a
+  // Kitchen Display is normally a fixed screen mounted at one physical kitchen, so it
+  // shouldn't need re-picking after every reload. This also fixes a real bug: the
+  // realtime `kot_ticket`/`item_stock` websocket is scoped strictly per location
+  // server-side (ws/manager.py), so silently defaulting to `locations[0]` meant a
+  // multi-location tenant's Kitchen Display could be subscribed to the wrong branch
+  // and never see new tickets arrive live, only via the 15s poll fallback.
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(() =>
+    localStorage.getItem("kot-location-id"),
+  );
+  const location = locations.find((l) => l.id === selectedLocationId) ?? locations[0];
+  useEffect(() => {
+    if (location && location.id !== selectedLocationId) {
+      setSelectedLocationId(location.id);
+      localStorage.setItem("kot-location-id", location.id);
+    }
+  }, [location, selectedLocationId]);
+
+  function handleLocationChange(nextId: string) {
+    localStorage.setItem("kot-location-id", nextId);
+    setSelectedLocationId(nextId);
+  }
 
   const { data: tickets = [], isLoading } = useQuery({
-    queryKey: ["kot-tickets-active"],
-    queryFn: listActiveKotTickets,
+    queryKey: ["kot-tickets-active", location?.id],
+    queryFn: () => listActiveKotTickets(location?.id),
+    // Wait for the locations list to resolve so this doesn't fire once unscoped (all
+    // locations) and then again once `location` settles — see the comment above on
+    // why an unscoped fetch also means an unscoped (wrong-branch) websocket otherwise.
+    enabled: !locationsLoading,
     refetchInterval: 15_000,
   });
 
@@ -56,6 +86,11 @@ export function KotDisplayPage() {
 
   useLocationSocket(location?.id, (msg) => {
     if (msg.type === "kot_ticket") {
+      // Only a brand-new ticket starts life with status "new" — a status-update
+      // broadcast (kitchen staff marking one preparing/ready) reuses the same message
+      // shape but never carries that value, so this is how a "new order" chime stays
+      // a chime for new orders instead of firing on every tap in this same screen.
+      if (msg.status === "new") playNewTicketSound();
       void queryClient.invalidateQueries({ queryKey: ["kot-tickets-active"] });
     } else if (msg.type === "item_stock") {
       const itemId = msg.item_id as string;
@@ -96,10 +131,22 @@ export function KotDisplayPage() {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
       <header className="flex items-center gap-2.5 border-b border-border bg-surface px-4 py-2.5 shadow-pos">
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-emerald-900 text-[11px] font-extrabold text-accent-foreground">
-          KM
-        </span>
+        <img src={logoMark} alt="KOTMate TN" className="h-7 w-7 object-contain" />
         <span className="text-[13px] font-extrabold leading-none">Kitchen Display</span>
+
+        {location && locations.length > 1 && (
+          <select
+            value={location.id}
+            onChange={(e) => handleLocationChange(e.target.value)}
+            className="min-h-8 max-w-[140px] truncate rounded-lg border border-border bg-surface-2 px-2 text-xs font-semibold text-ink-soft outline-none"
+          >
+            {locations.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name}
+              </option>
+            ))}
+          </select>
+        )}
 
         {stockManagementOnPlan && (
           <div className="ml-2 flex gap-1">

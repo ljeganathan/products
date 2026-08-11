@@ -69,6 +69,9 @@ export interface Bill extends BillTotals {
   payments: BillPayment[];
   printed: boolean;
   print_job: BillPrintJob | null;
+  // Set only when a network/wifi bill printer was registered and the backend's direct
+  // socket send to it failed — a message safe to show the cashier as-is.
+  print_error: string | null;
   created_at: string;
 }
 

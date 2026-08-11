@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { type FormEvent, useState } from "react";
 
+import { dispatchPrintJob } from "@/lib/printDispatch";
 import { isWebUSBSupported, pairPrinter } from "@/lib/webusbPrinter";
 import { listLocations } from "@/modules/admin/locationsApi";
 import {
@@ -13,6 +14,7 @@ import {
   type PrinterCreatePayload,
   createPrinter,
   listPrinters,
+  testPrintPrinter,
   updatePrinter,
 } from "@/modules/admin/printersApi";
 
@@ -130,35 +132,50 @@ export function PrinterFormModal({
     }
   }
 
+  function buildConnectionDetails(): Record<string, unknown> {
+    return form.connection_type === "network" || form.connection_type === "wifi"
+      ? { ip_address: form.ip_address, port: form.port }
+      : form.connection_type === "bluetooth"
+        ? { device_name: form.bluetooth_device_name }
+        : form.connection_type === "local_agent"
+          ? {
+              windows_printer_name: form.windows_printer_name,
+              ...(form.agent_port ? { agent_port: Number(form.agent_port) } : {}),
+            }
+          : form.connection_type === "usb"
+            ? {
+                usb_vendor_id: form.usb_vendor_id ? Number(form.usb_vendor_id) : undefined,
+                usb_product_id: form.usb_product_id ? Number(form.usb_product_id) : undefined,
+                usb_product_name: form.usb_product_name || undefined,
+              }
+            : {};
+  }
+
+  function resolvedPaperWidth(): number | null {
+    return widthOption === CUSTOM_WIDTH ? (customWidth ? Number(customWidth) : null) : Number(widthOption);
+  }
+
+  // Bluetooth transport isn't implemented yet (server and print-agent both), so there's
+  // nothing a Test Print could actually reach — kept disabled rather than pretending.
+  const canTestPrint =
+    form.connection_type === "network" || form.connection_type === "wifi"
+      ? Boolean(form.ip_address.trim())
+      : form.connection_type === "local_agent"
+        ? Boolean(form.windows_printer_name.trim())
+        : form.connection_type === "usb"
+          ? Boolean(form.usb_vendor_id)
+          : false;
+
   const mutation = useMutation({
     mutationFn: () => {
-      const connection_details =
-        form.connection_type === "network" || form.connection_type === "wifi"
-          ? { ip_address: form.ip_address, port: form.port }
-          : form.connection_type === "bluetooth"
-            ? { device_name: form.bluetooth_device_name }
-            : form.connection_type === "local_agent"
-              ? {
-                  windows_printer_name: form.windows_printer_name,
-                  ...(form.agent_port ? { agent_port: Number(form.agent_port) } : {}),
-                }
-              : form.connection_type === "usb"
-                ? {
-                    usb_vendor_id: form.usb_vendor_id ? Number(form.usb_vendor_id) : undefined,
-                    usb_product_id: form.usb_product_id ? Number(form.usb_product_id) : undefined,
-                    usb_product_name: form.usb_product_name || undefined,
-                  }
-                : {};
-      const paper_width_mm =
-        widthOption === CUSTOM_WIDTH ? (customWidth ? Number(customWidth) : null) : Number(widthOption);
       const payload: PrinterCreatePayload = {
         location_id: form.location_id,
         name: form.name,
         target: form.target,
         printer_type: form.printer_type,
         connection_type: form.connection_type,
-        connection_details,
-        paper_width_mm,
+        connection_details: buildConnectionDetails(),
+        paper_width_mm: resolvedPaperWidth(),
       };
       return editingPrinter ? updatePrinter(editingPrinter.id, payload) : createPrinter(payload);
     },
@@ -169,10 +186,40 @@ export function PrinterFormModal({
     onError: (err) => setError(apiErrorMessage(err, "Failed to save printer.")),
   });
 
+  const [testPrintNotice, setTestPrintNotice] = useState<string | null>(null);
+
+  const testPrintMutation = useMutation({
+    mutationFn: () =>
+      testPrintPrinter({
+        printer_type: form.printer_type,
+        connection_type: form.connection_type,
+        connection_details: buildConnectionDetails(),
+        paper_width_mm: resolvedPaperWidth(),
+      }),
+    onSuccess: async (result) => {
+      setError(null);
+      // usb/local_agent: the backend only rendered bytes, the browser has to actually
+      // deliver them (same path a real bill/KOT ticket uses, lib/printDispatch.ts).
+      // network/wifi: the backend already confirmed delivery by the time this resolves.
+      const warning = await dispatchPrintJob(result.print_job);
+      setTestPrintNotice(warning ?? "Test print sent — check the printer.");
+    },
+    onError: (err) => {
+      setTestPrintNotice(null);
+      setError(apiErrorMessage(err, "Test print failed."));
+    },
+  });
+
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
     mutation.mutate();
+  }
+
+  function handleTestPrint() {
+    setError(null);
+    setTestPrintNotice(null);
+    testPrintMutation.mutate();
   }
 
   return (
@@ -382,22 +429,36 @@ export function PrinterFormModal({
               {error}
             </p>
           )}
+          {testPrintNotice && !error && (
+            <p className="rounded-md bg-accent/10 px-3 py-2 text-sm text-accent-foreground">{testPrintNotice}</p>
+          )}
 
-          <div className="mt-2 flex justify-end gap-2">
+          <div className="mt-2 flex items-center justify-between gap-2">
             <button
               type="button"
-              onClick={onClose}
-              className="rounded-md border border-border px-4 py-2 text-sm font-semibold hover:bg-accent/10"
+              onClick={handleTestPrint}
+              disabled={testPrintMutation.isPending || !canTestPrint}
+              title={canTestPrint ? undefined : "Fill in this connection's details above first"}
+              className="rounded-md border border-accent px-4 py-2 text-sm font-semibold text-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Cancel
+              {testPrintMutation.isPending ? "Printing…" : "🖨️ Test Print"}
             </button>
-            <button
-              type="submit"
-              disabled={mutation.isPending || !form.location_id}
-              className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground disabled:opacity-60"
-            >
-              {mutation.isPending ? "Saving…" : editingPrinter ? "Save Changes" : "Add Printer"}
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md border border-border px-4 py-2 text-sm font-semibold hover:bg-accent/10"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={mutation.isPending || !form.location_id}
+                className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground disabled:opacity-60"
+              >
+                {mutation.isPending ? "Saving…" : editingPrinter ? "Save Changes" : "Add Printer"}
+              </button>
+            </div>
           </div>
         </form>
       </div>

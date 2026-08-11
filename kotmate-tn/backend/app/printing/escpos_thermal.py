@@ -1,8 +1,11 @@
+from datetime import datetime
+
 from app.printing.base import (
     BillRenderData,
     KotTicketRenderData,
     _PAYMENT_LABELS,
     format_inr,
+    line_chars_for_paper_width,
     two_column_lines,
 )
 from app.printing.qr import generate_qr_escpos
@@ -58,6 +61,27 @@ def _tamil_line(name_ta: str, max_width_px: int) -> bytes:
         + b"\n"
         + _LINE_SPACING_DEFAULT
     )
+
+
+def render_test_print(paper_width_mm: int | None) -> bytes:
+    """A short, self-contained ticket for the Printers settings page's "Test Print"
+    button — proves the registered connection actually reaches the physical printer
+    before a real bill/KOT ticket depends on it, independent of any tenant data.
+    """
+    line_width = line_chars_for_paper_width(paper_width_mm)
+    sep = _text("-" * line_width)
+    out = _INIT + _CENTER + _BOLD_ON + _SIZE_DOUBLE
+    out += _text("KOTMate TN")
+    out += _SIZE_NORMAL
+    out += _text("Test Print")
+    out += _BOLD_OFF
+    out += sep
+    out += _text("If you can read this,")
+    out += _text("the printer is set up correctly.")
+    out += sep
+    out += _text(datetime.now().strftime("%d-%b-%Y %I:%M %p"))
+    out += _LEFT
+    return out + b"\n\n" + _CUT
 
 
 def render_kot(ticket: KotTicketRenderData) -> bytes:

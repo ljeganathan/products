@@ -20,8 +20,8 @@ export function CustomerSelectorBar({ table, currentLabel, openOrders, onSelect 
   const labels = Array.from({ length: capacity }, (_, i) => `Customer-${i + 1}`);
 
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">Customer</span>
+    <div className="flex shrink-0 items-center gap-1.5">
+      <span className="shrink-0 text-[10px] font-extrabold uppercase tracking-wide text-ink-faint">Customer</span>
       {labels.map((label) => {
         const occupiedOrder = openOrders.find((o) => o.table_id === table.id && o.party_label === label);
         const isActive = currentLabel === label;
@@ -30,7 +30,7 @@ export function CustomerSelectorBar({ table, currentLabel, openOrders, onSelect 
             key={label}
             type="button"
             onClick={() => onSelect(resolveCustomerSlotSelection(table, label, openOrders))}
-            className={`relative rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-colors ${
+            className={`relative shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-colors ${
               isActive
                 ? "border-accent bg-accent-soft text-accent"
                 : occupiedOrder

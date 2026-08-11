@@ -101,6 +101,10 @@ class BillResponse(BillTotals):
     payments: list[PaymentResponse]
     printed: bool
     print_job: PrintJobPayload | None = None
+    # Set only for a "network"/"wifi" printer the backend tried and failed to reach —
+    # a message safe to show the cashier directly (PrintersPage's Test Print button and
+    # lib/printDispatch.ts's frontend-side failures use the same plain-message contract).
+    print_error: str | None = None
     created_at: datetime
 
 
