@@ -97,6 +97,25 @@ async def list_overdue_invoices(session: AsyncSession) -> list[InvoiceResponse]:
     return [_to_response(invoice, company_name) for invoice, company_name in rows]
 
 
+async def get_invoice_with_tenant(
+    session: AsyncSession, invoice_id: uuid.UUID
+) -> tuple[InvoiceResponse, Tenant]:
+    """Backs the PDF-download endpoint, which needs the full `Tenant` row (address,
+    email) for the "Bill To" block — every other read here only needs `company_name`.
+    """
+    row = (
+        await session.execute(
+            select(Invoice, Tenant)
+            .join(Tenant, Tenant.id == Invoice.tenant_id)
+            .where(Invoice.id == invoice_id)
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+    invoice, tenant = row
+    return _to_response(invoice, tenant.company_name), tenant
+
+
 async def mark_invoice_paid(session: AsyncSession, invoice_id: uuid.UUID) -> InvoiceResponse:
     invoice = (await session.execute(select(Invoice).where(Invoice.id == invoice_id))).scalar_one_or_none()
     if invoice is None:

@@ -1,5 +1,6 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 
+import logoFull from "@/assets/logo-full.png";
 import { cn } from "@/lib/utils";
 import { logout } from "@/modules/auth/authApi";
 import { useAuthStore } from "@/modules/auth/authStore";
@@ -30,8 +31,8 @@ export function PlatformShell() {
   return (
     <div className="flex min-h-screen w-screen bg-background text-foreground">
       <aside className="flex h-screen w-56 flex-none flex-col border-r border-border p-4">
-        <Link to="/platform" className="mb-1 text-lg font-bold">
-          KOTMate TN
+        <Link to="/platform" className="mb-1">
+          <img src={logoFull} alt="KOTMate TN" className="h-auto w-full max-w-[176px]" />
         </Link>
         <span className="mb-6 text-xs font-semibold uppercase tracking-wide text-chili">
           Platform Console

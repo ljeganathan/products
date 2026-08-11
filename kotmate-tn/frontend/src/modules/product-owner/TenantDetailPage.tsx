@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import axios from "axios";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -8,9 +9,20 @@ import {
   getTenant,
   resetTenantAdminPassword,
   type TenantDetail,
+  updateSubscriptionPeriod,
   updateSubscriptionStatus,
   updateTenant,
 } from "@/modules/product-owner/platformApi";
+
+// Mirrors the Dashboard's expiring-subscriptions alert and the Tenants list's own copy
+// of this logic (TenantsListPage.tsx) — red once lapsed, gold inside the 7-day window.
+function daysRemaining(currentPeriodEnd: string): number {
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const end = new Date(`${currentPeriodEnd}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((end.getTime() - today.getTime()) / msPerDay);
+}
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
@@ -49,6 +61,7 @@ export function TenantDetailPage() {
   const queryClient = useQueryClient();
   const [planCode, setPlanCode] = useState("");
   const [billingCycle, setBillingCycle] = useState("monthly");
+  const [expiryDate, setExpiryDate] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<EditableTenantFields | null>(null);
   const [resetResult, setResetResult] = useState<{ admin_login_id: string; temp_password: string } | null>(
@@ -73,6 +86,13 @@ export function TenantDetailPage() {
   const statusMutation = useMutation({
     mutationFn: (status: string) => updateSubscriptionStatus(tenantId!, status),
     onSuccess: invalidate,
+  });
+  const periodMutation = useMutation({
+    mutationFn: () => updateSubscriptionPeriod(tenantId!, expiryDate),
+    onSuccess: () => {
+      invalidate();
+      setExpiryDate("");
+    },
   });
   const activeMutation = useMutation({
     mutationFn: (is_active: boolean) => updateTenant(tenantId!, { is_active }),
@@ -331,6 +351,63 @@ export function TenantDetailPage() {
             {planMutation.isPending ? "Applying…" : "Apply"}
           </button>
         </div>
+      </div>
+
+      <div className="mt-6 rounded-lg border border-border p-4">
+        <h2 className="mb-3 text-sm font-semibold">Plan Expiry Date</h2>
+        <p className="mb-3 text-xs text-foreground/60">
+          Manually renew or correct this tenant's expiry date without changing their plan — a fresh
+          full-length period is set automatically whenever a plan change is applied above.
+        </p>
+        <div className="mb-3 flex items-center gap-2 text-sm">
+          <span className="text-foreground/60">Current:</span>
+          {tenant.current_period_end ? (
+            <span
+              className={
+                daysRemaining(tenant.current_period_end) < 0
+                  ? "font-semibold text-chili"
+                  : daysRemaining(tenant.current_period_end) <= 7
+                    ? "font-semibold text-gold"
+                    : "font-medium"
+              }
+            >
+              {tenant.current_period_end}
+              {daysRemaining(tenant.current_period_end) < 0
+                ? ` (expired ${-daysRemaining(tenant.current_period_end)}d ago)`
+                : daysRemaining(tenant.current_period_end) <= 7
+                  ? ` (${daysRemaining(tenant.current_period_end)}d left)`
+                  : ""}
+            </span>
+          ) : (
+            <span className="text-foreground/40">— no active subscription</span>
+          )}
+        </div>
+        <div className="flex items-end gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-foreground/70">New Expiry Date</label>
+            <input
+              type="date"
+              className="min-h-10 rounded-md border border-border bg-background px-3 text-sm"
+              value={expiryDate}
+              onChange={(e) => setExpiryDate(e.target.value)}
+            />
+          </div>
+          <button
+            type="button"
+            disabled={periodMutation.isPending || !expiryDate}
+            onClick={() => periodMutation.mutate()}
+            className="min-h-10 rounded-md bg-accent px-4 text-sm font-semibold text-accent-foreground disabled:opacity-60"
+          >
+            {periodMutation.isPending ? "Saving…" : "Set Expiry Date"}
+          </button>
+        </div>
+        {periodMutation.isError && (
+          <p className="mt-2 text-xs text-chili">
+            {axios.isAxiosError(periodMutation.error)
+              ? String(periodMutation.error.response?.data?.detail ?? periodMutation.error.message)
+              : "Failed to update expiry date."}
+          </p>
+        )}
       </div>
 
       <div className="mt-6 rounded-lg border border-border p-4">

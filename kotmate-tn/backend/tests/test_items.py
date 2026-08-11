@@ -416,9 +416,8 @@ async def test_top_sellers_backfills_from_recent_sales_when_none_pinned(
     unpinned = await _create_item(client, headers, category["id"], name_en="Chicken 65", price=150)
 
     location_id = (await client.get("/api/v1/locations", headers=headers)).json()[0]["id"]
-    section_id = next(
-        s["id"] for s in (await client.get("/api/v1/sections", headers=headers)).json() if s["name_en"] == "AC"
-    )
+    sections = (await client.get("/api/v1/sections", headers=headers)).json()
+    section_id = next(s["id"] for s in sections if s["name_en"] == "AC")
     order = (
         await client.post(
             "/api/v1/orders",

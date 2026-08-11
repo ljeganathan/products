@@ -8,7 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import CurrentUser, get_current_user, require_role, require_tenant_scope
 from app.db.session import get_db
 from app.models import Tenant
-from app.schemas.dashboard import DashboardSummaryResponse, LowStockItemsResponse, MultiLocationComparisonResponse
+from app.schemas.dashboard import (
+    DashboardSummaryResponse,
+    LowStockItemsResponse,
+    MultiLocationComparisonResponse,
+)
 from app.services.dashboard_service import dashboard_summary, low_stock_items, multi_location_comparison
 from app.services.stock_service import is_stock_tracking_enabled
 from app.services.tenant_onboarding import get_active_plan

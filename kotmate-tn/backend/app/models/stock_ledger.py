@@ -31,8 +31,12 @@ class StockLedger(UUIDPKMixin, TimestampMixin, Base):
     )
     change_qty: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[str] = mapped_column(String(20), nullable=False)
-    reference_order_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("orders.id"))
-    reference_bill_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("bills.id"))
+    reference_order_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("orders.id")
+    )
+    reference_bill_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("bills.id")
+    )
 
     __table_args__ = (
         tenant_composite_index("stock_ledger"),

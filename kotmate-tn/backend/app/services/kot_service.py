@@ -192,10 +192,13 @@ async def send_kot(
                 printed = True
             elif printer.connection_type in ("network", "wifi"):
                 details = printer.connection_details or {}
-                print_error = send_raw_bytes_over_network(details.get("ip_address"), details.get("port"), content)
+                print_error = send_raw_bytes_over_network(
+                    details.get("ip_address"), details.get("port"), content
+                )
                 printed = print_error is None
             else:
-                print_error = f"{printer.connection_type.replace('_', ' ').title()} printing isn't supported yet."
+                connection_label = printer.connection_type.replace("_", " ").title()
+                print_error = f"{connection_label} printing isn't supported yet."
 
     return KotSendResult(
         ticket=ticket,

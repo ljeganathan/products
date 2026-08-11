@@ -13,6 +13,7 @@ export interface TenantSummary {
   active_location_count: number;
   max_locations: number | null;
   admin_login_id: string | null;
+  current_period_end: string | null;
 }
 
 export interface TenantDetail extends TenantSummary {
@@ -25,7 +26,6 @@ export interface TenantDetail extends TenantSummary {
   state: string | null;
   pincode: string | null;
   current_period_start: string | null;
-  current_period_end: string | null;
   created_at: string;
 }
 
@@ -183,6 +183,14 @@ export async function updateSubscriptionStatus(id: string, status: string): Prom
   ).data;
 }
 
+export async function updateSubscriptionPeriod(id: string, currentPeriodEnd: string): Promise<TenantDetail> {
+  return (
+    await api.patch<TenantDetail>(`/api/v1/platform/tenants/${id}/subscription-period`, {
+      current_period_end: currentPeriodEnd,
+    })
+  ).data;
+}
+
 export async function listPlans(): Promise<Plan[]> {
   return (await api.get<Plan[]>("/api/v1/platform/plans")).data;
 }
@@ -222,4 +230,23 @@ export async function createInvoice(payload: InvoiceCreatePayload): Promise<Invo
 
 export async function markInvoicePaid(id: string): Promise<Invoice> {
   return (await api.patch<Invoice>(`/api/v1/platform/invoices/${id}/mark-paid`)).data;
+}
+
+// Invoices have no email-delivery mechanism server-side — this PDF download is the
+// actual way to hand an invoice to a tenant. Mirrors reportsApi.ts's downloadReportExport
+// (blob response, filename off Content-Disposition, temporary object URL).
+export async function downloadInvoicePdf(id: string, fallbackFilename: string): Promise<void> {
+  const response = await api.get(`/api/v1/platform/invoices/${id}/pdf`, { responseType: "blob" });
+  const disposition = String(response.headers["content-disposition"] ?? "");
+  const match = /filename="?([^"]+)"?/.exec(disposition);
+  const filename = match?.[1] ?? fallbackFilename;
+
+  const url = window.URL.createObjectURL(response.data as Blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
 }

@@ -1,11 +1,18 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.schemas.platform import InvoiceCreateRequest, InvoiceResponse
-from app.services.invoicing import create_invoice, list_invoices, list_overdue_invoices, mark_invoice_paid
+from app.services.invoice_pdf import render_invoice_pdf
+from app.services.invoicing import (
+    create_invoice,
+    get_invoice_with_tenant,
+    list_invoices,
+    list_overdue_invoices,
+    mark_invoice_paid,
+)
 
 router = APIRouter(prefix="/invoices", tags=["platform-invoices"])
 
@@ -31,6 +38,22 @@ async def list_invoices_endpoint(
 @router.get("/overdue", response_model=list[InvoiceResponse])
 async def list_overdue_invoices_endpoint(db: AsyncSession = Depends(get_db)) -> list[InvoiceResponse]:
     return await list_overdue_invoices(db)
+
+
+@router.get("/{invoice_id}/pdf")
+async def download_invoice_pdf(invoice_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> Response:
+    """Invoices have no email-delivery mechanism in this codebase — `status="sent"` set
+    at creation (services/invoicing.create_invoice) is only ever a status label, never a
+    dispatched email — so this PDF download is the actual way to hand an invoice to a
+    tenant.
+    """
+    invoice, tenant = await get_invoice_with_tenant(db, invoice_id)
+    pdf_bytes = render_invoice_pdf(invoice, tenant)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{invoice.invoice_number}.pdf"'},
+    )
 
 
 @router.patch("/{invoice_id}/mark-paid", response_model=InvoiceResponse)

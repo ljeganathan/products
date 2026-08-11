@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.models import Role, Tenant, User
 from app.schemas.platform import (
     ChangePlanRequest,
+    SubscriptionPeriodUpdate,
     SubscriptionStatusUpdate,
     TenantAdminPasswordResetResponse,
     TenantCreateRequest,
@@ -129,6 +130,28 @@ async def update_subscription_status(
     if subscription is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Tenant has no active subscription")
     subscription.status = payload.status
+    await db.commit()
+    await _reapply_platform_scope(db)
+    return await build_tenant_detail(db, tenant)
+
+
+@router.patch("/{tenant_id}/subscription-period", response_model=TenantDetail)
+async def update_subscription_period(
+    tenant_id: uuid.UUID, payload: SubscriptionPeriodUpdate, db: AsyncSession = Depends(get_db)
+) -> TenantDetail:
+    """Directly sets the active subscription's expiry date — a manual renewal/extension
+    or correction — without touching the plan or billing cycle, unlike `change-plan`
+    which always recomputes a fresh full-length period starting today.
+    """
+    tenant = await _get_tenant_or_404(db, tenant_id)
+    subscription = await get_active_subscription(db, tenant.id)
+    if subscription is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Tenant has no active subscription")
+    if payload.current_period_end < subscription.current_period_start:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Expiry date can't be before the current period's start date"
+        )
+    subscription.current_period_end = payload.current_period_end
     await db.commit()
     await _reapply_platform_scope(db)
     return await build_tenant_detail(db, tenant)

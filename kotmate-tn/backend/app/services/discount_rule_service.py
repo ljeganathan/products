@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -10,7 +10,7 @@ from app.schemas.discounts import DiscountRuleCreateRequest, DiscountRuleUpdateR
 
 
 def _today() -> date:
-    return datetime.now(timezone.utc).date()
+    return datetime.now(UTC).date()
 
 
 def _is_eligible(rule: DiscountRule, today: date) -> bool:
@@ -127,7 +127,9 @@ async def _validate_coupon_code_unique(
         )
 
 
-async def _validate_item_belongs_to_tenant(session: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID) -> None:
+async def _validate_item_belongs_to_tenant(
+    session: AsyncSession, tenant_id: uuid.UUID, item_id: uuid.UUID
+) -> None:
     item = (
         await session.execute(select(Item.id).where(Item.id == item_id, Item.tenant_id == tenant_id))
     ).scalar_one_or_none()

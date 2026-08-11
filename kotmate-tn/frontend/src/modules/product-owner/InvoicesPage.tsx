@@ -4,6 +4,7 @@ import { type FormEvent, useState } from "react";
 import { formatINR } from "@/lib/utils";
 import {
   createInvoice,
+  downloadInvoicePdf,
   listInvoices,
   listTenants,
   markInvoicePaid,
@@ -22,6 +23,7 @@ export function InvoicesPage() {
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]>("all");
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const { data: tenants = [] } = useQuery({ queryKey: ["tenants"], queryFn: listTenants });
   const { data: invoices = [], isLoading } = useQuery({
@@ -56,6 +58,15 @@ export function InvoicesPage() {
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     createMutation.mutate();
+  }
+
+  async function handleDownloadPdf(id: string, invoiceNumber: string) {
+    setDownloadingId(id);
+    try {
+      await downloadInvoicePdf(id, `${invoiceNumber}.pdf`);
+    } finally {
+      setDownloadingId(null);
+    }
   }
 
   const visibleInvoices = invoices.filter((inv) => {
@@ -196,16 +207,26 @@ export function InvoicesPage() {
                     <td className="px-3 py-2 text-foreground/70">{inv.issued_date}</td>
                     <td className="px-3 py-2 text-foreground/70">{inv.due_date}</td>
                     <td className="px-3 py-2 text-right">
-                      {inv.status !== "paid" && (
+                      <div className="flex justify-end gap-3">
                         <button
                           type="button"
-                          disabled={markPaidMutation.isPending}
-                          onClick={() => markPaidMutation.mutate(inv.id)}
+                          disabled={downloadingId === inv.id}
+                          onClick={() => void handleDownloadPdf(inv.id, inv.invoice_number)}
                           className="text-xs font-semibold text-accent hover:underline disabled:opacity-60"
                         >
-                          Mark Paid
+                          {downloadingId === inv.id ? "Downloading…" : "⬇ PDF"}
                         </button>
-                      )}
+                        {inv.status !== "paid" && (
+                          <button
+                            type="button"
+                            disabled={markPaidMutation.isPending}
+                            onClick={() => markPaidMutation.mutate(inv.id)}
+                            className="text-xs font-semibold text-accent hover:underline disabled:opacity-60"
+                          >
+                            Mark Paid
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

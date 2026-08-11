@@ -40,3 +40,14 @@ curl http://127.0.0.1:9123/health
 ```
 
 Should return `{"status": "ok", "agent": "kotmate-print-agent"}`.
+
+## Tests
+
+```
+pip install -r requirements-dev.txt
+pytest
+```
+
+Runs entirely without a real printer or Windows print queue — `ctypes.WinDLL` is mocked
+for the spooler-level tests, and the HTTP-layer tests run the real `Handler` on a
+background thread against an OS-assigned localhost port.

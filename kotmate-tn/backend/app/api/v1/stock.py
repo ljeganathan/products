@@ -21,7 +21,8 @@ from app.services.tenant_onboarding import get_active_plan
 router = APIRouter(prefix="/stock", tags=["stock"], dependencies=[Depends(require_tenant_scope)])
 
 _NOT_ON_PLAN = HTTPException(
-    status.HTTP_403_FORBIDDEN, "Stock management isn't available on your current plan. Upgrade to Pro to use it."
+    status.HTTP_403_FORBIDDEN,
+    "Stock management isn't available on your current plan. Upgrade to Pro to use it.",
 )
 _TOGGLE_OFF = HTTPException(
     status.HTTP_403_FORBIDDEN,

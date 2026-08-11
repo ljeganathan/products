@@ -20,7 +20,9 @@ def coerce_port(value: object) -> int:
         return DEFAULT_RAW_PORT
 
 
-def send_raw_bytes_over_network(ip_address: str | None, port: object, data: bytes, timeout: float = 5.0) -> str | None:
+def send_raw_bytes_over_network(
+    ip_address: str | None, port: object, data: bytes, timeout: float = 5.0
+) -> str | None:
     """Opens a raw TCP socket to a network/WiFi printer and writes `data` verbatim.
     Returns `None` on success, or a message safe to show the cashier on failure — never
     raises, since a print failure must never block a bill/KOT ticket that's already

@@ -245,7 +245,8 @@ def format_bill_text_lines(bill: BillRenderData) -> list[str]:
     # requested directly during manual testing.
     date_str = bill.created_at.strftime("%d-%b-%Y %I:%M %p")
     lines.extend(two_column_lines(bill.header_label, f"Bill #{bill.bill_number}", bill.line_width))
-    lines.extend(two_column_lines(f"Waiter: {bill.waiter_name}" if bill.waiter_name else "", date_str, bill.line_width))
+    waiter_label = f"Waiter: {bill.waiter_name}" if bill.waiter_name else ""
+    lines.extend(two_column_lines(waiter_label, date_str, bill.line_width))
     lines.append(sep)
 
     for line in bill.lines:
@@ -272,7 +273,8 @@ def format_bill_text_lines(bill: BillRenderData) -> list[str]:
             else:
                 lines.append(f"  {segment}")
     elif bill.discount_amount:
-        lines.append(f"{'Discount':<{label_w}}{'-' + format_inr(bill.discount_amount, symbol='Rs.'):>{amount_w}}")
+        discount_label = "-" + format_inr(bill.discount_amount, symbol="Rs.")
+        lines.append(f"{'Discount':<{label_w}}{discount_label:>{amount_w}}")
     lines.append(f"{'CGST':<{label_w}}{format_inr(bill.cgst_amount, symbol='Rs.'):>{amount_w}}")
     lines.append(f"{'SGST':<{label_w}}{format_inr(bill.sgst_amount, symbol='Rs.'):>{amount_w}}")
     round_off_label = (
@@ -285,7 +287,8 @@ def format_bill_text_lines(bill: BillRenderData) -> list[str]:
     lines.append(sep)
 
     for method, amount in bill.payments:
-        lines.append(f"{_PAYMENT_LABELS.get(method, method):<{label_w}}{format_inr(amount, symbol='Rs.'):>{amount_w}}")
+        method_label = _PAYMENT_LABELS.get(method, method)
+        lines.append(f"{method_label:<{label_w}}{format_inr(amount, symbol='Rs.'):>{amount_w}}")
 
     if bill.footer_message:
         lines.append(sep)

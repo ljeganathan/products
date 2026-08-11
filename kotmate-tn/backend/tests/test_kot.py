@@ -216,7 +216,9 @@ async def test_pro_max_dispatches_print_only_with_registered_printer(
             "name": "Kitchen Printer",
             "target": "kot",
             "printer_type": "thermal",
-            "connection_type": "network",
+            # usb rather than network — this test exercises the printer-registered
+            # dispatch flow itself, not real network reachability.
+            "connection_type": "usb",
         },
         headers=headers,
     )

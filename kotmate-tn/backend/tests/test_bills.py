@@ -420,7 +420,10 @@ async def test_skip_print_finalizes_without_printing_then_reprint_dispatches(
             "name": "Counter Bill Printer",
             "target": "bill",
             "printer_type": "thermal",
-            "connection_type": "network",
+            # usb rather than network — this test exercises the skip_print/reprint
+            # dispatch flow itself, not real network reachability (network/wifi
+            # transport is covered live against real hardware, not in this suite).
+            "connection_type": "usb",
         },
         headers=headers,
     )
@@ -545,7 +548,9 @@ async def test_bill_printer_dispatches_with_qr_when_upi_configured(
             "name": "Counter Bill Printer",
             "target": "bill",
             "printer_type": "thermal",
-            "connection_type": "network",
+            # usb rather than network — this test exercises the QR/dispatch logic
+            # itself, not real network reachability.
+            "connection_type": "usb",
         },
         headers=headers,
     )
@@ -570,6 +575,45 @@ async def test_bill_printer_dispatches_with_qr_when_upi_configured(
     )
     assert with_printer.status_code == 201
     assert with_printer.json()["printed"] is True
+
+
+async def test_unreachable_network_printer_reports_printed_false_with_error(
+    client: AsyncClient, tenant_admin: dict
+):
+    """Regression test for a real bug: a network/wifi printer used to be marked
+    `printed: true` unconditionally, even though nothing was ever sent to it (the
+    dispatcher only rendered and logged the bytes — see printing/dispatcher.py's
+    history). It must now actually attempt delivery and report failure honestly when
+    the printer is unreachable, with a cashier-safe `print_error` message.
+    """
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    await client.post(
+        "/api/v1/printers",
+        json={
+            "location_id": location_id,
+            "name": "Unreachable WiFi Printer",
+            "target": "bill",
+            "printer_type": "thermal",
+            "connection_type": "network",
+            "connection_details": {"ip_address": "10.255.255.1", "port": "9100"},
+        },
+        headers=headers,
+    )
+    order = await _order_with_200_subtotal(client, headers, location_id, section_id)
+
+    resp = await client.post(
+        "/api/v1/bills",
+        json={"order_id": order["id"], "payments": [{"method": "cash", "amount": 200.0}]},
+        headers=headers,
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["printed"] is False
+    assert body["print_job"] is None
+    assert body["print_error"] is not None
 
 
 async def test_double_billing_same_order_rejected(client: AsyncClient, tenant_admin: dict):

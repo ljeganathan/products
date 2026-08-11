@@ -82,6 +82,16 @@ class SubscriptionStatusUpdate(BaseModel):
         return v
 
 
+class SubscriptionPeriodUpdate(BaseModel):
+    """Manually sets a tenant's active subscription expiry date — e.g. a goodwill
+    extension or a correction — independent of `POST .../change-plan`, which always
+    recomputes a fresh full-length period starting today rather than adjusting the
+    existing one.
+    """
+
+    current_period_end: date
+
+
 class TenantUpdateRequest(BaseModel):
     company_name: str | None = Field(default=None, min_length=2, max_length=200)
     email: str | None = Field(default=None, max_length=200)
@@ -115,6 +125,9 @@ class TenantSummary(BaseModel):
     active_location_count: int
     max_locations: int | None
     admin_login_id: str | None
+    # Active subscription's expiry date — surfaced on the Tenants list too (not just the
+    # detail page) so an operator can spot an expiring/expired tenant without opening it.
+    current_period_end: date | None
 
 
 class TenantDetail(TenantSummary):
@@ -127,7 +140,6 @@ class TenantDetail(TenantSummary):
     state: str | None
     pincode: str | None
     current_period_start: date | None
-    current_period_end: date | None
     created_at: datetime
 
 

@@ -231,6 +231,7 @@ async def build_tenant_summary(session: AsyncSession, tenant: Tenant) -> TenantS
         active_location_count=active_location_count,
         max_locations=plan.max_locations if plan else None,
         admin_login_id=admin_user.user_id if admin_user else None,
+        current_period_end=subscription.current_period_end if subscription else None,
     )
 
 
@@ -248,6 +249,5 @@ async def build_tenant_detail(session: AsyncSession, tenant: Tenant) -> TenantDe
         state=tenant.state,
         pincode=tenant.pincode,
         current_period_start=subscription.current_period_start if subscription else None,
-        current_period_end=subscription.current_period_end if subscription else None,
         created_at=tenant.created_at,
     )

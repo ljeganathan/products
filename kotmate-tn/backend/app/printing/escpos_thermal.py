@@ -1,9 +1,9 @@
 from datetime import datetime
 
 from app.printing.base import (
+    _PAYMENT_LABELS,
     BillRenderData,
     KotTicketRenderData,
-    _PAYMENT_LABELS,
     format_inr,
     line_chars_for_paper_width,
     two_column_lines,
@@ -132,7 +132,9 @@ def render_bill(bill: BillRenderData) -> bytes:
     max_width_px = line_width * _PX_PER_CHAR
 
     out = _INIT
-    logo_raster = render_logo_to_escpos(bill.logo_image_bytes, max_width_px) if bill.logo_image_bytes else None
+    logo_raster = (
+        render_logo_to_escpos(bill.logo_image_bytes, max_width_px) if bill.logo_image_bytes else None
+    )
     if logo_raster:
         out += _CENTER + logo_raster + b"\n" + _LEFT
     else:
@@ -149,10 +151,11 @@ def render_bill(bill: BillRenderData) -> bytes:
     # Table/waiter (what staff/kitchen call out) on the left; bill#/date-time (what a
     # customer cross-checks) on the right — requested directly during manual testing.
     date_str = bill.created_at.strftime("%d-%b-%Y %I:%M %p")
-    for l in two_column_lines(bill.header_label, f"Bill #{bill.bill_number}", line_width):
-        out += _text(l)
-    for l in two_column_lines(f"Waiter: {bill.waiter_name}" if bill.waiter_name else "", date_str, line_width):
-        out += _text(l)
+    for header_line in two_column_lines(bill.header_label, f"Bill #{bill.bill_number}", line_width):
+        out += _text(header_line)
+    waiter_label = f"Waiter: {bill.waiter_name}" if bill.waiter_name else ""
+    for header_line in two_column_lines(waiter_label, date_str, line_width):
+        out += _text(header_line)
     out += sep
 
     for line in bill.lines:
@@ -175,7 +178,8 @@ def render_bill(bill: BillRenderData) -> bytes:
             else:
                 out += _text(f"  {segment}")
     elif bill.discount_amount:
-        out += _text(f"{'Discount':<{label_w}}{'-' + format_inr(bill.discount_amount, symbol='Rs.'):>{amount_w}}")
+        discount_label = "-" + format_inr(bill.discount_amount, symbol="Rs.")
+        out += _text(f"{'Discount':<{label_w}}{discount_label:>{amount_w}}")
     out += _text(f"{'CGST':<{label_w}}{format_inr(bill.cgst_amount, symbol='Rs.'):>{amount_w}}")
     out += _text(f"{'SGST':<{label_w}}{format_inr(bill.sgst_amount, symbol='Rs.'):>{amount_w}}")
     round_off_label = (
@@ -190,7 +194,8 @@ def render_bill(bill: BillRenderData) -> bytes:
     out += sep
 
     for method, amount in bill.payments:
-        out += _text(f"{_PAYMENT_LABELS.get(method, method):<{label_w}}{format_inr(amount, symbol='Rs.'):>{amount_w}}")
+        method_label = _PAYMENT_LABELS.get(method, method)
+        out += _text(f"{method_label:<{label_w}}{format_inr(amount, symbol='Rs.'):>{amount_w}}")
 
     if bill.footer_message:
         out += sep

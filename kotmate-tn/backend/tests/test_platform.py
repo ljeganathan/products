@@ -103,6 +103,47 @@ async def test_plan_change_reflected_in_me_features(client: AsyncClient, owner_h
     assert body["max_users"] is None  # Pro Max = unlimited
 
 
+async def test_set_subscription_period_end(client: AsyncClient, owner_headers: dict):
+    create_resp = await client.post(
+        "/api/v1/platform/tenants", json=_tenant_payload(), headers=owner_headers
+    )
+    tenant = create_resp.json()
+    assert tenant["current_period_end"] is not None
+
+    resp = await client.patch(
+        f"/api/v1/platform/tenants/{tenant['id']}/subscription-period",
+        json={"current_period_end": "2099-01-01"},
+        headers=owner_headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["current_period_end"] == "2099-01-01"
+    # Renewing the expiry doesn't touch the plan or the period's start date.
+    assert body["plan_code"] == tenant["plan_code"]
+    assert body["current_period_start"] == tenant["current_period_start"]
+
+    # The Tenants list surfaces the same field, not just the detail view.
+    listed = await client.get("/api/v1/platform/tenants", headers=owner_headers)
+    listed_tenant = next(t for t in listed.json() if t["id"] == tenant["id"])
+    assert listed_tenant["current_period_end"] == "2099-01-01"
+
+
+async def test_subscription_period_end_before_start_rejected(
+    client: AsyncClient, owner_headers: dict
+):
+    create_resp = await client.post(
+        "/api/v1/platform/tenants", json=_tenant_payload(), headers=owner_headers
+    )
+    tenant = create_resp.json()
+
+    resp = await client.patch(
+        f"/api/v1/platform/tenants/{tenant['id']}/subscription-period",
+        json={"current_period_end": "2000-01-01"},
+        headers=owner_headers,
+    )
+    assert resp.status_code == 400
+
+
 async def test_maintenance_mode_blocks_non_owner_login(client: AsyncClient, owner_headers: dict):
     create_resp = await client.post(
         "/api/v1/platform/tenants", json=_tenant_payload(), headers=owner_headers

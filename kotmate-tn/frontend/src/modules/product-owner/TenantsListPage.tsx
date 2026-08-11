@@ -5,6 +5,35 @@ import { PLAN_LABELS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { listTenants } from "@/modules/product-owner/platformApi";
 
+// Mirrors the Dashboard's expiring-subscriptions alert (PlatformDashboardPage.tsx):
+// red once lapsed, gold inside the same 7-day window, otherwise unremarkable.
+function daysRemaining(currentPeriodEnd: string): number {
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const end = new Date(`${currentPeriodEnd}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((end.getTime() - today.getTime()) / msPerDay);
+}
+
+function ExpiryBadge({ currentPeriodEnd }: { currentPeriodEnd: string | null }) {
+  if (!currentPeriodEnd) return <span className="text-foreground/40">—</span>;
+  const days = daysRemaining(currentPeriodEnd);
+  const urgent = days < 0;
+  const soon = days >= 0 && days <= 7;
+  return (
+    <span
+      className={cn(
+        "font-medium",
+        urgent ? "text-chili" : soon ? "text-gold" : "text-foreground/80",
+      )}
+    >
+      {currentPeriodEnd}
+      {urgent && <span className="ml-1.5 text-xs font-semibold">Expired {-days}d ago</span>}
+      {soon && <span className="ml-1.5 text-xs font-semibold">{days}d left</span>}
+    </span>
+  );
+}
+
 export function TenantsListPage() {
   const { data, isLoading, isError } = useQuery({ queryKey: ["tenants"], queryFn: listTenants });
 
@@ -34,6 +63,7 @@ export function TenantsListPage() {
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Users</th>
                 <th className="px-3 py-2">Locations</th>
+                <th className="px-3 py-2">Expires</th>
                 <th className="px-3 py-2">Admin Login</th>
               </tr>
             </thead>
@@ -71,6 +101,9 @@ export function TenantsListPage() {
                   </td>
                   <td className="px-3 py-2">
                     {tenant.active_location_count} / {tenant.max_locations ?? "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <ExpiryBadge currentPeriodEnd={tenant.current_period_end} />
                   </td>
                   <td className="px-3 py-2 text-foreground/70">{tenant.admin_login_id}</td>
                 </tr>
