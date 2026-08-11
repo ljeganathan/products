@@ -14,6 +14,12 @@ CMD ["npm", "run", "dev", "--", "--host"]
 # --- build: production static bundle ----------------------------------------
 FROM deps AS build
 WORKDIR /app
+# Empty string (default) bakes in same-origin relative API/WS paths — correct
+# as long as this image's own nginx (see nginx.conf) proxies /api, /uploads,
+# /ws to the backend, which is the standard prod topology (docs/DEPLOYMENT.md).
+# Only pass a real https://... value if the API is ever split onto its own domain.
+ARG VITE_API_URL=""
+ENV VITE_API_URL=$VITE_API_URL
 COPY . .
 RUN npm run build
 

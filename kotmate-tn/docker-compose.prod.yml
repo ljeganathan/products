@@ -1,0 +1,66 @@
+# Hostinger VPS production overrides. Combine with the base file and
+# docker-compose.traefik.yml (this VPS already runs n8n's own Traefik
+# instance, which storemate-tn also deploys behind — see docs/DEPLOYMENT.md):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     -f docker-compose.traefik.yml up -d --build postgres backend nginx
+#
+# Reads real secrets/domain from a root-level .env (see .env.example,
+# gitignored) via Compose's automatic ${VAR} substitution — this file must
+# never contain a real secret literal. Only what needs to differ from the
+# dev base file is overridden here.
+services:
+  postgres:
+    restart: always
+    ports: !override []
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+  backend:
+    # gunicorn manages a pool of uvicorn worker processes (auto-restarts a
+    # worker that dies) — BACKEND_WORKERS defaults to 2, a sensible fit for
+    # a shared VPS already running n8n and storemate-tn alongside this stack.
+    command: >-
+      gunicorn app.main:app
+      -k uvicorn.workers.UvicornWorker
+      --workers ${BACKEND_WORKERS:-2}
+      --bind 0.0.0.0:8000
+      --timeout 60
+      --access-logfile -
+      --error-logfile -
+    env_file: !override []
+    volumes: !override
+      - uploads_data:/app/uploads
+    environment:
+      ENV: production
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # kotmate_app is the non-superuser role RLS actually runs as (created
+      # by alembic/versions/a0b03cc2e4a0_create_non_superuser_app_role.py,
+      # which reads this same APP_DB_PASSWORD env var during `alembic upgrade`).
+      APP_DATABASE_URL: postgresql+asyncpg://kotmate_app:${APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      REFRESH_TOKEN_EXPIRE_DAYS: 7
+      CORS_ORIGINS: ${CORS_ORIGINS}
+    restart: always
+    ports: !override []
+
+  # This is the frontend's own prod-target nginx (already stubbed in
+  # docker-compose.yml) — it serves the built static bundle and proxies
+  # /api, /uploads, /ws to the backend container (frontend/nginx.conf), so
+  # it's the single origin Traefik needs to route to. Unlike a standalone
+  # deployment, no separate TLS-terminating nginx/certbot tier is needed
+  # here — that role is already played by the existing shared Traefik
+  # instance (docker-compose.traefik.yml).
+  nginx:
+    profiles: !override []
+    build:
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+    restart: always
+    ports: !override []
+
+volumes:
+  uploads_data:
