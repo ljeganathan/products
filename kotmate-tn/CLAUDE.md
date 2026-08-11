@@ -165,9 +165,9 @@ Number of `tenant_admin`/`pos_user` seats addable is capped per subscription tie
 
 | Tier | Price/month | Price/year (2 months free) | Locations included | Target |
 |---|---|---|---|---|
-| **Lite** | ₹999 | ₹9,990 | 1 | Small tea shops / single-counter eateries |
-| **Pro** | ₹2,499 | ₹24,990 | up to 2 | Mid-size restaurants, KOT printing needed |
-| **Pro Max** | ₹4,999 | ₹49,990 | up to 5 | Multi-branch hotels/restaurant chains |
+| **Lite** | ₹499 | ₹4,999 | 1 | Small tea shops / single-counter eateries |
+| **Pro** | ₹799 | ₹7,999 | up to 2 | Mid-size restaurants, KOT printing needed |
+| **Pro Max** | ₹1,499 | ₹14,999 | up to 5 | Multi-branch hotels/restaurant chains |
 
 Add-ons (all tiers unless noted): extra POS-user seat beyond cap ₹199/user/month · extra hotel location beyond plan cap (Pro/Pro Max only) ₹999/location/month · SMS/WhatsApp bill notifications ₹0.35/msg (future phase) · onboarding/data-migration one-time fee ₹2,999.
 
