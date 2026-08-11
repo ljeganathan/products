@@ -35,9 +35,13 @@ services:
     environment:
       ENV: production
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      # kotmate_app is the non-superuser role RLS actually runs as (created
-      # by alembic/versions/a0b03cc2e4a0_create_non_superuser_app_role.py,
-      # which reads this same APP_DB_PASSWORD env var during `alembic upgrade`).
+      # kotmate_app is the non-superuser role RLS actually runs as. The bare
+      # APP_DB_PASSWORD var (not just embedded in APP_DATABASE_URL below) is
+      # required as-is: alembic/versions/a0b03cc2e4a0_create_non_superuser_app_role.py
+      # reads it directly via os.environ during `alembic upgrade`, and without it
+      # present the role gets created with the dev-default password instead,
+      # silently diverging from APP_DATABASE_URL's real one.
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
       APP_DATABASE_URL: postgresql+asyncpg://kotmate_app:${APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
       JWT_SECRET: ${JWT_SECRET}
       JWT_ALGORITHM: HS256
