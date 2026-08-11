@@ -89,7 +89,7 @@ from app.services.tenant_onboarding import onboard_tenant  # noqa: E402
 from app.services.user_management import create_user  # noqa: E402
 from app.services.waiter_service import create_waiter  # noqa: E402
 
-DEMO_PASSWORD = "Demo@12345"
+DEMO_PASSWORD = "Demo@123"
 
 PLAN_HOTELS = [
     ("lite", "Lite Demo Hotel"),

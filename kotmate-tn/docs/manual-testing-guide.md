@@ -37,7 +37,7 @@ docker compose exec backend python -m scripts.seed_demo_data
 
 This creates **one hotel per subscription tier** and is safe to re-run any time — it
 tops up rather than duplicates (matched by company name / item code / table number /
-login handle), and resets every seeded login's password to `Demo@12345` on every run.
+login handle), and resets every seeded login's password to `Demo@123` on every run.
 Re-run it at the start of each testing session to guarantee fresh "today" bills for
 the Reports/Dashboard checks in §13.
 
@@ -81,6 +81,25 @@ it once — from `backend/` natively, or `docker compose exec backend` if using 
 (interactive — prompts for User ID/password; the seed script deliberately doesn't
 touch platform-admin accounts, since that's `create_superuser.py`'s job.)
 
+### Full reset (wipe everything back to just the 3 demo hotels)
+
+For a clean environment before a demo, or when accumulated ad-hoc testing tenants have
+made the Tenants list/dashboard noisy: wipe every tenant (cascades to every
+tenant-scoped table — orders, bills, items, users, printers, etc.) and every stray
+platform-admin test account, keeping exactly one clean `owner01` login, then re-seed.
+
+```
+docker compose exec postgres psql -U kotmate -d kotmate -c "DELETE FROM tenants;"
+docker compose exec postgres psql -U kotmate -d kotmate -c "DELETE FROM users WHERE tenant_id IS NULL AND user_id <> 'owner01';"
+docker compose exec backend python -m scripts.seed_demo_data
+```
+
+If `owner01` doesn't exist yet, create it first via `create_superuser.py` above (User
+ID `owner01`, password `Demo@123`) before running the `DELETE FROM users` line, or
+that line will leave you with zero product_owner logins. This is destructive — it
+deletes real data, not just seed data, so only run it against a dev/demo database you
+don't mind emptying.
+
 ## 2. Login Reference
 
 **URL (every role):** `http://localhost:5173/login` — a single **User ID** field
@@ -88,19 +107,22 @@ touch platform-admin accounts, since that's `create_superuser.py`'s job.)
 
 | Tenant | Role | User ID | Password |
 |---|---|---|---|
-| Lite Demo Hotel | Tenant Admin | `LDH-admin` | `Demo@12345` |
-| Lite Demo Hotel | Cashier | `LDH-cashier01` | `Demo@12345` |
-| Lite Demo Hotel | Waiter | `LDH-waiter01` | `Demo@12345` |
-| Pro Demo Hotel | Tenant Admin | `PDH-admin` | `Demo@12345` |
-| Pro Demo Hotel | Cashier | `PDH-cashier01` | `Demo@12345` |
-| Pro Demo Hotel | Waiter | `PDH-waiter01` | `Demo@12345` |
-| Pro Max Demo Hotel | Tenant Admin | `PMDH-admin` | `Demo@12345` |
-| Pro Max Demo Hotel | Cashier | `PMDH-cashier01` | `Demo@12345` |
-| Pro Max Demo Hotel | Waiter | `PMDH-waiter01` | `Demo@12345` |
-| Platform | Product Owner | *(whatever you chose in §1's `create_superuser` step)* | *(as chosen)* |
+| Lite Demo Hotel | Tenant Admin | `LDHadmin` | `Demo@123` |
+| Lite Demo Hotel | Cashier | `LDHcashier01` | `Demo@123` |
+| Lite Demo Hotel | Waiter | `LDHwaiter01` | `Demo@123` |
+| Pro Demo Hotel | Tenant Admin | `PDHadmin` | `Demo@123` |
+| Pro Demo Hotel | Cashier | `PDHcashier01` | `Demo@123` |
+| Pro Demo Hotel | Waiter | `PDHwaiter01` | `Demo@123` |
+| Pro Max Demo Hotel | Tenant Admin | `PMDHadmin` | `Demo@123` |
+| Pro Max Demo Hotel | Cashier | `PMDHcashier01` | `Demo@123` |
+| Pro Max Demo Hotel | Waiter | `PMDHwaiter01` | `Demo@123` |
+| Platform | Product Owner | `owner01` | `Demo@123` |
 
-Every login's password is reset to `Demo@12345` on every `seed_demo_data` run, even if
+Every login's password is reset to `Demo@123` on every `seed_demo_data` run, even if
 you change it by hand while testing — re-run the script to get back in if you forget.
+`owner01` isn't touched by the seed script (it's a `create_superuser.py` account,
+§1) — if it doesn't exist in your database, create it once with that exact User ID and
+password so this table stays accurate.
 
 ## 3. Seeded Data Reference
 
@@ -130,9 +152,9 @@ Every tenant also has, at its Main location:
 
 ## 4. Phase 02 — Auth & RBAC
 
-- [ ] Log in as `LDH-admin` / `Demo@12345` → lands on `/dashboard`.
-- [ ] Log in as `LDH-cashier01` → lands on `/pos`, full Hold/KOT/Bill controls visible.
-- [ ] Log in as `LDH-waiter01` → lands on `/pos`, **no Bill button anywhere** (only
+- [ ] Log in as `LDHadmin` / `Demo@123` → lands on `/dashboard`.
+- [ ] Log in as `LDHcashier01` → lands on `/pos`, full Hold/KOT/Bill controls visible.
+- [ ] Log in as `LDHwaiter01` → lands on `/pos`, **no Bill button anywhere** (only
   Hold + Add to KOT).
 - [ ] Wrong password → clear error, no crash.
 - [ ] Try navigating a waiter session directly to `/reports`, `/dashboard`,
@@ -154,13 +176,13 @@ Every tenant also has, at its Main location:
 
 ## 6. Phase 04 — User Management
 
-*(as `PDH-admin`, so the seat-cap headroom is visible — Pro allows 6)*
+*(as `PDHadmin`, so the seat-cap headroom is visible — Pro allows 6)*
 
 - [ ] `/admin/users` lists admin/cashier/waiter with role badges, cashier shows 1%
   incentive.
 - [ ] Add a new Cashier → local handle only (not email), composed login id shown as
   read-only preview.
-- [ ] As `LDH-admin` (Lite, cap = 2, already has admin + cashier = 2), try adding a
+- [ ] As `LDHadmin` (Lite, cap = 2, already has admin + cashier = 2), try adding a
   3rd billable user → blocked with a clear upgrade message.
 - [ ] Deactivate a user → confirmation dialog mentions history is preserved, not
   deleted; deactivated user can no longer log in.
@@ -169,9 +191,9 @@ Every tenant also has, at its Main location:
 ## 7. Phase 05 — Item & Category Master
 
 - [ ] `/admin/categories` — add/reorder/deactivate a category.
-- [ ] `/admin/items` as `LDH-admin` (Lite) — **no image upload control visible**, no
+- [ ] `/admin/items` as `LDHadmin` (Lite) — **no image upload control visible**, no
   section-price override option.
-- [ ] `/admin/items` as `PDH-admin` or `PMDH-admin` — image upload control present;
+- [ ] `/admin/items` as `PDHadmin` or `PMDHadmin` — image upload control present;
   open an existing seeded item (e.g. Meals #101) and confirm its placeholder image
   displays.
 - [ ] Upload a new image on an item → thumbnail updates immediately.
@@ -191,7 +213,7 @@ Every tenant also has, at its Main location:
 
 ## 9. Phase 07 — POS Core
 
-*(as `PMDH-cashier01`, desktop width)*
+*(as `PMDHcashier01`, desktop width)*
 
 - [ ] 3-pane layout: category rail, item grid, cart. F1 = Top Selling, F2+ cycle
   categories.
@@ -204,15 +226,15 @@ Every tenant also has, at its Main location:
   old/new totals before applying (only if section-priced items are affected).
 - [ ] Resize to tablet width → category rail moves to a horizontal top strip, cart
   stays side-by-side (not a bottom sheet).
-- [ ] Resize to phone width, log in as `PMDH-waiter01` → single-column, bottom-sheet
+- [ ] Resize to phone width, log in as `PMDHwaiter01` → single-column, bottom-sheet
   cart via FAB, **only Hold + Add to KOT**, no Bill button at any width for this role.
 
 ## 10. Phase 08 — KOT & Printing
 
-- [ ] As `LDH-cashier01` (Lite — no KOT printer registered, and Lite doesn't get
+- [ ] As `LDHcashier01` (Lite — no KOT printer registered, and Lite doesn't get
   physical printing anyway), send an order to KOT → response says sent, `printed:
   false`.
-- [ ] As `PDH-cashier01` or `PMDH-cashier01` (KOT printer registered) → `printed: true`.
+- [ ] As `PDHcashier01` or `PMDHcashier01` (KOT printer registered) → `printed: true`.
 - [ ] Open `/kot` as the tenant admin → ticket appears in New/Preparing/Ready columns
   with table+section header.
 - [ ] Log in as a `kitchen`-role user if you have one (not seeded by default) → lands
@@ -225,7 +247,7 @@ Every tenant also has, at its Main location:
 
 ## 11. Phase 09 — Billing, Tax & Discount
 
-*(as `PMDH-cashier01`, table T1)*
+*(as `PMDHcashier01`, table T1)*
 
 - [ ] Add 2x Meals to cart, click Bill → preview shows Subtotal ₹300, CGST ₹7.50, SGST
   ₹7.50, Round Off, Grand Total — **CGST and SGST always on separate lines**.
@@ -234,20 +256,20 @@ Every tenant also has, at its Main location:
   `/admin/discount-rules` is a reference row for that admin page, not a picker in the
   billing flow — flat % is always typed directly.)
 - [ ] Apply coupon `WELCOME10` (Pro Max only) → same 10% effect via coupon path;
-  try it on `PDH-cashier01` (Pro, no coupon feature) → rejected.
+  try it on `PDHcashier01` (Pro, no coupon feature) → rejected.
 - [ ] Split payment across UPI + Cash that doesn't sum to the grand total → blocked
   from finalizing until it matches exactly.
 - [ ] Finalize a bill → printed confirmation (bill printer is registered on all seed
   tenants), reprint button available afterward.
 - [ ] `/billing/history` — search by bill number / date / table / waiter, reprint an
   old bill and confirm the figures are identical to the original.
-- [ ] As `LDH-waiter01` or `PDH-waiter01`, confirm there is **no Bill button and no
+- [ ] As `LDHwaiter01` or `PDHwaiter01`, confirm there is **no Bill button and no
   payment UI anywhere**, on any device width.
 - [ ] `/admin/tax-rules` and `/admin/discount-rules` — CRUD, deactivate/reactivate.
 
 ## 12. Phase 10 — Settings & Hotel Master
 
-*(as `PMDH-admin`, which has 2 locations)*
+*(as `PMDHadmin`, which has 2 locations)*
 
 - [ ] `/admin/settings` → General tab shows a location switcher (only appears because
   Pro Max has 2 locations); switch to Branch Two and confirm the form reloads with
@@ -258,8 +280,8 @@ Every tenant also has, at its Main location:
   and finalize a bill → printed output (check backend logs) omits Tamil; the **POS
   screen grid still shows both languages** regardless.
 - [ ] Upload a new logo → print-preview thumbnail on the same page updates instantly.
-- [ ] Locations tab — as `LDH-admin` (Lite, cap 1, already at 1) → "+ Add Location" is
-  disabled with an upgrade note. As `PMDH-admin` (cap 5, at 2) → can add up to 3 more.
+- [ ] Locations tab — as `LDHadmin` (Lite, cap 1, already at 1) → "+ Add Location" is
+  disabled with an upgrade note. As `PMDHadmin` (cap 5, at 2) → can add up to 3 more.
 - [ ] Printers/Tax/Categories tabs correctly link out to their existing dedicated
   admin pages.
 
@@ -268,18 +290,18 @@ Every tenant also has, at its Main location:
 *(re-run `python -m scripts.seed_demo_data` first if it's a new day, so "today" has
 bills)*
 
-- [ ] `/dashboard` as `LDH-admin` (Lite) → KPI cards only (Today's Sales, Bill Count,
+- [ ] `/dashboard` as `LDHadmin` (Lite) → KPI cards only (Today's Sales, Bill Count,
   Average Bill Value, Top Item), explicit "Charts... available on Pro/Pro Max" note,
   **no chart, no multi-location section**.
-- [ ] `/dashboard` as `PDH-admin` (Pro) → same KPI cards **plus** an hourly sales bar
+- [ ] `/dashboard` as `PDHadmin` (Pro) → same KPI cards **plus** an hourly sales bar
   chart; still no multi-location section.
-- [ ] `/dashboard` as `PMDH-admin` (Pro Max) → KPI cards + chart + a **Multi-Location
+- [ ] `/dashboard` as `PMDHadmin` (Pro Max) → KPI cards + chart + a **Multi-Location
   Comparison** table showing both Main and Branch Two with independent bill
   counts/sales.
-- [ ] `/reports` as `LDH-admin` → all 9 report tabs work, but **no export buttons at
+- [ ] `/reports` as `LDHadmin` → all 9 report tabs work, but **no export buttons at
   all**.
-- [ ] `/reports` as `PDH-admin` → **CSV export only** (no PDF/Excel buttons).
-- [ ] `/reports` as `PMDH-admin` → CSV + PDF + Excel all present; download one of
+- [ ] `/reports` as `PDHadmin` → **CSV export only** (no PDF/Excel buttons).
+- [ ] `/reports` as `PMDHadmin` → CSV + PDF + Excel all present; download one of
   each and open it — figures should match the on-screen table exactly.
 - [ ] Sales Summary for today: cross-check Bill Count / Grand Total against what
   `/billing/history` shows for the same date range — must match exactly.
@@ -292,7 +314,7 @@ bills)*
   just zeroed out).
 - [ ] Z-Report for today reconciles bill-for-bill against Sales Summary, with a
   payment-method breakdown that sums to the grand total.
-- [ ] As `PMDH-waiter01`, confirm `/reports` and `/dashboard` are both entirely
+- [ ] As `PMDHwaiter01`, confirm `/reports` and `/dashboard` are both entirely
   unreachable (redirected away), not just missing a nav link.
 
 ## 14. Phase 13 — Platform Console UX
@@ -353,13 +375,13 @@ bills)*
 
 ## 17. Phase 16 — Item Master Overhaul
 
-*(as `PDH-admin` for Export-only checks, `PMDH-admin` for Import checks — Lite has neither)*
+*(as `PDHadmin` for Export-only checks, `PMDHadmin` for Import checks — Lite has neither)*
 
-- [ ] As `LDH-admin` → `/admin/items` has no Export/Import CSV buttons.
-- [ ] As `PDH-admin` → Export CSV button present, Import CSV button absent; clicking
+- [ ] As `LDHadmin` → `/admin/items` has no Export/Import CSV buttons.
+- [ ] As `PDHadmin` → Export CSV button present, Import CSV button absent; clicking
   Export downloads a `items.csv` with header `item_code,name_en,name_ta,category,price,
   tax_class,is_top_seller,is_combo_tile`.
-- [ ] As `PMDH-admin` → both Export and Import CSV buttons present.
+- [ ] As `PMDHadmin` → both Export and Import CSV buttons present.
 - [ ] `+ Add Item` → Item Code field is pre-filled with a suggested next number (still
   editable) → fill Name + Price → Save → modal stays open, now showing Item Image and
   Per-Section Price Override sections (previously only appeared after closing and
@@ -379,7 +401,7 @@ bills)*
 
 ## 18. Phase 17 — Discount Rules & Bill History Filters
 
-*(as `PMDH-admin`, Pro Max, so coupon-type rules are available)*
+*(as `PMDHadmin`, Pro Max, so coupon-type rules are available)*
 
 - [ ] `/admin/discount-rules` → add a Coupon Code rule → Edit it → Type field is
   visible (disabled) showing "Coupon code", and the Coupon Code input shows the
@@ -392,7 +414,7 @@ bills)*
 
 ## 19. Phase 18 — POS Core Fixes
 
-*(as `PMDH-admin` or any cashier login on `/pos`)*
+*(as `PMDHadmin` or any cashier login on `/pos`)*
 
 - [ ] Upload an item image (Item Master), a category icon (Category Master), and a
   hotel logo (Settings → General) → all three render correctly on the POS grid /
@@ -422,8 +444,8 @@ bills)*
 
 ## 20. Phase 19 — POS Multi-Location, Seat Splitting & Order Clubbing
 
-*(as `PMDH-cashier01` on `/pos` — Pro Max Demo Hotel has 2 locations, Main + Branch
-Two, §3 — and `PMDH-admin` on `/dashboard`/`/reports`)*
+*(as `PMDHcashier01` on `/pos` — Pro Max Demo Hotel has 2 locations, Main + Branch
+Two, §3 — and `PMDHadmin` on `/dashboard`/`/reports`)*
 
 - [ ] POS header location control shows both locations as a dropdown (only rendered
   because this tenant has >1 location); switching it clears the in-progress draft and
@@ -437,11 +459,11 @@ Two, §3 — and `PMDH-admin` on `/dashboard`/`/reports`)*
 - [ ] Repeat-KOT clubbing: start a fresh order at any table, send one item to KOT, add
   a second different item to the same order, send KOT again → bill the order → the
   final bill contains both items as one bill, not two.
-- [ ] Dashboard (`PMDH-admin`) → a "Location" dropdown appears next to the date heading
+- [ ] Dashboard (`PMDHadmin`) → a "Location" dropdown appears next to the date heading
   (only because this tenant has >1 location) defaulting to "All locations"; picking one
   location changes Today's Sales/Bill Count/Average Bill Value to that location's
   figures only.
-- [ ] Reports (`PMDH-admin`) → the existing Location filter (any report, e.g. Sales
+- [ ] Reports (`PMDHadmin`) → the existing Location filter (any report, e.g. Sales
   Summary) narrows results to the selected location; "All locations" aggregates across
   both.
 - [ ] Dashboard's Pro Max-only "Multi-Location Comparison" table (bottom of page) still
@@ -478,8 +500,8 @@ Two, §3 — and `PMDH-admin` on `/dashboard`/`/reports`)*
 
 ## 22. Phase 21 — POS Manual-Testing Round 2
 
-*(as `PMDH-cashier01`/`PMDH-admin` on `/pos` unless noted — Pro Max Demo Hotel; a Pro-tier
-tenant like `HNR`'s admin login is needed for the Import CSV step)*
+*(as `PMDHcashier01`/`PMDHadmin` on `/pos` unless noted — Pro Max Demo Hotel; the Pro
+Demo Hotel's admin login, `PDHadmin`, is needed for the Import CSV step)*
 
 - [ ] Hotel name and location text in the POS header are visibly larger than before.
 - [ ] Category rail (desktop) and strip (mobile/tablet) both show the Tamil name under
@@ -519,9 +541,9 @@ tenant like `HNR`'s admin login is needed for the Import CSV step)*
 - [ ] Bill Customer 1's order too → the table now shows fully free in the table
   picker (no occupied badge), matching the existing "frees only once every customer
   has billed" behavior.
-- [ ] Item Master, logged in as a **Pro**-tier tenant admin (e.g. `HNR-HNRADMIN`) →
-  an "Import CSV" button is now visible (previously Pro Max-only); importing a small
-  CSV succeeds. A Lite-tier tenant still sees neither Import nor Export.
+- [ ] Item Master, logged in as a **Pro**-tier tenant admin (`PDHadmin`) → an "Import
+  CSV" button is now visible (previously Pro Max-only); importing a small CSV
+  succeeds. A Lite-tier tenant still sees neither Import nor Export.
 
 ---
 
@@ -530,17 +552,17 @@ tenant like `HNR`'s admin login is needed for the Import CSV step)*
 *(extends the existing soft-inventory feature from Phase 05/08 — this is the new
 audit ledger + tenant switch + KOT screen tab layered on top of it)*
 
-**Lite tenant (`LDH-admin`) — confirm zero behavior change:**
+**Lite tenant (`LDHadmin`) — confirm zero behavior change:**
 - [ ] Item Master's "Track stock count" checkbox is enabled/editable exactly as
   before (no new gating, no hint text about being "off").
 - [ ] Settings has no "Stock" tab.
-- [ ] The KOT screen (`LDH-*` kitchen login) shows a single, un-tabbed Kitchen Orders
+- [ ] The KOT screen (`LDH*` kitchen login) shows a single, un-tabbed Kitchen Orders
   board — no tab strip at all.
 - [ ] Track an item's stock via Item Master as before, send it to KOT, confirm the
   count still decrements and the POS/KOT low-stock badges still work exactly as
   pre-Phase-22.
 
-**Pro Max tenant (`PMDH-admin` / `PMDH-cashier01` / kitchen login) — the new surfaces:**
+**Pro Max tenant (`PMDHadmin` / `PMDHcashier01` / kitchen login) — the new surfaces:**
 - [ ] Settings → a "Stock" tab appears with a single "Enable stock-quantity tracking"
   checkbox, **unchecked by default**.
 - [ ] With it unchecked: Item Master's "Track stock count" checkbox is disabled with
@@ -571,7 +593,7 @@ audit ledger + tenant switch + KOT screen tab layered on top of it)*
 
 - **Seed script fails with a 403 "plan limit reached"**: you've already run it enough
   times to hit Pro Max's 5-location cap via other manual testing — check
-  `/admin/settings` → Locations on `PMDH-admin` and deactivate anything you added by
+  `/admin/settings` → Locations on `PMDHadmin` and deactivate anything you added by
   hand before re-running.
 - **Bills stop appearing as "today" data**: the seed script only tops up when a
   location has fewer than 4 bills *for the current calendar day* — re-run it after
