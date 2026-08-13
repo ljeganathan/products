@@ -23,7 +23,12 @@ const CANDIDATE_SERVICES = [
 // modern Android + printer combinations negotiate an extended MTU well above this —
 // and only back off to smaller chunks on an actual write failure, rather than always
 // paying the cost of the ultra-conservative default-MTU chunk size (a hotel logo image
-// is several KB; at a tiny fixed chunk size that made printing visibly slow).
+// is several KB; at a tiny fixed chunk size that made printing visibly slow). 180
+// measured as the sweet spot on a real Posiflow KP307 (0 write failures, best observed
+// throughput) — its negotiated MTU is very likely the common 185-byte extended MTU
+// (182-byte ATT payload after the 3-byte header), so 180 sits just under that ceiling.
+// Pushing higher (tried 240) measured *worse*: it overshot the real ceiling, paid for a
+// failed write, and fell back to a smaller size than 180 for the rest of the print.
 const INITIAL_CHUNK_SIZE = 180;
 const MIN_CHUNK_SIZE = 20;
 
@@ -150,31 +155,49 @@ async function getConnection(device: BluetoothDevice): Promise<OpenConnection> {
   return connection;
 }
 
-async function writeAll(characteristic: BluetoothRemoteGATTCharacteristic, data: Uint8Array): Promise<void> {
-  const write = characteristic.properties.writeWithoutResponse
+// Returns a short human-readable perf summary — surfaced all the way up into the
+// on-screen toast (not just the console) because this transport's real throughput
+// depends on the OS Bluetooth stack's own backpressure behavior, which genuinely
+// differs between platforms (confirmed: a Windows laptop's numbers here do not
+// reliably predict what a real Android tablet sees) — so diagnosing a real device
+// needs its own real numbers, not devtools access.
+async function writeAll(characteristic: BluetoothRemoteGATTCharacteristic, data: Uint8Array): Promise<string> {
+  const withoutResponse = characteristic.properties.writeWithoutResponse;
+  const write = withoutResponse
     ? (chunk: Uint8Array) => characteristic.writeValueWithoutResponse(chunk)
     : (chunk: Uint8Array) => characteristic.writeValue(chunk);
 
+  const startedAt = performance.now();
   let chunkSize = INITIAL_CHUNK_SIZE;
   let offset = 0;
+  let chunkCount = 0;
+  let shrinkCount = 0;
   while (offset < data.length) {
     const chunk = data.subarray(offset, offset + chunkSize);
     try {
       await write(chunk);
       offset += chunk.length;
+      chunkCount++;
     } catch (err) {
       if (chunkSize <= MIN_CHUNK_SIZE) throw err;
       // The negotiated MTU turned out smaller than we optimistically assumed — halve
       // the chunk size and retry this same offset rather than aborting the print.
       chunkSize = Math.max(MIN_CHUNK_SIZE, Math.floor(chunkSize / 2));
+      shrinkCount++;
     }
   }
+  const elapsedMs = Math.round(performance.now() - startedAt);
+  const summary =
+    `BT: ${data.length}B/${chunkCount} chunks (size ${chunkSize}, ${shrinkCount} shrink${shrinkCount === 1 ? "" : "s"}, ` +
+    `${withoutResponse ? "no-response" : "ACK'd"}) in ${elapsedMs}ms (${(data.length / (elapsedMs / 1000)).toFixed(0)} B/s)`;
+  console.debug(`[kotmate-bt-print] ${summary}`);
+  return summary;
 }
 
 export async function sendPrintJobViaBluetooth(
   connectionDetails: Record<string, unknown>,
   dataBase64: string,
-): Promise<void> {
+): Promise<string> {
   const deviceId = connectionDetails.bluetooth_device_id;
   if (typeof deviceId !== "string" || !deviceId) {
     throw new Error("This printer hasn't been paired yet — go to Settings > Printers and pair it first.");
@@ -186,7 +209,7 @@ export async function sendPrintJobViaBluetooth(
 
   const { characteristic } = await getConnection(device);
   try {
-    await writeAll(characteristic, bytes);
+    return await writeAll(characteristic, bytes);
   } catch (err) {
     // The open connection may now be bad (e.g. the printer dropped mid-write) — evict
     // it so the next print attempts a fresh connect + service discovery instead of

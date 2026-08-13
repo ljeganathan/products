@@ -8,15 +8,18 @@ import type { BillPrintJob } from "@/modules/pos/billsApi";
 // BillHistoryPage reprint) should call — branches to the local print-agent
 // (desktop/laptop with a Windows-driver printer), WebUSB, Web Bluetooth, or RawBT
 // (Android) based on how the printer is registered. Returns null on success, or a
-// message safe to show the cashier on failure — never throws, since a print failure
-// must never block a bill that's already been finalized.
+// message safe to show the cashier — either a failure, or (Bluetooth only, for now) a
+// perf diagnostic on success, since Bluetooth throughput genuinely depends on the
+// device's own OS Bluetooth stack and needs real numbers from the real device to
+// diagnose, not just a console a cashier's tablet has no easy access to. Never throws,
+// since a print failure must never block a bill that's already been finalized.
 export async function dispatchPrintJob(job: BillPrintJob | null): Promise<string | null> {
   if (!job) return null;
   try {
     if (job.connection_type === "usb") {
       await sendPrintJobViaWebUSB(job.connection_details, job.data_base64);
     } else if (job.connection_type === "bluetooth") {
-      await sendPrintJobViaBluetooth(job.connection_details, job.data_base64);
+      return await sendPrintJobViaBluetooth(job.connection_details, job.data_base64);
     } else if (job.connection_type === "rawbt") {
       await sendPrintJobViaRawbt(job.data_base64);
     } else {
