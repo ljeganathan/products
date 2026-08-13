@@ -176,13 +176,15 @@ async def send_kot(
                 paper_width_mm=printer.paper_width_mm,
             )
             content = dispatch_kot_print(printer, render_data)
-            # "usb"/"local_agent" KOT printers are physically attached to the counter
+            # "usb"/"local_agent"/"bluetooth"/"rawbt" KOT printers are physically
+            # attached to (or paired with, or resolved by RawBT on) the counter
             # machine, not this backend container — hand the rendered bytes back to the
-            # frontend so it can push them to the local print-agent/WebUSB, same as bill
-            # printing (bill_service.py's _dispatch_print_for_bill). "network"/"wifi"
-            # printers are reachable directly from here over the LAN, so the backend
-            # sends the raw bytes itself instead of claiming success and doing nothing.
-            if printer.connection_type in ("usb", "local_agent"):
+            # frontend so it can push them via WebUSB/local-agent/Web Bluetooth/RawBT,
+            # same as bill printing (bill_service.py's _dispatch_print_for_bill).
+            # "network"/"wifi" printers are reachable directly from here over the LAN,
+            # so the backend sends the raw bytes itself instead of claiming success and
+            # doing nothing.
+            if printer.connection_type in ("usb", "local_agent", "bluetooth", "rawbt"):
                 print_job = PrintJobPayload(
                     printer_id=printer.id,
                     connection_type=printer.connection_type,

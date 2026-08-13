@@ -17,12 +17,15 @@ const CANDIDATE_SERVICES = [
   "6e400001-b5a3-f393-e0a9-e50e24dcca9e",
 ] as const;
 
-// Small enough to stay under the default (unnegotiated) 23-byte ATT MTU's ~20-byte
-// payload on every platform — Chrome/Android will use a larger MTU when the device
-// negotiates one, but there's no portable way to query it beforehand, and 20 bytes is
-// safe everywhere at the cost of a slightly slower print.
-const CHUNK_SIZE = 20;
-const CHUNK_DELAY_MS = 15;
+// BLE's "Write Without Response" op is capped at the connection's negotiated MTU minus
+// ATT header overhead, and Web Bluetooth doesn't expose the negotiated MTU to
+// JavaScript, so the safe chunk size can't be known up front. Start optimistic — most
+// modern Android + printer combinations negotiate an extended MTU well above this —
+// and only back off to smaller chunks on an actual write failure, rather than always
+// paying the cost of the ultra-conservative default-MTU chunk size (a hotel logo image
+// is several KB; at a tiny fixed chunk size that made printing visibly slow).
+const INITIAL_CHUNK_SIZE = 180;
+const MIN_CHUNK_SIZE = 20;
 
 export function isWebBluetoothSupported(): boolean {
   return typeof navigator !== "undefined" && "bluetooth" in navigator;
@@ -43,6 +46,20 @@ interface PairedBluetoothPrinterInfo {
 // page/tab — which matches how a POS counter is actually used, one long session per
 // shift (CLAUDE.md §9) — and only ask to re-pair after an actual page reload.
 const sessionPairedDevices = new Map<string, BluetoothDevice>();
+
+// A Bill printer and a Kitchen printer are frequently the *same physical device*
+// (confirmed in production: both point at the same bluetooth_device_id). Cheap BLE
+// printer modules often won't accept a fresh connection immediately after a previous
+// one disconnects, which made a KOT print fail right after a bill print had just used
+// (and disconnected from) the same printer. Keep the GATT connection open and reuse it
+// across every print to that device for the rest of the page session instead of
+// disconnecting after each one — faster (skips reconnect + service discovery) and
+// avoids that reconnect race entirely.
+interface OpenConnection {
+  server: BluetoothRemoteGATTServer;
+  characteristic: BluetoothRemoteGATTCharacteristic;
+}
+const openConnections = new Map<string, OpenConnection>();
 
 // Must be called directly from a user gesture (e.g. a button's onClick) — Chrome
 // rejects navigator.bluetooth.requestDevice() calls made outside a trusted user
@@ -80,6 +97,29 @@ async function findPairedDevice(deviceId: string): Promise<BluetoothDevice> {
   );
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function connectWithRetry(device: BluetoothDevice, attempts = 4): Promise<BluetoothRemoteGATTServer> {
+  if (!device.gatt) {
+    throw new Error("This device doesn't expose a Bluetooth GATT connection.");
+  }
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await device.gatt.connect();
+    } catch (err) {
+      lastErr = err;
+      // Cheap BLE printer modules often need a moment after a very recent disconnect
+      // (e.g. this same printer just finished a different print job) before they'll
+      // accept a new connection — back off and retry instead of failing immediately.
+      await sleep(300 * (attempt + 1));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("Couldn't connect to the Bluetooth printer.");
+}
+
 async function findWritableCharacteristic(
   server: BluetoothRemoteGATTServer,
 ): Promise<BluetoothRemoteGATTCharacteristic> {
@@ -99,20 +139,35 @@ async function findWritableCharacteristic(
   );
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+async function getConnection(device: BluetoothDevice): Promise<OpenConnection> {
+  const existing = openConnections.get(device.id);
+  if (existing && existing.server.connected) return existing;
+
+  const server = await connectWithRetry(device);
+  const characteristic = await findWritableCharacteristic(server);
+  const connection: OpenConnection = { server, characteristic };
+  openConnections.set(device.id, connection);
+  return connection;
 }
 
 async function writeAll(characteristic: BluetoothRemoteGATTCharacteristic, data: Uint8Array): Promise<void> {
-  const canWriteWithoutResponse = characteristic.properties.writeWithoutResponse;
-  for (let offset = 0; offset < data.length; offset += CHUNK_SIZE) {
-    const chunk = data.subarray(offset, offset + CHUNK_SIZE);
-    if (canWriteWithoutResponse) {
-      await characteristic.writeValueWithoutResponse(chunk);
-    } else {
-      await characteristic.writeValue(chunk);
+  const write = characteristic.properties.writeWithoutResponse
+    ? (chunk: Uint8Array) => characteristic.writeValueWithoutResponse(chunk)
+    : (chunk: Uint8Array) => characteristic.writeValue(chunk);
+
+  let chunkSize = INITIAL_CHUNK_SIZE;
+  let offset = 0;
+  while (offset < data.length) {
+    const chunk = data.subarray(offset, offset + chunkSize);
+    try {
+      await write(chunk);
+      offset += chunk.length;
+    } catch (err) {
+      if (chunkSize <= MIN_CHUNK_SIZE) throw err;
+      // The negotiated MTU turned out smaller than we optimistically assumed — halve
+      // the chunk size and retry this same offset rather than aborting the print.
+      chunkSize = Math.max(MIN_CHUNK_SIZE, Math.floor(chunkSize / 2));
     }
-    await sleep(CHUNK_DELAY_MS);
   }
 }
 
@@ -125,18 +180,18 @@ export async function sendPrintJobViaBluetooth(
     throw new Error("This printer hasn't been paired yet — go to Settings > Printers and pair it first.");
   }
   const device = await findPairedDevice(deviceId);
-  if (!device.gatt) {
-    throw new Error("This device doesn't expose a Bluetooth GATT connection.");
-  }
   const binary = atob(dataBase64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
-  const server = await device.gatt.connect();
+  const { characteristic } = await getConnection(device);
   try {
-    const characteristic = await findWritableCharacteristic(server);
     await writeAll(characteristic, bytes);
-  } finally {
-    server.disconnect();
+  } catch (err) {
+    // The open connection may now be bad (e.g. the printer dropped mid-write) — evict
+    // it so the next print attempts a fresh connect + service discovery instead of
+    // repeatedly failing against a stale one.
+    openConnections.delete(device.id);
+    throw err;
   }
 }

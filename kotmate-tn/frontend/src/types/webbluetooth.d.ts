@@ -19,6 +19,7 @@ interface BluetoothRemoteGATTService {
 }
 
 interface BluetoothRemoteGATTServer {
+  readonly connected: boolean;
   connect(): Promise<BluetoothRemoteGATTServer>;
   disconnect(): void;
   getPrimaryService(service: string): Promise<BluetoothRemoteGATTService>;
