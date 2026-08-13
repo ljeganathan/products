@@ -3,7 +3,7 @@ import type { BillPrintJob } from "@/modules/pos/billsApi";
 
 export const PRINTER_TARGETS = ["kot", "bill"] as const;
 export const PRINTER_TYPES = ["thermal", "dotmatrix"] as const;
-export const PRINTER_CONNECTION_TYPES = ["network", "usb", "local_agent", "wifi", "bluetooth"] as const;
+export const PRINTER_CONNECTION_TYPES = ["network", "usb", "local_agent", "wifi", "bluetooth", "rawbt"] as const;
 // 58/80mm thermal roll widths, 241mm (9.5") dot-matrix continuous stationery — a "Custom"
 // option in the UI falls back to a free-entry mm field for anything else (CLAUDE.md §10).
 export const PRINTER_PAPER_WIDTHS_MM = [58, 80, 241] as const;

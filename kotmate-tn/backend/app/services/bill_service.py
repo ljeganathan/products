@@ -479,17 +479,18 @@ async def _dispatch_print_for_bill(
         footer_message=(hotel.receipt_footer_message if hotel else None) or _DEFAULT_RECEIPT_FOOTER_MESSAGE,
     )
     content = dispatch_bill_print(printer, render_data)
-    # "usb", "local_agent" and "bluetooth" printers are physically attached to (or
-    # paired with) the counter machine, not this backend container — hand the rendered
-    # bytes back to the frontend so it can push them via WebUSB/local-agent/Web
-    # Bluetooth (CLAUDE.md §10) instead of the backend trying (and failing) to reach
-    # hardware on someone else's LAN/USB bus/radio. "network"/"wifi" printers, by
-    # contrast, are reachable from here directly over the LAN, so the backend sends the
-    # raw bytes itself via a plain TCP socket (port 9100 "raw"/JetDirect convention)
-    # rather than round-tripping through the browser.
+    # "usb", "local_agent", "bluetooth" and "rawbt" printers are physically attached to
+    # (or paired with, or resolved by a local Android print bridge for) the counter
+    # machine, not this backend container — hand the rendered bytes back to the
+    # frontend so it can push them via WebUSB/local-agent/Web Bluetooth/RawBT
+    # (CLAUDE.md §10) instead of the backend trying (and failing) to reach hardware on
+    # someone else's LAN/USB bus/radio. "network"/"wifi" printers, by contrast, are
+    # reachable from here directly over the LAN, so the backend sends the raw bytes
+    # itself via a plain TCP socket (port 9100 "raw"/JetDirect convention) rather than
+    # round-tripping through the browser.
     print_job: PrintJobPayload | None = None
     print_error: str | None = None
-    if printer.connection_type in ("usb", "local_agent", "bluetooth"):
+    if printer.connection_type in ("usb", "local_agent", "bluetooth", "rawbt"):
         print_job = PrintJobPayload(
             printer_id=printer.id,
             connection_type=printer.connection_type,

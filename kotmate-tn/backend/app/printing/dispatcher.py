@@ -9,11 +9,11 @@ logger = logging.getLogger("kotmate.printing")
 
 def dispatch_bill_print(printer: Printer, bill: BillRenderData) -> bytes:
     """Renders and logs the print job — actual transport is the caller's job
-    (bill_service._dispatch_print_for_bill): `usb`/`local_agent`/`bluetooth` printers
-    are physically attached to (or paired with) the counter machine's browser, not this
-    container, so those bytes go back to the frontend over WebUSB/local-agent/Web
-    Bluetooth instead; `network`/`wifi` printers are reachable directly from here via
-    `printing.network_transport`.
+    (bill_service._dispatch_print_for_bill): `usb`/`local_agent`/`bluetooth`/`rawbt`
+    printers are physically attached to (or paired with, or resolved by RawBT on) the
+    counter machine's browser, not this container, so those bytes go back to the
+    frontend over WebUSB/local-agent/Web Bluetooth/RawBT instead; `network`/`wifi`
+    printers are reachable directly from here via `printing.network_transport`.
     """
     if printer.printer_type == "thermal":
         content: bytes | str = escpos_thermal.render_bill(bill)

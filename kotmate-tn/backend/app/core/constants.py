@@ -104,7 +104,7 @@ TABLE_STATUSES = ["free", "occupied", "billed"]
 KOT_TICKET_STATUSES = ["new", "preparing", "ready"]
 PRINTER_TARGETS = ["kot", "bill"]
 PRINTER_TYPES = ["thermal", "dotmatrix"]
-PRINTER_CONNECTION_TYPES = ["network", "usb", "local_agent", "wifi", "bluetooth"]
+PRINTER_CONNECTION_TYPES = ["network", "usb", "local_agent", "wifi", "bluetooth", "rawbt"]
 # Common physical paper widths on the market (CLAUDE.md §10, Phase 15) — surfaced as
 # presets in the UI; a printer not matching one of these still stores whatever mm value
 # was typed in via the "Custom" option, so this list is a UI convenience, not a CHECK

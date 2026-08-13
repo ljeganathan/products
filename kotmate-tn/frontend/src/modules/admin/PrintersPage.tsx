@@ -29,6 +29,7 @@ const CONNECTION_LABELS: Record<string, string> = {
   usb: "USB",
   bluetooth: "Bluetooth",
   local_agent: "Local Print Agent",
+  rawbt: "RawBT (Android)",
 };
 
 function apiErrorMessage(err: unknown, fallback: string): string {
@@ -158,18 +159,20 @@ export function PrinterFormModal({
       ? { ip_address: form.ip_address, port: form.port }
       : form.connection_type === "bluetooth"
         ? { bluetooth_device_id: form.bluetooth_device_id, bluetooth_device_name: form.bluetooth_device_name }
-        : form.connection_type === "local_agent"
-          ? {
-              windows_printer_name: form.windows_printer_name,
-              ...(form.agent_port ? { agent_port: Number(form.agent_port) } : {}),
-            }
-          : form.connection_type === "usb"
+        : form.connection_type === "rawbt"
+          ? {}
+          : form.connection_type === "local_agent"
             ? {
-                usb_vendor_id: form.usb_vendor_id ? Number(form.usb_vendor_id) : undefined,
-                usb_product_id: form.usb_product_id ? Number(form.usb_product_id) : undefined,
-                usb_product_name: form.usb_product_name || undefined,
+                windows_printer_name: form.windows_printer_name,
+                ...(form.agent_port ? { agent_port: Number(form.agent_port) } : {}),
               }
-            : {};
+            : form.connection_type === "usb"
+              ? {
+                  usb_vendor_id: form.usb_vendor_id ? Number(form.usb_vendor_id) : undefined,
+                  usb_product_id: form.usb_product_id ? Number(form.usb_product_id) : undefined,
+                  usb_product_name: form.usb_product_name || undefined,
+                }
+              : {};
   }
 
   function resolvedPaperWidth(): number | null {
@@ -185,7 +188,7 @@ export function PrinterFormModal({
           ? Boolean(form.usb_vendor_id)
           : form.connection_type === "bluetooth"
             ? Boolean(form.bluetooth_device_id)
-            : false;
+            : form.connection_type === "rawbt";
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -366,6 +369,20 @@ export function PrinterFormModal({
               {form.bluetooth_device_id && (
                 <p className="text-xs text-foreground/70">Paired: {form.bluetooth_device_name}</p>
               )}
+            </div>
+          )}
+
+          {form.connection_type === "rawbt" && (
+            <div className="flex flex-col gap-2 rounded-md border border-border bg-foreground/5 p-3">
+              <p className="text-xs text-foreground/60">
+                Hands off print jobs to the free{" "}
+                <span className="font-semibold text-foreground">RawBT</span> app on the Android
+                device — it makes its own connection to the printer (WiFi/network, Bluetooth, or
+                USB), so it works even when this printer's IP is only reachable on the tablet's
+                own WiFi, not from KOTMate's server. Nothing to pair here — install RawBT from the
+                Play Store on the tablet and set its default printer connection inside the RawBT
+                app itself. Android + Chrome only.
+              </p>
             </div>
           )}
 

@@ -41,13 +41,13 @@ export interface BillPreview extends BillTotals {
   payments: BillPayment[];
 }
 
-// Raw ESC/POS bytes for a "usb"/"local_agent"/"bluetooth" bill printer — the backend
-// can't reach that printer itself (it's on the counter machine, not the server), so it
-// hands these bytes back here for the frontend to forward via WebUSB/local-agent/Web
-// Bluetooth (lib/printDispatch.ts).
+// Raw ESC/POS bytes for a "usb"/"local_agent"/"bluetooth"/"rawbt" bill printer — the
+// backend can't reach that printer itself (it's on the counter machine, not the
+// server), so it hands these bytes back here for the frontend to forward via
+// WebUSB/local-agent/Web Bluetooth/RawBT (lib/printDispatch.ts).
 export interface BillPrintJob {
   printer_id: string;
-  connection_type: "usb" | "local_agent" | "bluetooth";
+  connection_type: "usb" | "local_agent" | "bluetooth" | "rawbt";
   connection_details: Record<string, unknown>;
   data_base64: string;
 }
