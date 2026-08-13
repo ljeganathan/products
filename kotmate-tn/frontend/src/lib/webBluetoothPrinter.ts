@@ -19,18 +19,28 @@ const CANDIDATE_SERVICES = [
 
 // BLE's "Write Without Response" op is capped at the connection's negotiated MTU minus
 // ATT header overhead, and Web Bluetooth doesn't expose the negotiated MTU to
-// JavaScript, so the safe chunk size can't be known up front. Start optimistic — most
-// modern Android + printer combinations negotiate an extended MTU well above this —
-// and only back off to smaller chunks on an actual write failure, rather than always
-// paying the cost of the ultra-conservative default-MTU chunk size (a hotel logo image
-// is several KB; at a tiny fixed chunk size that made printing visibly slow). 180
-// measured as the sweet spot on a real Posiflow KP307 (0 write failures, best observed
-// throughput) — its negotiated MTU is very likely the common 185-byte extended MTU
-// (182-byte ATT payload after the 3-byte header), so 180 sits just under that ceiling.
-// Pushing higher (tried 240) measured *worse*: it overshot the real ceiling, paid for a
-// failed write, and fell back to a smaller size than 180 for the rest of the print.
-const INITIAL_CHUNK_SIZE = 180;
+// JavaScript, so the safe chunk size can't be known up front.
+//
+// Measured on a real Posiflow KP307 (BLE+SPP dual-mode) across three configurations:
+//   - 20B chunks + 15ms delay (original): correct, but painfully slow on a full image.
+//   - 180B chunks + 0 delay (fire-and-forget, no pacing): fast in a clean lab test
+//     (260ms for a 15.9KB bill+logo), but degraded print quality on real hardware —
+//     "Write Without Response" gives zero delivery confirmation, so a dropped/corrupted
+//     packet (more likely over a real-world RF link than a quiet desk-distance test)
+//     just silently vanishes, most visible in the dense continuous byte run of a raster
+//     logo image rather than small text commands.
+//   - 180B chunks, ACK'd ("write"/Write Request instead of Write Without Response):
+//     reliable (every byte's delivery is confirmed), but 12,965ms for the same
+//     15.9KB job — a real per-chunk round-trip cost, unusable for a live POS counter.
+// This is the middle ground: smaller chunks so the printer's own onboard receive
+// buffer (a cheap embedded MCU, not a Bluetooth radio buffer) has less to hold at
+// once, plus a modest inter-chunk delay so it has time to actually drain that buffer
+// before the next chunk lands — still fire-and-forget (no ACK round-trip cost), aimed
+// at trading a little speed for a lot less risk of overrunning the printer's own
+// buffer, which is the more likely cause of corruption than the BLE link itself.
+const INITIAL_CHUNK_SIZE = 100;
 const MIN_CHUNK_SIZE = 20;
+const CHUNK_DELAY_MS = 8;
 
 export function isWebBluetoothSupported(): boolean {
   return typeof navigator !== "undefined" && "bluetooth" in navigator;
@@ -136,7 +146,12 @@ async function findWritableCharacteristic(
       continue; // this device doesn't implement this candidate service — try the next
     }
     const characteristics = await service.getCharacteristics();
-    const writable = characteristics.find((c) => c.properties.write || c.properties.writeWithoutResponse);
+    // Prefer a fire-and-forget ("writeWithoutResponse") characteristic — see
+    // writeAll()'s reasoning for why the ACK'd alternative is unusably slow in
+    // practice — falling back to an ACK'd-only one if that's all the device exposes.
+    const writable =
+      characteristics.find((c) => c.properties.writeWithoutResponse) ??
+      characteristics.find((c) => c.properties.write);
     if (writable) return writable;
   }
   throw new Error(
@@ -162,8 +177,14 @@ async function getConnection(device: BluetoothDevice): Promise<OpenConnection> {
 // reliably predict what a real Android tablet sees) — so diagnosing a real device
 // needs its own real numbers, not devtools access.
 async function writeAll(characteristic: BluetoothRemoteGATTCharacteristic, data: Uint8Array): Promise<string> {
-  const withoutResponse = characteristic.properties.writeWithoutResponse;
-  const write = withoutResponse
+  // Fire-and-forget ("Write Without Response") by default — ACK'd writes measured
+  // ~50x slower on real hardware (12,965ms vs 260ms for the same 15.9KB bill+logo),
+  // unusable for a live POS counter. Mitigate the reliability risk instead via smaller
+  // chunks + pacing (INITIAL_CHUNK_SIZE/CHUNK_DELAY_MS above), which gives the
+  // printer's own onboard buffer time to drain between writes without paying for a
+  // full round-trip confirmation on every single chunk.
+  const noResponse = characteristic.properties.writeWithoutResponse;
+  const write = noResponse
     ? (chunk: Uint8Array) => characteristic.writeValueWithoutResponse(chunk)
     : (chunk: Uint8Array) => characteristic.writeValue(chunk);
 
@@ -178,6 +199,7 @@ async function writeAll(characteristic: BluetoothRemoteGATTCharacteristic, data:
       await write(chunk);
       offset += chunk.length;
       chunkCount++;
+      if (offset < data.length) await sleep(CHUNK_DELAY_MS);
     } catch (err) {
       if (chunkSize <= MIN_CHUNK_SIZE) throw err;
       // The negotiated MTU turned out smaller than we optimistically assumed — halve
@@ -189,7 +211,7 @@ async function writeAll(characteristic: BluetoothRemoteGATTCharacteristic, data:
   const elapsedMs = Math.round(performance.now() - startedAt);
   const summary =
     `BT: ${data.length}B/${chunkCount} chunks (size ${chunkSize}, ${shrinkCount} shrink${shrinkCount === 1 ? "" : "s"}, ` +
-    `${withoutResponse ? "no-response" : "ACK'd"}) in ${elapsedMs}ms (${(data.length / (elapsedMs / 1000)).toFixed(0)} B/s)`;
+    `${noResponse ? "no-response" : "ACK'd"}) in ${elapsedMs}ms (${(data.length / (elapsedMs / 1000)).toFixed(0)} B/s)`;
   console.debug(`[kotmate-bt-print] ${summary}`);
   return summary;
 }
