@@ -3,6 +3,7 @@ import axios from "axios";
 import { type FormEvent, useState } from "react";
 
 import { dispatchPrintJob } from "@/lib/printDispatch";
+import { isWebBluetoothSupported, pairBluetoothPrinter } from "@/lib/webBluetoothPrinter";
 import { isWebUSBSupported, pairPrinter } from "@/lib/webusbPrinter";
 import { listLocations } from "@/modules/admin/locationsApi";
 import {
@@ -47,6 +48,7 @@ interface PrinterFormState {
   connection_type: string;
   ip_address: string;
   port: string;
+  bluetooth_device_id: string;
   bluetooth_device_name: string;
   windows_printer_name: string;
   agent_port: string;
@@ -82,7 +84,8 @@ export function PrinterFormModal({
           connection_type: editingPrinter.connection_type,
           ip_address: String(editingPrinter.connection_details.ip_address ?? ""),
           port: String(editingPrinter.connection_details.port ?? ""),
-          bluetooth_device_name: String(editingPrinter.connection_details.device_name ?? ""),
+          bluetooth_device_id: String(editingPrinter.connection_details.bluetooth_device_id ?? ""),
+          bluetooth_device_name: String(editingPrinter.connection_details.bluetooth_device_name ?? ""),
           windows_printer_name: String(editingPrinter.connection_details.windows_printer_name ?? ""),
           agent_port: String(editingPrinter.connection_details.agent_port ?? ""),
           usb_vendor_id: String(editingPrinter.connection_details.usb_vendor_id ?? ""),
@@ -97,6 +100,7 @@ export function PrinterFormModal({
           connection_type: PRINTER_CONNECTION_TYPES[0],
           ip_address: "",
           port: "",
+          bluetooth_device_id: "",
           bluetooth_device_name: "",
           windows_printer_name: "",
           agent_port: "",
@@ -132,11 +136,28 @@ export function PrinterFormModal({
     }
   }
 
+  async function handlePairBluetooth() {
+    setError(null);
+    setPairing(true);
+    try {
+      const info = await pairBluetoothPrinter();
+      setForm((f) => ({
+        ...f,
+        bluetooth_device_id: info.bluetooth_device_id,
+        bluetooth_device_name: info.bluetooth_device_name,
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't pair with a Bluetooth printer.");
+    } finally {
+      setPairing(false);
+    }
+  }
+
   function buildConnectionDetails(): Record<string, unknown> {
     return form.connection_type === "network" || form.connection_type === "wifi"
       ? { ip_address: form.ip_address, port: form.port }
       : form.connection_type === "bluetooth"
-        ? { device_name: form.bluetooth_device_name }
+        ? { bluetooth_device_id: form.bluetooth_device_id, bluetooth_device_name: form.bluetooth_device_name }
         : form.connection_type === "local_agent"
           ? {
               windows_printer_name: form.windows_printer_name,
@@ -155,8 +176,6 @@ export function PrinterFormModal({
     return widthOption === CUSTOM_WIDTH ? (customWidth ? Number(customWidth) : null) : Number(widthOption);
   }
 
-  // Bluetooth transport isn't implemented yet (server and print-agent both), so there's
-  // nothing a Test Print could actually reach — kept disabled rather than pretending.
   const canTestPrint =
     form.connection_type === "network" || form.connection_type === "wifi"
       ? Boolean(form.ip_address.trim())
@@ -164,7 +183,9 @@ export function PrinterFormModal({
         ? Boolean(form.windows_printer_name.trim())
         : form.connection_type === "usb"
           ? Boolean(form.usb_vendor_id)
-          : false;
+          : form.connection_type === "bluetooth"
+            ? Boolean(form.bluetooth_device_id)
+            : false;
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -322,14 +343,29 @@ export function PrinterFormModal({
           )}
 
           {form.connection_type === "bluetooth" && (
-            <div className="flex flex-col gap-1.5">
-              <label className={labelClass}>Paired Device Name</label>
-              <input
-                placeholder="e.g. BT-Printer-58"
-                className={inputClass}
-                value={form.bluetooth_device_name}
-                onChange={(e) => setForm((f) => ({ ...f, bluetooth_device_name: e.target.value }))}
-              />
+            <div className="flex flex-col gap-3 rounded-md border border-border bg-foreground/5 p-3">
+              <p className="text-xs text-foreground/60">
+                Connects directly from this browser via Web Bluetooth (BLE) — no driver or local
+                agent needed. Works in Chrome/Edge on desktop and in Chrome on Android. Only BLE
+                printers are supported — "Classic" Bluetooth-only (SPP) printers won't appear in
+                the pairing list.
+              </p>
+              {!isWebBluetoothSupported() && (
+                <p className="text-xs font-semibold text-chili">
+                  This browser doesn't support Web Bluetooth — open this page in Chrome to pair.
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={handlePairBluetooth}
+                disabled={pairing || !isWebBluetoothSupported()}
+                className="self-start rounded-md bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground disabled:opacity-60"
+              >
+                {pairing ? "Pairing…" : form.bluetooth_device_id ? "Re-pair Printer" : "Pair Printer"}
+              </button>
+              {form.bluetooth_device_id && (
+                <p className="text-xs text-foreground/70">Paired: {form.bluetooth_device_name}</p>
+              )}
             </div>
           )}
 

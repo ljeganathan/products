@@ -64,10 +64,11 @@ async def test_print_printer(payload: PrinterTestPrintRequest) -> PrinterTestPri
     """
     content = dispatch_test_print(payload.printer_type, payload.paper_width_mm)
 
-    if payload.connection_type in ("usb", "local_agent"):
-        # Physically attached to whichever machine's browser has this settings page
-        # open, not this backend container — hand the bytes back for the frontend to
-        # dispatch via WebUSB/local-agent (lib/printDispatch.ts), same as a real bill.
+    if payload.connection_type in ("usb", "local_agent", "bluetooth"):
+        # Physically attached to (or paired with) whichever machine's browser has this
+        # settings page open, not this backend container — hand the bytes back for the
+        # frontend to dispatch via WebUSB/local-agent/Web Bluetooth
+        # (lib/printDispatch.ts), same as a real bill.
         return PrinterTestPrintResponse(
             printed=False,
             print_job=PrintJobPayload(
