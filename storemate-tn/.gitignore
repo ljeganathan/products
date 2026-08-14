@@ -4,6 +4,12 @@ Thumbs.db
 .vscode/
 *.log
 
+# Local-only Docker Compose port overrides (e.g. running alongside
+# kotmate-tn's dev stack, which defaults to the same 8000/5173 ports) —
+# Compose auto-merges this on top of docker-compose.yml with no -f flag
+# needed. Machine-specific, never a shared project default.
+docker-compose.override.yml
+
 # Root-level .env holds real production secrets for docker-compose.prod.yml
 # (POSTGRES_PASSWORD, JWT_SECRET, DOMAIN, SMTP_*) — see .env.example.
 # backend/ and frontend/ each have their own .gitignore for their own .env.
