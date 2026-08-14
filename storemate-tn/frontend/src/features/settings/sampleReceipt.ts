@@ -3,7 +3,11 @@ import type { BillPrintPayload, CompanySettings } from "@/types/bill";
 /** Synthetic payload for the Settings "Test Print" button — reuses the
  * exact same print pipeline (escpos.ts / dotmatrix.ts / printDispatch.ts) a
  * real sale would, but with fake line items, so a store can verify a
- * printer profile and their company header/logo without ringing up a sale. */
+ * printer profile and their company header/logo without ringing up a sale.
+ * `payment_mode` is "upi" (rather than "cash") specifically so this test
+ * print also exercises the UPI QR code — printDispatch.ts only renders it
+ * for `payment_mode: "upi"` bills, and without that here a store could
+ * never preview/verify the QR print without ringing up a real UPI sale. */
 export function buildSampleReceiptPayload(company: CompanySettings): BillPrintPayload {
   return {
     bill_number: 0,
@@ -36,6 +40,6 @@ export function buildSampleReceiptPayload(company: CompanySettings): BillPrintPa
     sgst_paise: 1102,
     round_off_paise: -49,
     total_paise: 14455,
-    payment_mode: "cash",
+    payment_mode: "upi",
   };
 }

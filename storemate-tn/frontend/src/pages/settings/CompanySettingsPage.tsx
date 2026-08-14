@@ -13,6 +13,7 @@ import { resolveMediaUrl } from "@/api/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { buildSampleReceiptPayload } from "@/features/settings/sampleReceipt";
 import { toast } from "@/store/toastStore";
@@ -45,6 +46,8 @@ export default function CompanySettingsPage() {
       phone: company.phone ?? "",
       invoice_footer_text: company.invoice_footer_text ?? "",
       show_tamil_item_names: company.show_tamil_item_names,
+      upi_vpa: company.upi_vpa ?? "",
+      show_upi_qr: company.show_upi_qr,
     });
   }, [company]);
 
@@ -61,7 +64,7 @@ export default function CompanySettingsPage() {
     }
     setIsSaving(true);
     try {
-      await updateCompanySettings(form);
+      await updateCompanySettings({ ...form, show_upi_qr: form.upi_vpa ? form.show_upi_qr : false });
       await queryClient.invalidateQueries({ queryKey: ["company-settings"] });
       toast("success", t("common.saved"));
     } catch (err) {
@@ -165,20 +168,38 @@ export default function CompanySettingsPage() {
             onChange={(e) => setField("invoice_footer_text", e.target.value)}
           />
 
+          <div className="flex flex-col gap-1.5">
+            <Select
+              label={t("settings.company.itemNameLanguage")}
+              value={(form.show_tamil_item_names ?? false) ? "ta" : "en"}
+              onChange={(e) => setField("show_tamil_item_names", e.target.value === "ta")}
+            >
+              <option value="en">{t("settings.company.itemNameLanguageEnglish")}</option>
+              <option value="ta">{t("settings.company.itemNameLanguageTamil")}</option>
+            </Select>
+            <p className="text-xs text-slate-500">{t("settings.company.itemNameLanguageHint")}</p>
+          </div>
+
+          <Input
+            label={t("settings.company.upiVpa")}
+            placeholder="store@okhdfcbank"
+            value={form.upi_vpa ?? ""}
+            onChange={(e) => setField("upi_vpa", e.target.value)}
+          />
+
           <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
             <input
               type="checkbox"
-              checked={form.show_tamil_item_names ?? false}
-              onChange={(e) => setField("show_tamil_item_names", e.target.checked)}
+              checked={form.show_upi_qr ?? false}
+              onChange={(e) => setField("show_upi_qr", e.target.checked)}
+              disabled={!form.upi_vpa}
               className="mt-0.5 h-4 w-4 rounded border-slate-300"
             />
             <span>
               <span className="block text-sm font-medium text-slate-700">
-                {t("settings.company.showTamilItemNames")}
+                {t("settings.company.showUpiQr")}
               </span>
-              <span className="block text-xs text-slate-500">
-                {t("settings.company.showTamilItemNamesHint")}
-              </span>
+              <span className="block text-xs text-slate-500">{t("settings.company.showUpiQrHint")}</span>
             </span>
           </label>
 

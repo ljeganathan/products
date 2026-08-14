@@ -101,13 +101,18 @@ users`, `customer_name (nullable)`, `customer_phone (nullable)`,
 
 **printer_profiles**
 `tenant_id`, `store_id`, `name`, `type (thermal_58mm|thermal_80mm|dot_matrix)`,
-`connection (webusb|local_agent)`, `is_default`, `paper_width_chars`
+`connection (webusb|local_agent|network|wifi|bluetooth|rawbt)`, `is_default`,
+`paper_width_chars`, `connection_details (JSONB — {ip, port} for
+network/wifi; {bluetooth_device_id, bluetooth_device_name} for bluetooth;
+{windows_printer_name} for local_agent; unused for webusb/rawbt)`
 
 **company_settings** (one row per store, effectively store master for
 invoice header)
 `tenant_id`, `store_id`, `legal_name`, `display_name`, `address`, `gstin`,
 `fssai_no (nullable, common for FMCG/food retail)`, `phone`, `logo_url`,
-`invoice_footer_text`
+`invoice_footer_text`, `upi_vpa (nullable, e.g. "store@okhdfcbank")`,
+`show_upi_qr (bool, default false — prints a scan-to-pay QR on thermal
+receipts only)`
 
 **notifications** (Pro/Pro Max low-stock etc.)
 `tenant_id`, `store_id`, `type (low_stock|subscription|system)`,

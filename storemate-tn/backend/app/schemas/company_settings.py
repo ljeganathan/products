@@ -22,6 +22,8 @@ class CompanySettingsOut(BaseModel):
     logo_url: str | None
     invoice_footer_text: str | None
     show_tamil_item_names: bool
+    upi_vpa: str | None
+    show_upi_qr: bool
 
 
 class CompanySettingsUpdate(BaseModel):
@@ -34,6 +36,8 @@ class CompanySettingsUpdate(BaseModel):
     phone: str | None = None
     invoice_footer_text: str | None = None
     show_tamil_item_names: bool | None = None
+    upi_vpa: str | None = None
+    show_upi_qr: bool | None = None
 
     @field_validator("pincode")
     @classmethod

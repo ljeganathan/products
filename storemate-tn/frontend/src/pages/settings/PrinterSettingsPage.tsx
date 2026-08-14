@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Printer, Trash2 } from "lucide-react";
+import { Bluetooth, Pencil, Plus, Printer, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -20,6 +20,17 @@ import { buildSampleReceiptPayload } from "@/features/settings/sampleReceipt";
 import { toast } from "@/store/toastStore";
 import type { PrinterProfile, PrinterProfileCreate } from "@/types/printer";
 import { getApiErrorMessage } from "@/utils/apiError";
+import { pairBluetoothPrinter } from "@/utils/webBluetoothPrinter";
+
+function connectionDetailSummary(profile: PrinterProfile): string | null {
+  if ((profile.connection === "network" || profile.connection === "wifi") && profile.connection_details.ip) {
+    return `${profile.connection_details.ip}:${profile.connection_details.port || "9100"}`;
+  }
+  if (profile.connection === "bluetooth") {
+    return profile.connection_details.bluetooth_device_name ?? null;
+  }
+  return null;
+}
 
 export default function PrinterSettingsPage() {
   const { t } = useTranslation();
@@ -30,6 +41,7 @@ export default function PrinterSettingsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [testPrintingId, setTestPrintingId] = useState<string | null>(null);
+  const [repairingId, setRepairingId] = useState<string | null>(null);
 
   const { data: profiles, isLoading } = useQuery({
     queryKey: ["printer-profiles-all"],
@@ -67,6 +79,26 @@ export default function PrinterSettingsPage() {
       toast("danger", getApiErrorMessage(err, t("common.saveError")));
     } finally {
       setIsDeleting(false);
+    }
+  }
+
+  async function handleRepair(profile: PrinterProfile) {
+    setRepairingId(profile.id);
+    try {
+      const paired = await pairBluetoothPrinter();
+      await updatePrinterProfile(profile.id, {
+        connection_details: {
+          bluetooth_device_id: paired.bluetooth_device_id,
+          bluetooth_device_name: paired.bluetooth_device_name,
+        },
+      });
+      await queryClient.invalidateQueries({ queryKey: ["printer-profiles-all"] });
+      await queryClient.invalidateQueries({ queryKey: ["printer-profiles"] });
+      toast("success", t("settings.printer.pairSuccess", { name: paired.bluetooth_device_name }));
+    } catch (err) {
+      toast("danger", err instanceof Error ? err.message : t("settings.printer.pairError"));
+    } finally {
+      setRepairingId(null);
     }
   }
 
@@ -113,10 +145,14 @@ export default function PrinterSettingsPage() {
                 <p className="mt-1 text-sm text-slate-500">
                   {t(`settings.printer.types.${p.type}`)} · {p.paper_width_chars} {t("settings.printer.chars")}
                 </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {t(`settings.printer.connections.${p.connection}`)}
+                  {connectionDetailSummary(p) ? ` · ${connectionDetailSummary(p)}` : ""}
+                </p>
               </div>
               {p.is_default && <Badge variant="success">{t("settings.tax.default")}</Badge>}
             </div>
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -136,12 +172,24 @@ export default function PrinterSettingsPage() {
               >
                 <Trash2 className="h-4 w-4" />
               </button>
+              {p.connection === "bluetooth" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleRepair(p)}
+                  isLoading={repairingId === p.id}
+                  className="ml-auto"
+                >
+                  <Bluetooth className="h-4 w-4" />
+                  {t("settings.printer.pairButton")}
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => void handleTestPrint(p)}
                 isLoading={testPrintingId === p.id}
-                className="ml-auto"
+                className={p.connection === "bluetooth" ? "" : "ml-auto"}
               >
                 <Printer className="h-4 w-4" />
                 {t("settings.printer.testPrint")}

@@ -11,6 +11,8 @@ export interface CompanySettingsUpdate {
   phone?: string | null;
   invoice_footer_text?: string | null;
   show_tamil_item_names?: boolean;
+  upi_vpa?: string | null;
+  show_upi_qr?: boolean;
 }
 
 export async function getCompanySettings(storeId?: string): Promise<CompanySettings> {

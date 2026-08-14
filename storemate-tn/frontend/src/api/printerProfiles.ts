@@ -29,3 +29,11 @@ export async function updatePrinterProfile(
 export async function deletePrinterProfile(id: string): Promise<void> {
   await apiClient.delete(`/settings/printer-profiles/${id}`);
 }
+
+/** Network/WiFi printers are reached over a raw TCP socket, which browser
+ * JavaScript can't open — the backend opens it instead (see
+ * backend/app/utils/network_print.py). `dataBase64` is the already-built
+ * ESC/POS (or dot-matrix text) job, same bytes WebUSB/local-agent would send. */
+export async function printPrinterProfileViaNetwork(id: string, dataBase64: string): Promise<void> {
+  await apiClient.post(`/settings/printer-profiles/${id}/print-network`, { data_base64: dataBase64 });
+}

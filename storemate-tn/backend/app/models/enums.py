@@ -89,6 +89,14 @@ class PrinterType(str, enum.Enum):
 class PrinterConnection(str, enum.Enum):
     WEBUSB = "webusb"
     LOCAL_AGENT = "local_agent"
+    # NETWORK (wired LAN) and WIFI are functionally identical — both are
+    # dispatched via the same raw-TCP-socket transport (utils/network_print.py,
+    # connection_details={ip, port}) — kept as separate values purely so a
+    # tenant's printer list can label them distinctly, matching KOTMate TN.
+    NETWORK = "network"
+    WIFI = "wifi"
+    BLUETOOTH = "bluetooth"
+    RAWBT = "rawbt"
 
 
 class NotificationType(str, enum.Enum):

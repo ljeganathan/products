@@ -2,7 +2,7 @@ import uuid
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPKMixin
@@ -34,3 +34,9 @@ class PrinterProfile(Base, UUIDPKMixin, TimestampMixin):
     )
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     paper_width_chars: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Connection-specific fields — deliberately unstructured JSON since each
+    # connection type needs a different shape (network: {ip, port};
+    # bluetooth: {bluetooth_device_id, bluetooth_device_name}) and this only
+    # ever feeds the frontend print dispatcher / network transport, never
+    # gets queried on.
+    connection_details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)

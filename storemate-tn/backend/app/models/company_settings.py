@@ -36,3 +36,9 @@ class CompanySettings(Base, UUIDPKMixin, TimestampMixin):
     show_tamil_item_names: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # UPI VPA (e.g. "store@okhdfcbank") for the printed-receipt QR code.
+    # Nullable — QR printing stays off (show_upi_qr) until a store sets one.
+    upi_vpa: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    show_upi_qr: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )

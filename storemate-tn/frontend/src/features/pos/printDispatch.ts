@@ -1,8 +1,12 @@
 import axios from "axios";
 
 import { resolveMediaUrl } from "@/api/client";
+import { printPrinterProfileViaNetwork } from "@/api/printerProfiles";
 import { buildDotMatrixReceipt } from "@/utils/dotmatrix";
 import { buildEscPosReceipt, rasterizeLogoToEscPos } from "@/utils/escpos";
+import { buildUpiQrEscPos, buildUpiUri } from "@/utils/qrRaster";
+import { sendPrintJobViaRawbt } from "@/utils/rawbtPrinter";
+import { sendPrintJobViaBluetooth } from "@/utils/webBluetoothPrinter";
 import type { BillPrintPayload } from "@/types/bill";
 import type { PrinterProfile } from "@/types/printer";
 
@@ -28,11 +32,17 @@ async function loadImage(url: string): Promise<HTMLImageElement | null> {
 async function sendToLocalAgent(
   format: "escpos" | "text",
   content: Uint8Array | string,
+  printerName?: string,
 ): Promise<void> {
-  const body =
-    format === "escpos"
+  const body = {
+    ...(format === "escpos"
       ? { format, data_base64: bytesToBase64(content as Uint8Array) }
-      : { format, data: content as string };
+      : { format, data: content as string }),
+    // Optional — the agent falls back to its own --printer default (or the
+    // machine's Windows default printer) when omitted, so this only needs
+    // setting when a till PC has more than one printer queue registered.
+    ...(printerName ? { printer_name: printerName } : {}),
+  };
   await axios.post(`${LOCAL_PRINT_AGENT_URL}/print`, body, { timeout: 5_000 });
 }
 
@@ -54,17 +64,52 @@ async function printViaWebUsb(bytes: Uint8Array): Promise<void> {
   await device.close();
 }
 
-/** Picks WebUSB when the profile is thermal and the browser/hardware
- * supports it (desktop Chrome/Edge only, per docs/ARCHITECTURE.md), falling
- * back to the Local Print Agent for everything else — dot-matrix always
- * goes through the agent since it has no browser API path at all. */
+/** Dispatches already-built ESC/POS bytes (thermal profiles only — dot-matrix
+ * is handled inline in dispatchPrint below) to whichever transport the
+ * profile's `connection` names: network/wifi go via the backend (raw TCP
+ * socket, browsers can't open one directly), bluetooth via Web Bluetooth
+ * GATT, rawbt via an Android intent: URL, webusb direct from the browser
+ * (falling back to the Local Print Agent if unavailable/fails), and
+ * local_agent via the Local Print Agent directly. */
+async function sendEscPosBytes(profile: PrinterProfile, bytes: Uint8Array): Promise<void> {
+  switch (profile.connection) {
+    case "network":
+    case "wifi":
+      await printPrinterProfileViaNetwork(profile.id, bytesToBase64(bytes));
+      return;
+    case "bluetooth":
+      await sendPrintJobViaBluetooth(profile.connection_details, bytesToBase64(bytes));
+      return;
+    case "rawbt":
+      await sendPrintJobViaRawbt(bytesToBase64(bytes));
+      return;
+    case "webusb":
+      if (navigator.usb) {
+        try {
+          await printViaWebUsb(bytes);
+          return;
+        } catch (err) {
+          console.warn("WebUSB print failed, falling back to Local Print Agent", err);
+        }
+      }
+      await sendToLocalAgent("escpos", bytes, profile.connection_details.windows_printer_name);
+      return;
+    default:
+      await sendToLocalAgent("escpos", bytes, profile.connection_details.windows_printer_name);
+  }
+}
+
 export async function dispatchPrint(
   profile: PrinterProfile,
   payload: BillPrintPayload,
 ): Promise<void> {
   if (profile.type === "dot_matrix") {
     const text = buildDotMatrixReceipt(payload, profile.paper_width_chars);
-    await sendToLocalAgent("text", text);
+    if (profile.connection === "network" || profile.connection === "wifi") {
+      await printPrinterProfileViaNetwork(profile.id, bytesToBase64(new TextEncoder().encode(text)));
+      return;
+    }
+    await sendToLocalAgent("text", text, profile.connection_details.windows_printer_name);
     return;
   }
 
@@ -73,20 +118,24 @@ export async function dispatchPrint(
     ? await loadImage(resolveMediaUrl(payload.company.logo_url))
     : null;
   const logo = logoImage ? rasterizeLogoToEscPos(logoImage, paperWidthDots) : null;
+
+  // Scan-to-pay only makes sense when the customer is actually paying via
+  // UPI at the counter — a cash/card sale showing the same QR would invite
+  // a second, unintended payment.
+  const qr =
+    payload.company.show_upi_qr && payload.company.upi_vpa && payload.payment_mode === "upi"
+      ? await buildUpiQrEscPos(
+          buildUpiUri(payload.company.upi_vpa, payload.company.display_name, payload.total_paise, payload.bill_number),
+          paperWidthDots,
+        )
+      : null;
+
   const bytes = buildEscPosReceipt(payload, {
     paperWidthChars: profile.paper_width_chars,
     paperWidthDots,
     logo,
+    qr,
   });
 
-  if (profile.connection === "webusb" && navigator.usb) {
-    try {
-      await printViaWebUsb(bytes);
-      return;
-    } catch (err) {
-      console.warn("WebUSB print failed, falling back to Local Print Agent", err);
-    }
-  }
-
-  await sendToLocalAgent("escpos", bytes);
+  await sendEscPosBytes(profile, bytes);
 }

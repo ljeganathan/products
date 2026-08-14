@@ -5,17 +5,33 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
+import { toast } from "@/store/toastStore";
 import type {
   PrinterConnection,
+  PrinterConnectionDetails,
   PrinterProfile,
   PrinterProfileCreate,
   PrinterType,
 } from "@/types/printer";
+import { isWebBluetoothSupported, pairBluetoothPrinter } from "@/utils/webBluetoothPrinter";
 
+// 12 dots/char at standard 203dpi Font A: 58mm -> 384 dots / 32 cols,
+// 80mm -> 576 dots / 48 cols (matches paperWidthDots in printDispatch.ts
+// and the equivalent preset in KOTMate TN's printing/base.py). A narrower
+// value here under-uses the printer's actual width, leaving unused blank
+// space down the right edge of every text line on real 80mm hardware.
 const DEFAULT_WIDTHS: Record<PrinterType, number> = {
   thermal_58mm: 32,
-  thermal_80mm: 42,
+  thermal_80mm: 48,
   dot_matrix: 80,
+};
+
+// Dot-matrix has no BLE/USB/RawBT path worth building for legacy hardware —
+// only a driver-attached agent or a network print-server front it.
+const CONNECTIONS_BY_TYPE: Record<PrinterType, PrinterConnection[]> = {
+  thermal_58mm: ["local_agent", "webusb", "network", "wifi", "bluetooth", "rawbt"],
+  thermal_80mm: ["local_agent", "webusb", "network", "wifi", "bluetooth", "rawbt"],
+  dot_matrix: ["local_agent", "network"],
 };
 
 export interface PrinterProfileFormModalProps {
@@ -39,6 +55,8 @@ export function PrinterProfileFormModal({
   const [connection, setConnection] = useState<PrinterConnection>("local_agent");
   const [paperWidth, setPaperWidth] = useState(String(DEFAULT_WIDTHS.thermal_80mm));
   const [isDefault, setIsDefault] = useState(false);
+  const [connectionDetails, setConnectionDetails] = useState<PrinterConnectionDetails>({});
+  const [isPairing, setIsPairing] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -47,12 +65,38 @@ export function PrinterProfileFormModal({
     setConnection(profile?.connection ?? "local_agent");
     setPaperWidth(String(profile?.paper_width_chars ?? DEFAULT_WIDTHS.thermal_80mm));
     setIsDefault(profile?.is_default ?? false);
+    setConnectionDetails(profile?.connection_details ?? {});
   }, [open, profile]);
 
   function handleTypeChange(nextType: PrinterType) {
     setType(nextType);
     if (!profile) setPaperWidth(String(DEFAULT_WIDTHS[nextType]));
-    if (nextType === "dot_matrix") setConnection("local_agent");
+    if (!CONNECTIONS_BY_TYPE[nextType].includes(connection)) setConnection("local_agent");
+  }
+
+  function handleConnectionChange(next: PrinterConnection) {
+    setConnection(next);
+    setConnectionDetails({});
+  }
+
+  function setDetail(key: string, value: string) {
+    setConnectionDetails((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function handlePair() {
+    setIsPairing(true);
+    try {
+      const paired = await pairBluetoothPrinter();
+      setConnectionDetails({
+        bluetooth_device_id: paired.bluetooth_device_id,
+        bluetooth_device_name: paired.bluetooth_device_name,
+      });
+      toast("success", t("settings.printer.pairSuccess", { name: paired.bluetooth_device_name }));
+    } catch (err) {
+      toast("danger", err instanceof Error ? err.message : t("settings.printer.pairError"));
+    } finally {
+      setIsPairing(false);
+    }
   }
 
   async function handleSubmit() {
@@ -62,6 +106,7 @@ export function PrinterProfileFormModal({
       connection,
       paper_width_chars: Number(paperWidth) || DEFAULT_WIDTHS[type],
       is_default: isDefault,
+      connection_details: connectionDetails,
     });
   }
 
@@ -90,18 +135,97 @@ export function PrinterProfileFormModal({
         <Select
           label={t("settings.printer.connection")}
           value={connection}
-          onChange={(e) => setConnection(e.target.value as PrinterConnection)}
-          disabled={type === "dot_matrix"}
+          onChange={(e) => handleConnectionChange(e.target.value as PrinterConnection)}
         >
-          <option value="local_agent">{t("settings.printer.connections.local_agent")}</option>
-          <option value="webusb">{t("settings.printer.connections.webusb")}</option>
+          {CONNECTIONS_BY_TYPE[type].map((c) => (
+            <option key={c} value={c}>
+              {t(`settings.printer.connections.${c}`)}
+            </option>
+          ))}
         </Select>
+
+        {connection === "local_agent" && (
+          <Input
+            label={t("settings.printer.windowsPrinterName")}
+            placeholder="POS80 Printer"
+            hint={t("settings.printer.windowsPrinterNameHint")}
+            value={connectionDetails.windows_printer_name ?? ""}
+            onChange={(e) => setDetail("windows_printer_name", e.target.value)}
+          />
+        )}
+
+        {(connection === "network" || connection === "wifi") && (
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label={t("settings.printer.ipAddress")}
+              placeholder="192.168.1.50"
+              value={connectionDetails.ip ?? ""}
+              onChange={(e) => setDetail("ip", e.target.value)}
+            />
+            <Input
+              label={t("settings.printer.port")}
+              placeholder="9100"
+              inputMode="numeric"
+              value={connectionDetails.port ?? ""}
+              onChange={(e) => setDetail("port", e.target.value.replace(/\D/g, ""))}
+            />
+          </div>
+        )}
+
+        {connection === "bluetooth" && (
+          <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            {connectionDetails.bluetooth_device_name ? (
+              <p className="text-sm text-slate-700">
+                {t("settings.printer.pairedWith")}{" "}
+                <span className="font-medium">{connectionDetails.bluetooth_device_name}</span>
+              </p>
+            ) : (
+              <p className="text-sm text-slate-500">{t("settings.printer.notPaired")}</p>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-fit"
+              onClick={() => void handlePair()}
+              isLoading={isPairing}
+              disabled={!isWebBluetoothSupported()}
+            >
+              {t("settings.printer.pairButton")}
+            </Button>
+            {!isWebBluetoothSupported() && (
+              <p className="text-xs text-danger-600">{t("settings.printer.bluetoothUnsupported")}</p>
+            )}
+          </div>
+        )}
+
+        {connection === "rawbt" && (
+          <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+            {t("settings.printer.rawbtHint")}
+          </p>
+        )}
+
         <Input
           type="number"
           min="1"
           label={t("settings.printer.paperWidth")}
           value={paperWidth}
           onChange={(e) => setPaperWidth(e.target.value)}
+          hint={
+            type !== "dot_matrix"
+              ? t("settings.printer.paperWidthHint", { chars: DEFAULT_WIDTHS[type] })
+              : undefined
+          }
+          error={
+            // Typing the paper's mm size (e.g. "80") instead of its character
+            // count is an easy mistake this field's own label doesn't fully
+            // prevent — a value this far over the printer's actual native
+            // width makes every centered/padded line hardware-wrap onto
+            // extra, mostly-blank rows (exactly the "lot of spaces" symptom).
+            type !== "dot_matrix" && Number(paperWidth) > DEFAULT_WIDTHS[type] * 1.25
+              ? t("settings.printer.paperWidthWarning", { chars: DEFAULT_WIDTHS[type] })
+              : undefined
+          }
         />
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input

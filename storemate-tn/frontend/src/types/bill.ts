@@ -95,6 +95,8 @@ export interface CompanySettings {
   logo_url: string | null;
   invoice_footer_text: string | null;
   show_tamil_item_names: boolean;
+  upi_vpa: string | null;
+  show_upi_qr: boolean;
 }
 
 export interface BillPrintPayload {

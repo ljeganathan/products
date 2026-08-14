@@ -165,7 +165,19 @@ remain fully `admin`-only (no billing-time read need).
   `logo_url`.
 - `GET/POST/PATCH/DELETE /settings/printer-profiles` (`?store_id=`) — gated
   by `check_printer_profile_limit` (Phase 2). `is_default: true` unsets any
-  other default profile for that store.
+  other default profile for that store. `connection` accepts
+  `webusb|local_agent|network|wifi|bluetooth|rawbt`; `connection_details`
+  is a free-form JSON object whose shape depends on `connection` (see
+  `docs/DATABASE_SCHEMA.md`) — the frontend print dispatcher
+  (`features/pos/printDispatch.ts`) is the only reader.
+- `POST /settings/printer-profiles/{id}/print-network` — `{data_base64}`,
+  204 on success. Only valid for `network`/`wifi` profiles (400 otherwise).
+  Browsers can't open a raw TCP socket, so network/WiFi printers are the one
+  connection type dispatched server-side: the frontend builds the same
+  ESC/POS (or dot-matrix text) bytes it would send WebUSB/local-agent, then
+  hands them here and the backend opens the socket
+  (`app/utils/network_print.py`, raw port 9100 by default). Returns 502 with
+  a cashier-safe message on an unreachable printer.
 - `GET/PATCH /settings/language` — `{language_pref: "en"|"ta"}`. CLAUDE.md §7
   frames this as a per-tenant setting, but the schema has no tenant-level
   language column (`docs/DATABASE_SCHEMA.md`) — only `users.language_pref`.

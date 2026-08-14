@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,6 +17,7 @@ class PrinterProfileOut(BaseModel):
     connection: PrinterConnection
     is_default: bool
     paper_width_chars: int
+    connection_details: dict[str, Any]
 
 
 class PrinterProfileCreate(BaseModel):
@@ -25,6 +27,7 @@ class PrinterProfileCreate(BaseModel):
     connection: PrinterConnection
     is_default: bool = False
     paper_width_chars: int = Field(gt=0)
+    connection_details: dict[str, Any] = Field(default_factory=dict)
 
 
 class PrinterProfileUpdate(BaseModel):
@@ -33,3 +36,13 @@ class PrinterProfileUpdate(BaseModel):
     connection: PrinterConnection | None = None
     is_default: bool | None = None
     paper_width_chars: int | None = Field(default=None, gt=0)
+    connection_details: dict[str, Any] | None = None
+
+
+class PrinterNetworkPrintRequest(BaseModel):
+    """Base64-encoded ESC/POS (thermal) or UTF-8 (dot-matrix) print job the
+    frontend already rendered — see utils.network_print's docstring for why
+    network/WiFi printers are the one connection type dispatched from the
+    backend instead of the browser."""
+
+    data_base64: str = Field(min_length=1)
