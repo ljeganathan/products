@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 
 import { resolveAssetUrl } from "@/lib/api";
 import { INDIAN_STATES, gstinStateWarning } from "@/lib/constants";
-import { me } from "@/modules/auth/authApi";
+import { me, type MeResponse } from "@/modules/auth/authApi";
 import {
   type HotelMaster,
   type HotelMasterUpdatePayload,
@@ -21,6 +21,7 @@ import {
   listManagedLocations,
   updateLocation,
 } from "@/modules/admin/locationsApi";
+import { updateCategoryDisplaySetting } from "@/modules/admin/categoryDisplaySettingsApi";
 import { PrinterFormModal } from "@/modules/admin/PrintersPage";
 import { type Printer, listPrinters } from "@/modules/admin/printersApi";
 import { updateStockManagementSetting } from "@/modules/admin/stockSettingsApi";
@@ -108,18 +109,53 @@ export function SettingsPage() {
 
       {locationsLoading && <p className="text-sm text-foreground/60">Loading…</p>}
 
-      {tab === "General" &&
-        (selectedLocationId ? (
-          <GeneralTab locationId={selectedLocationId} />
-        ) : (
-          !locationsLoading && <p className="text-sm text-foreground/60">Add a location first.</p>
-        ))}
+      {tab === "General" && (
+        <div className="flex flex-col gap-6">
+          <CategoryDisplaySettings meData={meData} />
+          {selectedLocationId ? (
+            <GeneralTab locationId={selectedLocationId} />
+          ) : (
+            !locationsLoading && <p className="text-sm text-foreground/60">Add a location first.</p>
+          )}
+        </div>
+      )}
       {tab === "Locations" && <LocationsTab locations={locations} />}
       {tab === "Printers" && <PrintersTab locations={activeLocations} />}
       {tab === "Tax" && <TaxTab />}
       {tab === "Stock" && stockManagementOnPlan && (
         <StockTab enabled={meData?.stock_tracking_enabled === true} />
       )}
+    </div>
+  );
+}
+
+function CategoryDisplaySettings({ meData }: { meData: MeResponse | undefined }) {
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: (next: boolean) => updateCategoryDisplaySetting(next),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+    },
+  });
+  const enabled = meData?.show_tamil_categories !== false;
+
+  return (
+    <div className="max-w-xl rounded-lg border border-border bg-surface p-4">
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={mutation.isPending}
+          onChange={(e) => mutation.mutate(e.target.checked)}
+        />
+        Show Tamil names on the POS category list
+      </label>
+      <p className="mt-1 text-xs text-foreground/50">
+        Applies only to the category rail on the left of the POS screen (and the category strip on
+        tablet/mobile). Item buttons on the main grid always show English and Tamil together, and this
+        doesn&apos;t affect printed KOT tickets or bills — see the Tamil toggle in the Print section
+        below for that.
+      </p>
     </div>
   );
 }

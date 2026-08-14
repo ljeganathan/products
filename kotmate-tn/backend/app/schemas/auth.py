@@ -42,3 +42,6 @@ class MeResponse(BaseModel):
     # Effective stock-quantity-tracking state (tenant toggle AND plan has the feature)
     # — the single flag every frontend surface should check (CLAUDE.md §11 extension).
     stock_tracking_enabled: bool
+    # Tenant toggle for Tamil labels on the POS category rail/strip only (not gated by
+    # plan) — item buttons still always show both languages per CLAUDE.md §9.
+    show_tamil_categories: bool

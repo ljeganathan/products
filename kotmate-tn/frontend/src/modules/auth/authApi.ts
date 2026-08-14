@@ -50,6 +50,9 @@ export interface MeResponse {
   // never changed for them). The single flag to check for POS/KOT badges and the
   // Item Master "Track stock count" checkbox's editability.
   stock_tracking_enabled: boolean;
+  // Tenant toggle for Tamil labels on the POS category rail/strip only — item buttons
+  // still always show both languages (CLAUDE.md §9). Not plan-gated.
+  show_tamil_categories: boolean;
 }
 
 export async function me(): Promise<MeResponse> {

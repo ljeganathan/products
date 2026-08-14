@@ -162,6 +162,7 @@ async def me(
             max_locations=None,
             features=None,
             stock_tracking_enabled=False,
+            show_tamil_categories=True,
         )
 
     # `/me` serves every tenant-scoped role, not just one — set the RLS session var
@@ -184,6 +185,7 @@ async def me(
         max_locations=plan.max_locations if plan else None,
         features=plan.features if plan else None,
         stock_tracking_enabled=is_stock_tracking_enabled(tenant, plan.features if plan else None),
+        show_tamil_categories=tenant.show_tamil_categories,
     )
 
 

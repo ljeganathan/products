@@ -40,6 +40,12 @@ class Tenant(UUIDPKMixin, TimestampMixin, Base):
     # toggling this off never clears items.track_inventory/available_qty, so re-enabling
     # restores prior config exactly.
     stock_management_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Tenant-wide toggle for the POS category rail's Tamil labels only (CLAUDE.md §9 still
+    # requires item buttons themselves to always show English+Tamil together — this is a
+    # narrower, admin-controlled exception scoped to the category rail/strip, not a
+    # reversal of that rule). Independent of hotel_master.show_tamil_names, which controls
+    # the printed KOT/bill only. Defaults true so existing tenants see no behavior change.
+    show_tamil_categories: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     __table_args__ = (
         CheckConstraint(_STATE_CHECK_SQL, name="ck_tenants_state_valid"),

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import CurrentUser, get_current_user, require_role, require_tenant_scope
 from app.db.session import get_db
 from app.models import Tenant
+from app.schemas.category_display import CategoryDisplaySettingsRequest, CategoryDisplaySettingsResponse
 from app.schemas.hotel_master import HotelMasterResponse, HotelMasterUpdateRequest
 from app.schemas.stock import StockManagementSettingsRequest, StockManagementSettingsResponse
 from app.services.hotel_master_service import (
@@ -73,6 +74,27 @@ async def update_stock_management_setting(
     tenant.stock_management_enabled = payload.enabled
     await db.commit()
     return StockManagementSettingsResponse(enabled=tenant.stock_management_enabled)
+
+
+@router.patch(
+    "/category-display",
+    response_model=CategoryDisplaySettingsResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def update_category_display_setting(
+    payload: CategoryDisplaySettingsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CategoryDisplaySettingsResponse:
+    """Tenant-wide toggle for Tamil labels on the POS category rail/strip only — every
+    tier, no plan gating (unlike Stock above). Item buttons themselves keep showing
+    English+Tamil together regardless (CLAUDE.md §9); this only narrows the category
+    nav, and hotel_master.show_tamil_names (printed KOT/bill) is untouched by it.
+    """
+    tenant = await _get_tenant(db, current_user)
+    tenant.show_tamil_categories = payload.show_tamil_categories
+    await db.commit()
+    return CategoryDisplaySettingsResponse(show_tamil_categories=tenant.show_tamil_categories)
 
 
 @router.post(

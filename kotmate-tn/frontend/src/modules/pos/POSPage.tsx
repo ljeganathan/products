@@ -825,6 +825,7 @@ export function POSPage() {
           activeCategoryId={activeCategoryId}
           onSelect={setActiveCategoryId}
           variant="rail"
+          showTamilNames={meData?.show_tamil_categories !== false}
         />
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -834,6 +835,7 @@ export function POSPage() {
               activeCategoryId={activeCategoryId}
               onSelect={setActiveCategoryId}
               variant="strip"
+              showTamilNames={meData?.show_tamil_categories !== false}
             />
           </div>
 
