@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
-import { type ChangeEvent, type FormEvent, useEffect, useRef, useState } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { resolveAssetUrl } from "@/lib/api";
 import { listCategories } from "@/modules/admin/categoriesApi";
@@ -34,6 +34,56 @@ function apiErrorMessage(err: unknown, fallback: string): string {
     return String(err.response.data.detail);
   }
   return fallback;
+}
+
+type ItemSortKey = "code" | "name" | "category" | "price" | "flags";
+
+// Item codes are typically numeric (CLAUDE.md §9 laminated-menu code entry, e.g. "301")
+// but stored as free text, so compare numerically when both sides parse and fall back to
+// a plain string compare otherwise (e.g. non-numeric legacy codes).
+function compareItemCode(a: string | null, b: string | null): number {
+  if (!a && !b) return 0;
+  if (!a) return -1;
+  if (!b) return 1;
+  const na = Number(a);
+  const nb = Number(b);
+  if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+  return a.localeCompare(b);
+}
+
+// Flags sort groups Top Selling + Combo tiles together (more flags first), then falls
+// back to name so ties within the same flag combination stay predictable.
+function flagScore(item: Item): number {
+  return (item.is_top_seller ? 2 : 0) + (item.is_combo_tile ? 1 : 0);
+}
+
+function sortItems(
+  items: Item[],
+  key: ItemSortKey,
+  dir: "asc" | "desc",
+  categoryNameById: Map<string, string>,
+): Item[] {
+  const sorted = [...items].sort((a, b) => {
+    switch (key) {
+      case "code":
+        return compareItemCode(a.item_code, b.item_code);
+      case "name":
+        return a.name_en.localeCompare(b.name_en);
+      case "category":
+        return (categoryNameById.get(a.category_id) ?? "").localeCompare(
+          categoryNameById.get(b.category_id) ?? "",
+        );
+      case "price":
+        return a.price - b.price;
+      case "flags": {
+        const diff = flagScore(b) - flagScore(a);
+        return diff !== 0 ? diff : a.name_en.localeCompare(b.name_en);
+      }
+      default:
+        return 0;
+    }
+  });
+  return dir === "asc" ? sorted : sorted.reverse();
 }
 
 function suggestNextItemCode(items: Item[]): string {
@@ -600,6 +650,8 @@ export function ItemsPage() {
   const [restockingItem, setRestockingItem] = useState<Item | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<ItemSortKey>("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const exportErrorTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queryClient = useQueryClient();
 
@@ -612,7 +664,28 @@ export function ItemsPage() {
       listItems({ category_id: categoryFilter || undefined, search: search || undefined }),
   });
 
-  const categoryNameById = new Map(categories.map((c) => [c.id, c.name_en]));
+  const categoryNameById = useMemo(
+    () => new Map(categories.map((c) => [c.id, c.name_en])),
+    [categories],
+  );
+  const sortedItems = useMemo(
+    () => (items ? sortItems(items, sortKey, sortDir, categoryNameById) : items),
+    [items, sortKey, sortDir, categoryNameById],
+  );
+
+  function handleSort(key: ItemSortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
+
+  function sortIndicator(key: ItemSortKey): string {
+    if (key !== sortKey) return "";
+    return sortDir === "asc" ? " ▲" : " ▼";
+  }
   const itemImagesEnabled = meData?.features?.item_images === true;
   const sectionPricingEnabled = meData?.features?.section_pricing === true;
   const stockManagementEnabled = meData?.stock_tracking_enabled === true;
@@ -704,18 +777,28 @@ export function ItemsPage() {
           <table className="w-full text-sm">
             <thead className="bg-foreground/5 text-left text-xs uppercase tracking-wide text-foreground/60">
               <tr>
-                <th className="px-4 py-2.5">Code</th>
-                <th className="px-4 py-2.5">Name</th>
-                <th className="px-4 py-2.5">Category</th>
-                <th className="px-4 py-2.5">Price</th>
-                <th className="px-4 py-2.5">Flags</th>
+                <th className="cursor-pointer select-none px-4 py-2.5 hover:text-foreground" onClick={() => handleSort("code")}>
+                  Code{sortIndicator("code")}
+                </th>
+                <th className="cursor-pointer select-none px-4 py-2.5 hover:text-foreground" onClick={() => handleSort("name")}>
+                  Name{sortIndicator("name")}
+                </th>
+                <th className="cursor-pointer select-none px-4 py-2.5 hover:text-foreground" onClick={() => handleSort("category")}>
+                  Category{sortIndicator("category")}
+                </th>
+                <th className="cursor-pointer select-none px-4 py-2.5 hover:text-foreground" onClick={() => handleSort("price")}>
+                  Price{sortIndicator("price")}
+                </th>
+                <th className="cursor-pointer select-none px-4 py-2.5 hover:text-foreground" onClick={() => handleSort("flags")}>
+                  Flags{sortIndicator("flags")}
+                </th>
                 <th className="px-4 py-2.5">Stock</th>
                 <th className="px-4 py-2.5">Status</th>
                 <th className="px-4 py-2.5">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
+              {(sortedItems ?? []).map((item) => (
                 <tr key={item.id} className={`border-t border-border ${item.is_active ? "" : "opacity-50"}`}>
                   <td className="px-4 py-2.5 font-mono text-xs">{item.item_code || "—"}</td>
                   <td className="px-4 py-2.5">
