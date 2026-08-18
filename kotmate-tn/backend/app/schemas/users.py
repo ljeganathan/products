@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.core.constants import TENANT_STAFF_ROLE_CODES
+from app.core.constants import INCENTIVE_ELIGIBLE_ROLE_CODES, TENANT_STAFF_ROLE_CODES
 
 _LOCAL_HANDLE_RE = r"^[A-Za-z0-9_-]+$"
 
@@ -16,7 +16,8 @@ class UserCreateRequest(BaseModel):
     phone: str | None = None
     role: str
     password: str = Field(min_length=8)
-    # % on net sale value (post-discount, pre-tax) — only meaningful for role=pos_user.
+    # % on net sale value (post-discount, pre-tax) — only meaningful for roles that ring
+    # up bills directly (pos_user/Cashier, pos_operator/POS Operator).
     incentive_rate: float | None = Field(default=None, ge=0, le=100)
     location_ids: list[uuid.UUID] = Field(default_factory=list)
 
@@ -28,9 +29,9 @@ class UserCreateRequest(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _incentive_only_for_cashier(self) -> "UserCreateRequest":
-        if self.incentive_rate is not None and self.role != "pos_user":
-            raise ValueError("incentive_rate can only be set for role=pos_user")
+    def _incentive_only_for_billing_roles(self) -> "UserCreateRequest":
+        if self.incentive_rate is not None and self.role not in INCENTIVE_ELIGIBLE_ROLE_CODES:
+            raise ValueError(f"incentive_rate can only be set for role in {INCENTIVE_ELIGIBLE_ROLE_CODES}")
         return self
 
 

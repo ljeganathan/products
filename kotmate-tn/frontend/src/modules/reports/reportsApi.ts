@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import type { BillPrintJob } from "@/modules/pos/billsApi";
 
 export interface ReportFilterParams {
   date_from: string;
@@ -99,6 +100,30 @@ export interface CashierIncentive {
   total_incentive_amount: number;
 }
 
+export interface PosOperatorSalesRow {
+  pos_user_id: string;
+  login_id: string;
+  name: string;
+  bill_count: number;
+  net_sale_value: number;
+}
+export interface PosOperatorSales {
+  rows: PosOperatorSalesRow[];
+  total_net_sale_value: number;
+}
+
+export interface PosOperatorIncentiveRow {
+  pos_user_id: string;
+  login_id: string;
+  name: string;
+  net_sale_value: number;
+  incentive_amount: number;
+}
+export interface PosOperatorIncentive {
+  rows: PosOperatorIncentiveRow[];
+  total_incentive_amount: number;
+}
+
 export interface PaymentMethodTotal {
   method: string;
   amount: number;
@@ -130,6 +155,10 @@ export const getWaiterIncentive = (params: ReportFilterParams) =>
   getReport<WaiterIncentive>("waiter-incentive", params);
 export const getCashierIncentive = (params: ReportFilterParams) =>
   getReport<CashierIncentive>("cashier-incentive", params);
+export const getPosOperatorWiseSales = (params: ReportFilterParams) =>
+  getReport<PosOperatorSales>("pos-operator-wise", params);
+export const getPosOperatorIncentive = (params: ReportFilterParams) =>
+  getReport<PosOperatorIncentive>("pos-operator-incentive", params);
 export const getZReport = (reportDate: string, locationId?: string) =>
   getReport<ZReport>("z-report", { report_date: reportDate, location_id: locationId });
 
@@ -157,4 +186,25 @@ export async function downloadReportExport(
   link.click();
   link.remove();
   window.URL.revokeObjectURL(url);
+}
+
+export interface ReportPrintParams {
+  report_type: string;
+  date_from?: string;
+  date_to?: string;
+  report_date?: string;
+  location_id?: string;
+}
+
+// Pro Max only (plan feature AND tenant's own "Enable report printing" toggle,
+// Settings > Preferences) — plain ESC/POS-safe text, not the PDF/Excel/CSV export
+// above, since a thermal/dot-matrix printer can't render a PDF.
+export interface ReportPrintResult {
+  printed: boolean;
+  print_job: BillPrintJob | null;
+  print_error: string | null;
+}
+
+export async function printReport(params: ReportPrintParams): Promise<ReportPrintResult> {
+  return (await api.post<ReportPrintResult>("/api/v1/reports/print", params)).data;
 }

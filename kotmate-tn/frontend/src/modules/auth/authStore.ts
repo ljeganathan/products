@@ -1,8 +1,10 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-// CLAUDE.md §5 — the five RBAC roles, product_owner included (never a separate app).
-export type Role = "product_owner" | "tenant_admin" | "pos_user" | "waiter" | "kitchen";
+// CLAUDE.md §5 — the six RBAC roles, product_owner included (never a separate app).
+// "pos_operator" (POS Operator) is POS-screen-only, Pro Max only — production feedback
+// round 2.
+export type Role = "product_owner" | "tenant_admin" | "pos_user" | "waiter" | "kitchen" | "pos_operator";
 
 export interface Session {
   accessToken: string;
@@ -49,6 +51,7 @@ export function roleHomePath(role: Role): string {
       return "/dashboard";
     case "pos_user":
     case "waiter":
+    case "pos_operator":
       return "/pos";
     case "kitchen":
       return "/kot";

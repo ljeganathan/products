@@ -3,6 +3,7 @@ import axios from "axios";
 import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { Switch } from "@/components/ui/Switch";
 import { resolveAssetUrl } from "@/lib/api";
 import { INDIAN_STATES, gstinStateWarning } from "@/lib/constants";
 import { me, type MeResponse } from "@/modules/auth/authApi";
@@ -22,8 +23,10 @@ import {
   updateLocation,
 } from "@/modules/admin/locationsApi";
 import { updateCategoryDisplaySetting } from "@/modules/admin/categoryDisplaySettingsApi";
+import { updateDefaultPaymentMethod } from "@/modules/admin/paymentPreferencesApi";
 import { PrinterFormModal } from "@/modules/admin/PrintersPage";
 import { type Printer, listPrinters } from "@/modules/admin/printersApi";
+import { updateReportPrintingSetting } from "@/modules/admin/reportPrintingSettingsApi";
 import { updateStockManagementSetting } from "@/modules/admin/stockSettingsApi";
 import { type TaxRule, listTaxRules } from "@/modules/admin/taxRulesApi";
 import { TaxRuleFormModal } from "@/modules/admin/TaxRulesPage";
@@ -32,7 +35,7 @@ const inputClass =
   "min-h-10 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-accent";
 const labelClass = "text-xs font-medium text-foreground/70";
 
-const TABS = ["General", "Locations", "Printers", "Tax", "Stock"] as const;
+const TABS = ["General", "Locations", "Printers", "Tax", "Preferences"] as const;
 type Tab = (typeof TABS)[number];
 
 function apiErrorMessage(err: unknown, fallback: string): string {
@@ -45,11 +48,6 @@ function apiErrorMessage(err: unknown, fallback: string): string {
 export function SettingsPage() {
   const [tab, setTab] = useState<Tab>("General");
   const { data: meData } = useQuery({ queryKey: ["me"], queryFn: me });
-  // Pro/Pro Max-only surface — the underlying badges/decrement stay on for Lite too,
-  // but this whole tab (and its toggle) is a new admin-controlled surface layered on
-  // top, so it's gated on the plan feature specifically, not the effective flag.
-  const stockManagementOnPlan = meData?.features?.stock_management === true;
-  const visibleTabs = TABS.filter((t) => t !== "Stock" || stockManagementOnPlan);
   const { data: locations = [], isLoading: locationsLoading } = useQuery({
     queryKey: ["managed-locations"],
     queryFn: listManagedLocations,
@@ -72,7 +70,8 @@ export function SettingsPage() {
             Company Master, per-location Hotel Master, printers, tax, and categories.
           </p>
         </div>
-        {activeLocations.length > 1 && (tab === "General" || tab === "Printers" || tab === "Tax") && (
+        {activeLocations.length > 1 &&
+          (tab === "General" || tab === "Printers" || tab === "Tax" || tab === "Preferences") && (
           <div className="flex flex-col gap-1">
             <label className={labelClass}>Location</label>
             <select
@@ -91,7 +90,7 @@ export function SettingsPage() {
       </div>
 
       <div className="mb-6 flex gap-1 border-b border-border">
-        {visibleTabs.map((t) => (
+        {TABS.map((t) => (
           <button
             key={t}
             type="button"
@@ -109,83 +108,166 @@ export function SettingsPage() {
 
       {locationsLoading && <p className="text-sm text-foreground/60">Loading…</p>}
 
-      {tab === "General" && (
-        <div className="flex flex-col gap-6">
-          <CategoryDisplaySettings meData={meData} />
-          {selectedLocationId ? (
-            <GeneralTab locationId={selectedLocationId} />
-          ) : (
-            !locationsLoading && <p className="text-sm text-foreground/60">Add a location first.</p>
-          )}
-        </div>
-      )}
+      {tab === "General" &&
+        (selectedLocationId ? (
+          <GeneralTab locationId={selectedLocationId} />
+        ) : (
+          !locationsLoading && <p className="text-sm text-foreground/60">Add a location first.</p>
+        ))}
       {tab === "Locations" && <LocationsTab locations={locations} />}
       {tab === "Printers" && <PrintersTab locations={activeLocations} />}
       {tab === "Tax" && <TaxTab />}
-      {tab === "Stock" && stockManagementOnPlan && (
-        <StockTab enabled={meData?.stock_tracking_enabled === true} />
+      {tab === "Preferences" && (
+        <PreferencesTab meData={meData} locationId={selectedLocationId} locationsLoading={locationsLoading} />
       )}
     </div>
   );
 }
 
-function CategoryDisplaySettings({ meData }: { meData: MeResponse | undefined }) {
+function PreferencesTab({
+  meData,
+  locationId,
+  locationsLoading,
+}: {
+  meData: MeResponse | undefined;
+  locationId: string;
+  locationsLoading: boolean;
+}) {
   const queryClient = useQueryClient();
-  const mutation = useMutation({
+  const invalidateMe = () => void queryClient.invalidateQueries({ queryKey: ["me"] });
+
+  // Pro/Pro Max-only surfaces — the underlying stock badges/decrement stay on for Lite
+  // too, but each toggle here is a new admin-controlled surface layered on top, so it's
+  // gated on the plan feature specifically, not the effective flag.
+  const stockManagementOnPlan = meData?.features?.stock_management === true;
+  const reportPrintingOnPlan = meData?.features?.report_printing === true;
+
+  const categoryDisplayMutation = useMutation({
     mutationFn: (next: boolean) => updateCategoryDisplaySetting(next),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["me"] });
-    },
+    onSuccess: invalidateMe,
   });
-  const enabled = meData?.show_tamil_categories !== false;
+  const stockManagementMutation = useMutation({
+    mutationFn: (next: boolean) => updateStockManagementSetting(next),
+    onSuccess: invalidateMe,
+  });
+  const reportPrintingMutation = useMutation({
+    mutationFn: (next: boolean) => updateReportPrintingSetting(next),
+    onSuccess: invalidateMe,
+  });
+  const paymentMethodMutation = useMutation({
+    mutationFn: (method: "upi" | "cash" | "card") => updateDefaultPaymentMethod(method),
+    onSuccess: invalidateMe,
+  });
 
   return (
-    <div className="max-w-xl rounded-lg border border-border bg-surface p-4">
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={enabled}
-          disabled={mutation.isPending}
-          onChange={(e) => mutation.mutate(e.target.checked)}
+    <div className="flex max-w-xl flex-col gap-4">
+      <div className="rounded-lg border border-border bg-surface p-4">
+        <Switch
+          checked={meData?.show_tamil_categories !== false}
+          disabled={categoryDisplayMutation.isPending}
+          onChange={(next) => categoryDisplayMutation.mutate(next)}
+          label="Show Tamil names on the POS category list"
+          description="Applies only to the category rail/strip. Item buttons on the main grid always show English and Tamil together, and this doesn't affect printed KOT tickets or bills."
         />
-        Show Tamil names on the POS category list
-      </label>
-      <p className="mt-1 text-xs text-foreground/50">
-        Applies only to the category rail on the left of the POS screen (and the category strip on
-        tablet/mobile). Item buttons on the main grid always show English and Tamil together, and this
-        doesn&apos;t affect printed KOT tickets or bills — see the Tamil toggle in the Print section
-        below for that.
-      </p>
+      </div>
+
+      <div className="rounded-lg border border-border bg-surface p-4">
+        {locationsLoading ? (
+          <p className="text-sm text-foreground/60">Loading…</p>
+        ) : locationId ? (
+          <TamilPrintToggle locationId={locationId} />
+        ) : (
+          <p className="text-sm text-foreground/60">Add a location first.</p>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-border bg-surface p-4">
+        <p className="mb-2 text-sm font-medium text-foreground">Default payment method</p>
+        <div className="flex gap-1.5">
+          {(["upi", "cash", "card"] as const).map((method) => (
+            <button
+              key={method}
+              type="button"
+              disabled={paymentMethodMutation.isPending}
+              onClick={() => paymentMethodMutation.mutate(method)}
+              className={`rounded-md border px-3.5 py-2 text-xs font-semibold uppercase disabled:opacity-60 ${
+                (meData?.default_payment_method ?? "cash") === method
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-border text-foreground/70 hover:border-foreground/30"
+              }`}
+            >
+              {method}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-foreground/50">
+          Pre-selected on the POS billing screen — cashiers can still change it per bill.
+        </p>
+      </div>
+
+      {stockManagementOnPlan && (
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <Switch
+            checked={meData?.stock_tracking_enabled === true}
+            disabled={stockManagementMutation.isPending}
+            onChange={(next) => stockManagementMutation.mutate(next)}
+            label="Enable stock-quantity tracking"
+            description="Turns on quantity badges on the POS/KOT screens and the Stock Management tab on the KOT screen. Turning this off never clears any item's tracked quantity or history."
+          />
+        </div>
+      )}
+
+      {reportPrintingOnPlan && (
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <Switch
+            checked={meData?.report_printing_enabled === true}
+            disabled={reportPrintingMutation.isPending}
+            onChange={(next) => reportPrintingMutation.mutate(next)}
+            label="Enable report printing"
+            description="Lets Reports be sent to a Reports-target printer (Settings > Printers) directly from the Reports page. Pro Max only."
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-function StockTab({ enabled }: { enabled: boolean }) {
+function TamilPrintToggle({ locationId }: { locationId: string }) {
   const queryClient = useQueryClient();
+  const { data: hotel, isLoading } = useQuery({
+    queryKey: ["hotel-master", locationId],
+    queryFn: () => getHotelMaster(locationId),
+  });
   const mutation = useMutation({
-    mutationFn: (next: boolean) => updateStockManagementSetting(next),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["me"] });
-    },
+    mutationFn: (next: boolean) =>
+      saveHotelMaster({
+        location_id: locationId,
+        name: hotel?.name ?? "",
+        door_no: hotel?.door_no,
+        street: hotel?.street,
+        city: hotel?.city,
+        district: hotel?.district,
+        state: hotel?.state,
+        pincode: hotel?.pincode,
+        phone: hotel?.phone,
+        gstin: hotel?.gstin,
+        upi_id: hotel?.upi_id,
+        show_tamil_names: next,
+        receipt_footer_message: hotel?.receipt_footer_message,
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["hotel-master", locationId] }),
   });
 
+  if (isLoading || !hotel) return <p className="text-sm text-foreground/60">Loading…</p>;
+
   return (
-    <div className="max-w-xl rounded-lg border border-border bg-surface p-4">
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={enabled}
-          disabled={mutation.isPending}
-          onChange={(e) => mutation.mutate(e.target.checked)}
-        />
-        Enable stock-quantity tracking
-      </label>
-      <p className="mt-1 text-xs text-foreground/50">
-        Turns on quantity badges on the POS/KOT screens and the Stock Management tab
-        on the KOT screen. Turning this off never clears any item's tracked quantity
-        or history — turning it back on restores everything exactly as it was.
-      </p>
-    </div>
+    <Switch
+      checked={hotel.show_tamil_names}
+      disabled={mutation.isPending}
+      onChange={(next) => mutation.mutate(next)}
+      label="Show Tamil item names on printed KOT tickets and bills"
+      description="Set per location — this only affects the printed copy. The POS staff screen always shows English and Tamil together, regardless of this setting."
+    />
   );
 }
 
@@ -473,17 +555,8 @@ function GeneralTab({ locationId }: { locationId: string }) {
 
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-1 text-sm font-semibold">Print</legend>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={form.show_tamil_names}
-              onChange={(e) => update("show_tamil_names", e.target.checked)}
-            />
-            Show Tamil item names on printed KOT tickets and bills
-          </label>
           <p className="text-xs text-foreground/50">
-            This only affects the printed copy — the POS staff screen always shows English and Tamil
-            together, regardless of this setting.
+            The Tamil-names-on-print toggle for this location now lives in Settings &gt; Preferences.
           </p>
 
           <div className="mt-2 flex flex-col gap-1.5">

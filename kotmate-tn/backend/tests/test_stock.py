@@ -64,14 +64,13 @@ async def _enable_stock_management(client: AsyncClient, headers: dict, enabled: 
     assert resp.status_code == 200, resp.text
 
 
-async def test_lite_tenant_kot_deduction_still_works_unconditionally(
-    client: AsyncClient, tenant_admin: dict
-):
-    """Lite predates plan-gating on track_inventory (CLAUDE.md §11) — "zero behavior
-    change for Lite" per this feature's acceptance criteria, including the new ledger.
+async def test_lite_tenant_kot_send_blocked_by_tier_gate(client: AsyncClient, tenant_admin: dict):
+    """KOT (screen + send) is Pro Max only (production feedback round 2) — a Lite
+    tenant can no longer reach `/kot` at all, so stock tracking for Lite now only ever
+    happens via the direct-bill deduction path (see
+    test_direct_bill_deducts_stock_when_never_kot_sent), never kot_deduction.
     """
     headers = tenant_admin["headers"]
-    tenant_id = tenant_admin["tenant"]["id"]
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     category = await _create_category(client, headers)
@@ -83,18 +82,7 @@ async def test_lite_tenant_kot_deduction_still_works_unconditionally(
     )
 
     resp = await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)
-    assert resp.status_code == 201
-
-    items = (await client.get("/api/v1/items", headers=headers)).json()
-    updated = next(i for i in items if i["id"] == item["id"])
-    assert updated["available_qty"] == 7
-
-    rows = await _ledger_rows(tenant_id, item["id"])
-    assert len(rows) == 1
-    assert rows[0].reason == "kot_deduction"
-    assert rows[0].change_qty == -3
-    assert rows[0].reference_order_id == uuid.UUID(order["id"])
-    assert rows[0].location_id == uuid.UUID(location_id)
+    assert resp.status_code == 403
 
 
 async def test_pro_max_kot_deduction_skipped_when_toggle_off(
@@ -220,6 +208,44 @@ async def test_stock_management_tab_works_on_pro_max_when_enabled(
     assert rows[0].change_qty == 25
 
 
+async def test_stock_management_tab_blank_qty_stops_tracking(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    """Saving the Stock Management tab's qty box blank (available_qty: null) is the
+    reverse of typing a quantity — it stops tracking the item entirely, so a tenant can
+    remove an item from stock tracking (e.g. it ran out, got flagged out-of-stock in
+    POS, and they no longer want to restock/track it) without being forced to leave a
+    stale 0 behind.
+    """
+    headers = pro_max_tenant_admin["headers"]
+    tenant_id = pro_max_tenant_admin["tenant"]["id"]
+    await _enable_stock_management(client, headers, True)
+    category = await _create_category(client, headers)
+    item = await _create_item(
+        client, headers, category["id"], price=50, track_inventory=True, available_qty=0
+    )
+
+    clear_resp = await client.patch(
+        f"/api/v1/stock/items/{item['id']}", json={"available_qty": None}, headers=headers
+    )
+    assert clear_resp.status_code == 200, clear_resp.text
+    body = clear_resp.json()
+    assert body["available_qty"] is None
+    assert body["track_inventory"] is False
+
+    # The item goes back to reading exactly like one that was never tracked — confirmed
+    # via Item Master, not just the Stock Management tab's own response.
+    items = (await client.get("/api/v1/items", headers=headers)).json()
+    updated = next(i for i in items if i["id"] == item["id"])
+    assert updated["available_qty"] is None
+    assert updated["track_inventory"] is False
+
+    rows = await _ledger_rows(tenant_id, item["id"])
+    assert len(rows) == 1
+    assert rows[0].reason == "manual_set"
+    assert rows[0].change_qty == 0  # was already at 0 before clearing
+
+
 async def test_settings_toggle_blocked_on_lite(client: AsyncClient, tenant_admin: dict):
     headers = tenant_admin["headers"]
     resp = await client.patch("/api/v1/settings/stock-management", json={"enabled": True}, headers=headers)
@@ -310,9 +336,12 @@ async def test_direct_bill_deducts_stock_when_never_kot_sent(client: AsyncClient
     assert rows[0].location_id == uuid.UUID(location_id)
 
 
-async def test_kot_sent_item_not_double_deducted_at_bill_time(client: AsyncClient, tenant_admin: dict):
-    headers = tenant_admin["headers"]
-    tenant_id = tenant_admin["tenant"]["id"]
+async def test_kot_sent_item_not_double_deducted_at_bill_time(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    headers = pro_max_tenant_admin["headers"]
+    tenant_id = pro_max_tenant_admin["tenant"]["id"]
+    await _enable_stock_management(client, headers, True)
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     category = await _create_category(client, headers)

@@ -13,6 +13,8 @@ export async function listStockItems(): Promise<StockItem[]> {
   return (await api.get<StockItem[]>("/api/v1/stock/items")).data;
 }
 
-export async function updateStockItem(itemId: string, availableQty: number): Promise<StockItem> {
+// availableQty: null stops tracking this item entirely (clears track_inventory too) —
+// the reverse of giving it a quantity turning tracking on.
+export async function updateStockItem(itemId: string, availableQty: number | null): Promise<StockItem> {
   return (await api.patch<StockItem>(`/api/v1/stock/items/${itemId}`, { available_qty: availableQty })).data;
 }

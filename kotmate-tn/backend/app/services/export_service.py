@@ -32,10 +32,20 @@ def _coerce_cell(value: object) -> object:
     return str(value)
 
 
-def _rows_as_grid(
-    row_model: type[BaseModel], rows: list[BaseModel], totals_row: dict[str, object] | None
+def rows_as_grid(
+    row_model: type[BaseModel],
+    rows: list[BaseModel],
+    totals_row: dict[str, object] | None,
+    *,
+    exclude_id_fields: bool = False,
 ) -> tuple[list[str], list[list[object]]]:
-    field_names = list(row_model.model_fields.keys())
+    """`exclude_id_fields` drops every `*_id` field (e.g. `pos_user_id`) before
+    building headers/grid — a raw UUID is legitimately useful in an exported CSV/Excel/
+    PDF for back-office reconciliation (the default), but on a printed thermal receipt
+    it's just noise that steals width a report already spends on the human-readable
+    `login_id`/`name` columns on the same row (report_print_service.py).
+    """
+    field_names = [f for f in row_model.model_fields if not (exclude_id_fields and f.endswith("_id"))]
     headers = [_humanize(f) for f in field_names]
     grid = [[_coerce_cell(getattr(r, f)) for f in field_names] for r in rows]
     if totals_row is not None:
@@ -117,7 +127,7 @@ def export_rows(
     if fmt not in EXPORT_FORMATS:
         raise ValueError(f"Unsupported export format: {fmt}")
 
-    headers, grid = _rows_as_grid(row_model, rows, totals_row)
+    headers, grid = rows_as_grid(row_model, rows, totals_row)
     filename_stem = title.lower().replace(" ", "_")
 
     if fmt == "csv":

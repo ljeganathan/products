@@ -9,6 +9,8 @@ from app.db.session import get_db
 from app.models import Tenant
 from app.schemas.category_display import CategoryDisplaySettingsRequest, CategoryDisplaySettingsResponse
 from app.schemas.hotel_master import HotelMasterResponse, HotelMasterUpdateRequest
+from app.schemas.pos_preferences import DefaultPaymentMethodRequest, DefaultPaymentMethodResponse
+from app.schemas.report_print import ReportPrintingSettingsRequest, ReportPrintingSettingsResponse
 from app.schemas.stock import StockManagementSettingsRequest, StockManagementSettingsResponse
 from app.services.hotel_master_service import (
     get_hotel_master,
@@ -16,6 +18,7 @@ from app.services.hotel_master_service import (
     upload_hotel_master_logo,
     upsert_hotel_master,
 )
+from app.services.report_print_service import has_report_printing_feature
 from app.services.stock_service import has_stock_management_feature
 from app.services.tenant_onboarding import get_active_plan
 
@@ -95,6 +98,48 @@ async def update_category_display_setting(
     tenant.show_tamil_categories = payload.show_tamil_categories
     await db.commit()
     return CategoryDisplaySettingsResponse(show_tamil_categories=tenant.show_tamil_categories)
+
+
+@router.patch(
+    "/default-payment-method",
+    response_model=DefaultPaymentMethodResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def update_default_payment_method(
+    payload: DefaultPaymentMethodRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DefaultPaymentMethodResponse:
+    """Tenant-wide — every tier, no plan gating. Pre-selects the payment method on the
+    POS billing screen (BillingModal); cashiers can still change it per bill.
+    """
+    tenant = await _get_tenant(db, current_user)
+    tenant.default_payment_method = payload.default_payment_method
+    await db.commit()
+    return DefaultPaymentMethodResponse(default_payment_method=tenant.default_payment_method)
+
+
+@router.patch(
+    "/report-printing",
+    response_model=ReportPrintingSettingsResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def update_report_printing_setting(
+    payload: ReportPrintingSettingsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ReportPrintingSettingsResponse:
+    """Pro Max only — same tenant-level kill-switch shape as stock-management above."""
+    plan = await get_active_plan(db, current_user.tenant_id)
+    if not has_report_printing_feature(plan.features if plan else None):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Report printing isn't available on your current plan. Upgrade to Pro Max to use it.",
+        )
+    tenant = await _get_tenant(db, current_user)
+    tenant.report_printing_enabled = payload.enabled
+    await db.commit()
+    return ReportPrintingSettingsResponse(enabled=tenant.report_printing_enabled)
 
 
 @router.post(

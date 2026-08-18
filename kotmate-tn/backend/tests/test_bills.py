@@ -107,8 +107,8 @@ async def test_finalize_bill_computes_tax_and_round_off(client: AsyncClient, ten
     assert order_after["status"] == "billed"
 
 
-async def test_billed_order_drops_from_kot_tickets_popup(client: AsyncClient, tenant_admin: dict):
-    headers = tenant_admin["headers"]
+async def test_billed_order_drops_from_kot_tickets_popup(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     order = await _order_with_200_subtotal(client, headers, location_id, section_id)

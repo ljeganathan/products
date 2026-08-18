@@ -86,23 +86,35 @@ GST_STATE_CODES = {
     "38": "Ladakh",
 }
 
-ROLE_CODES = ["product_owner", "tenant_admin", "pos_user", "waiter", "kitchen"]
+ROLE_CODES = ["product_owner", "tenant_admin", "pos_user", "waiter", "kitchen", "pos_operator"]
 
 # Roles a tenant_admin can assign in User Management (Phase 04) — product_owner is
 # platform-only and never appears here. "kitchen" is labeled "KOT User" in all UI copy
-# (CLAUDE.md §5) but keeps its backend role code for RLS/API continuity.
-TENANT_STAFF_ROLE_CODES = ["tenant_admin", "pos_user", "waiter", "kitchen"]
+# (CLAUDE.md §5) but keeps its backend role code for RLS/API continuity. "pos_operator"
+# is POS-screen-only (Pro Max only, plan-gated via features.pos_operator_role) —
+# identical POS billing capability to pos_user/Cashier, but no Reports/Dashboard/Bill
+# History/Admin access at all.
+TENANT_STAFF_ROLE_CODES = ["tenant_admin", "pos_user", "waiter", "kitchen", "pos_operator"]
 
 # Roles counted against plans.max_users (CLAUDE.md §6: "Users (Admin + POS)") — waiter
-# and kitchen seats are uncapped by the seat limit.
-BILLABLE_ROLE_CODES = ["tenant_admin", "pos_user"]
+# and kitchen seats are uncapped by the seat limit. pos_operator counts the same as
+# pos_user (both are billing/POS seats), though moot today since Pro Max — the only
+# tier pos_operator is available on — has unlimited seats.
+BILLABLE_ROLE_CODES = ["tenant_admin", "pos_user", "pos_operator"]
+
+# Roles that can carry a users.incentive_rate (CLAUDE.md §11 incentive tracking) — both
+# ring up bills directly, so both have a meaningful net-sale-value incentive figure.
+INCENTIVE_ELIGIBLE_ROLE_CODES = ["pos_user", "pos_operator"]
 
 PLAN_CODES = ["lite", "pro", "pro_max"]
 
 ORDER_STATUSES = ["open", "held", "billed"]
 TABLE_STATUSES = ["free", "occupied", "billed"]
 KOT_TICKET_STATUSES = ["new", "preparing", "ready"]
-PRINTER_TARGETS = ["kot", "bill"]
+# "reports" is Pro Max only (plan.features.report_printing) — gated at the API layer,
+# not here (kept as a valid target for every tier at the schema level, same as "kot" and
+# "bill" always have been).
+PRINTER_TARGETS = ["kot", "bill", "reports"]
 PRINTER_TYPES = ["thermal", "dotmatrix"]
 PRINTER_CONNECTION_TYPES = ["network", "usb", "local_agent", "wifi", "bluetooth", "rawbt"]
 # Common physical paper widths on the market (CLAUDE.md §10, Phase 15) — surfaced as

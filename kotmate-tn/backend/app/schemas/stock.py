@@ -19,7 +19,10 @@ class StockItemResponse(BaseModel):
 
 
 class StockUpdateRequest(BaseModel):
-    available_qty: int = Field(ge=0)
+    # None = stop tracking this item entirely (clears track_inventory + available_qty)
+    # — saving the Stock Management tab's qty box blank, the reverse of giving it a
+    # quantity turning tracking on.
+    available_qty: int | None = Field(default=None, ge=0)
 
 
 class StockManagementSettingsRequest(BaseModel):

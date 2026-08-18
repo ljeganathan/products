@@ -1,11 +1,17 @@
+import base64
 import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUser, get_current_user, require_role, require_tenant_scope
 from app.db.session import get_db
+from app.models import Printer, Tenant
+from app.printing.network_transport import send_raw_bytes_over_network
+from app.schemas.printing import PrintJobPayload
+from app.schemas.report_print import ReportPrintRequest, ReportPrintResponse
 from app.schemas.reports import (
     CashierIncentiveResponse,
     CashierIncentiveRow,
@@ -15,6 +21,10 @@ from app.schemas.reports import (
     CategoryWiseSalesRow,
     ItemWiseSalesResponse,
     ItemWiseSalesRow,
+    PosOperatorIncentiveResponse,
+    PosOperatorIncentiveRow,
+    PosOperatorSalesResponse,
+    PosOperatorSalesRow,
     ReportQueryParams,
     SalesSummaryResponse,
     TaxSummaryResponse,
@@ -26,6 +36,10 @@ from app.schemas.reports import (
 )
 from app.services import report_service
 from app.services.export_service import export_rows
+from app.services.report_print_service import (
+    is_report_printing_enabled,
+    render_report_print_text,
+)
 from app.services.tenant_onboarding import get_active_plan
 
 # Reports are tenant_admin/pos_user only — a `waiter` has no reports access at all
@@ -247,6 +261,56 @@ async def get_cashier_incentive_report(
     return result
 
 
+@router.get("/pos-operator-wise", response_model=PosOperatorSalesResponse)
+async def get_pos_operator_wise_sales(
+    date_from: date,
+    date_to: date,
+    location_id: uuid.UUID | None = None,
+    export: str | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PosOperatorSalesResponse | Response:
+    result = await report_service.pos_operator_wise_sales(
+        db, current_user.tenant_id, _params(date_from, date_to, location_id)
+    )
+    if export:
+        await _require_export_format(db, current_user.tenant_id, export)
+        content, media_type, filename = export_rows(
+            "POS Operator Wise Sales",
+            PosOperatorSalesRow,
+            result.rows,
+            export,
+            totals_row={"name": "TOTAL", "net_sale_value": result.total_net_sale_value},
+        )
+        return _file_response(content, media_type, filename)
+    return result
+
+
+@router.get("/pos-operator-incentive", response_model=PosOperatorIncentiveResponse)
+async def get_pos_operator_incentive_report(
+    date_from: date,
+    date_to: date,
+    location_id: uuid.UUID | None = None,
+    export: str | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PosOperatorIncentiveResponse | Response:
+    result = await report_service.pos_operator_incentive_report(
+        db, current_user.tenant_id, _params(date_from, date_to, location_id)
+    )
+    if export:
+        await _require_export_format(db, current_user.tenant_id, export)
+        content, media_type, filename = export_rows(
+            "POS Operator Incentive",
+            PosOperatorIncentiveRow,
+            result.rows,
+            export,
+            totals_row={"name": "TOTAL", "incentive_amount": result.total_incentive_amount},
+        )
+        return _file_response(content, media_type, filename)
+    return result
+
+
 @router.get("/z-report", response_model=ZReportResponse)
 async def get_z_report(
     report_date: date,
@@ -268,3 +332,62 @@ async def get_z_report(
         content, media_type, filename = export_rows("Z Report", ZReportResponse, [export_row], export)
         return _file_response(content, media_type, filename)
     return result
+
+
+@router.post("/print", response_model=ReportPrintResponse)
+async def print_report(
+    payload: ReportPrintRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ReportPrintResponse:
+    """Pro Max only, and only when the tenant has switched the toggle on (Settings >
+    Preferences) — same tenant-level kill-switch shape as stock_management_enabled.
+    Renders plain ESC/POS-safe text (report_print_service), not the PDF/Excel/CSV
+    export — a thermal/dot-matrix printer can't render a PDF.
+    """
+    tenant = (
+        await db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
+    ).scalar_one()
+    plan = await get_active_plan(db, current_user.tenant_id)
+    if not is_report_printing_enabled(tenant, plan.features if plan else None):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Report printing isn't enabled for your account — a tenant_admin can turn it on in "
+            "Settings > Preferences (Pro Max only).",
+        )
+
+    printer_query = select(Printer).where(
+        Printer.tenant_id == current_user.tenant_id,
+        Printer.target == "reports",
+        Printer.is_active.is_(True),
+    )
+    if payload.location_id is not None:
+        printer_query = printer_query.where(Printer.location_id == payload.location_id)
+    printer = (await db.execute(printer_query)).scalars().first()
+    if printer is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "No active Reports printer is registered for this location — add one in Settings > Printers.",
+        )
+
+    content = await render_report_print_text(db, current_user.tenant_id, payload, printer.paper_width_mm)
+
+    # Same usb/local_agent/bluetooth/rawbt (frontend-dispatched) vs network/wifi
+    # (backend-dispatched) split as bill/KOT printing (bill_service._dispatch_print_for_bill).
+    if printer.connection_type in ("usb", "local_agent", "bluetooth", "rawbt"):
+        return ReportPrintResponse(
+            printed=True,
+            print_job=PrintJobPayload(
+                printer_id=printer.id,
+                connection_type=printer.connection_type,
+                connection_details=printer.connection_details or {},
+                data_base64=base64.b64encode(content).decode("ascii"),
+            ),
+        )
+    if printer.connection_type in ("network", "wifi"):
+        details = printer.connection_details or {}
+        print_error = send_raw_bytes_over_network(details.get("ip_address"), details.get("port"), content)
+        return ReportPrintResponse(printed=print_error is None, print_error=print_error)
+
+    connection_label = printer.connection_type.replace("_", " ").title()
+    return ReportPrintResponse(printed=False, print_error=f"{connection_label} printing isn't supported yet.")

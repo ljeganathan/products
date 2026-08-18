@@ -16,6 +16,7 @@ from app.core.security import (
 from app.db.session import get_db
 from app.models import PlatformSettings, Role, Tenant, User, UserLocationAccess
 from app.schemas.auth import LoginRequest, MeResponse, RefreshRequest, TokenResponse
+from app.services.report_print_service import is_report_printing_enabled
 from app.services.stock_service import is_stock_tracking_enabled
 from app.services.tenant_onboarding import get_active_plan, get_active_subscription
 
@@ -163,6 +164,8 @@ async def me(
             features=None,
             stock_tracking_enabled=False,
             show_tamil_categories=True,
+            default_payment_method="cash",
+            report_printing_enabled=False,
         )
 
     # `/me` serves every tenant-scoped role, not just one — set the RLS session var
@@ -186,6 +189,8 @@ async def me(
         features=plan.features if plan else None,
         stock_tracking_enabled=is_stock_tracking_enabled(tenant, plan.features if plan else None),
         show_tamil_categories=tenant.show_tamil_categories,
+        default_payment_method=tenant.default_payment_method,
+        report_printing_enabled=is_report_printing_enabled(tenant, plan.features if plan else None),
     )
 
 

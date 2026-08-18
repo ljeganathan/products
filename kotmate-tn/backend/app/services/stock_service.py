@@ -68,6 +68,40 @@ async def set_item_stock(
     return item
 
 
+async def clear_item_stock(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    item: Item,
+    *,
+    location_id: uuid.UUID | None = None,
+) -> Item:
+    """The reverse of `set_item_stock` giving an item a quantity turning tracking on —
+    this turns tracking back off and clears the count, for when a tenant no longer wants
+    to track a given item (e.g. Filter Coffee ran out, got flagged out-of-stock in POS,
+    and the tenant now wants to stop tracking it rather than keep restocking it). Called
+    when the KOT Stock Management tab's qty box is saved blank — the same one-action
+    symmetry as Item Master's own "Track stock count" checkbox+field, just reachable
+    from the qty field alone rather than a separate checkbox. Still writes a
+    `stock_ledger` row (reason `manual_set`, same as every other Stock Management tab
+    edit) so the removal is traceable — CLAUDE.md §11: "every items.available_qty change
+    is logged here."
+    """
+    previous = item.available_qty or 0
+    item.track_inventory = False
+    item.available_qty = None
+    session.add(
+        StockLedger(
+            tenant_id=tenant_id,
+            item_id=item.id,
+            location_id=location_id,
+            change_qty=-previous,
+            reason="manual_set",
+        )
+    )
+    await session.flush()
+    return item
+
+
 async def list_stock_items(session: AsyncSession, tenant_id: uuid.UUID) -> list[Item]:
     """Every active item, regardless of current track_inventory state — the Stock
     Management tab lets staff give any item a quantity, which is what turns tracking on

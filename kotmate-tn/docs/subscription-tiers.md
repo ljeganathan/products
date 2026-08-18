@@ -2,10 +2,10 @@
 
 See `CLAUDE.md` §6 for the original planning-stage feature matrix. Pricing summary:
 
-| Tier | Monthly (INR) | Yearly (INR) | Users | Locations | Images | Physical KOT Print | Section pricing |
+| Tier | Monthly (INR) | Yearly (INR) | Users | Locations | Images | KOT Screen + Print | Section pricing |
 |---|---------------|--------------|---|---|---|---|---|
-| Lite | ₹499          | ₹4,999       | 2 | 1 | ❌ | ❌ (screen only) | ❌ |
-| Pro | ₹799           | ₹7,999       | 6 | up to 2 | ✅ | ✅ | ✅ |
+| Lite | ₹499          | ₹4,999       | 2 | 1 | ❌ | ❌ (bill directly) | ❌ |
+| Pro | ₹799           | ₹7,999       | 6 | up to 2 | ✅ | ❌ (bill directly) | ✅ |
 | Pro Max | ₹1,499        | ₹14,999      | Unlimited | up to 5 | ✅ | ✅ | ✅ |
 
 **Add-ons:** extra POS seat ₹199/mo · extra hotel location beyond plan cap (Pro/Pro Max only) ₹999/location/mo · onboarding/data migration ₹2,999 one-time · SMS/WhatsApp bill notify ₹0.35/msg (future).
@@ -24,9 +24,10 @@ Cross-checked against the running application, not just the original plan — in
 | Feature | Lite | Pro | Pro Max |
 |---|:---:|:---:|:---:|
 | POS billing screen (desktop, tablet, mobile) | ✅ | ✅ | ✅ |
-| KOT ticket — on-screen only | ✅ | ✅ | ✅ |
-| KOT ticket — physical printer | ❌ | ✅ | ✅ |
-| Kitchen Display System (live ticket queue) | ❌ | ✅ | ✅ |
+| KOT ticket screen + KOT User login (`kitchen` role) | ❌ (production feedback round 2 — was on-screen-only ✅ before; bills go straight through instead) | ❌ | ✅ |
+| KOT ticket — physical printer | ❌ | ❌ | ✅ |
+| Kitchen Display System (live ticket queue) | ❌ | ❌ | ✅ |
+| POS Operator login (`pos_operator` — POS-screen-only staff account, no Reports/Dashboard access) | ❌ | ❌ | ✅ |
 | Hold / recall bill | ✅ | ✅ | ✅ |
 | Multi-payment split (Cash + UPI + Card, any mix) | ✅ | ✅ | ✅ |
 | Table & seating-section management with live floor status | ✅ | ✅ | ✅ |
@@ -62,13 +63,14 @@ Cross-checked against the running application, not just the original plan — in
 | Discount rules — auto-applied, no cashier math | flat % only | flat % + item-level | flat + item-level + coupon codes |
 | Low-stock / out-of-stock badges on POS & KOT | ✅ | ✅ | ✅ |
 | Full stock audit ledger + tenant on/off switch | ❌ | ✅ | ✅ |
+| Stock Management tab (bulk category-grouped view + "+ Add Stock" increment popup) | ❌ | ❌ (lives on the now Pro-Max-only KOT screen) | ✅ |
 
 ### Staff & operations
 | Feature | Lite | Pro | Pro Max |
 |---|:---:|:---:|:---:|
 | Waiter master | ✅ | ✅ | ✅ |
-| Cashier & waiter incentive-rate tracking | ✅ | ✅ | ✅ |
-| User seats (Admin + POS + Waiter + KOT logins) | up to 2 | up to 6 | Unlimited |
+| Cashier, waiter & POS Operator incentive-rate tracking | ✅ (cashier/waiter) | ✅ (cashier/waiter) | ✅ (cashier/waiter/POS Operator) |
+| User seats (Admin + POS + Waiter logins; KOT/POS Operator logins are Pro Max only, see above) | up to 2 | up to 6 | Unlimited |
 | Bill History search (by number, date, table, waiter, cashier) | ✅ | ✅ | ✅ |
 | Audit log for discounts & price overrides | ✅ | ✅ | ✅ |
 | Daily Z-report / shift close | ✅ | ✅ | ✅ |
@@ -76,11 +78,12 @@ Cross-checked against the running application, not just the original plan — in
 ### Reports & dashboard
 | Feature | Lite | Pro | Pro Max |
 |---|:---:|:---:|:---:|
-| Dashboard KPIs (today's sales, bill count, avg. bill) | ✅ | ✅ | ✅ |
+| Dashboard KPIs (today's sales, bill count, avg. bill) | ✅ (Cashier login sees Top Selling + Low Stock only, no sales figures) | ✅ (Cashier login sees Top Selling + Low Stock only, no sales figures) | ✅ (Cashier login sees Top Selling + Low Stock only, no sales figures) |
 | Charts & trends | ❌ | ✅ | ✅ |
-| Sales / item / category / tax / waiter / cashier reports | view only | + CSV export | + PDF & Excel export |
-| Waiter & cashier incentive payout worksheets | ✅ | ✅ | ✅ |
-| Multi-location comparison view | ❌ | ❌ | ✅ |
+| Sales / item / category / tax / waiter / cashier / POS Operator reports | view only (no POS Operator report — role is Pro Max only) | + CSV export (no POS Operator report — role is Pro Max only) | + PDF & Excel export, incl. POS Operator-wise sales/incentive |
+| Waiter, cashier & POS Operator incentive payout worksheets | ✅ (waiter/cashier) | ✅ (waiter/cashier) | ✅ (waiter/cashier/POS Operator) |
+| Report printing (any report to a dedicated printer, plain text) | ❌ | ❌ | ✅ (tenant on/off switch in Settings → Preferences) |
+| Multi-location comparison view | ❌ | ❌ | ✅ — `tenant_admin` only, hidden from Cashier |
 | Priority support | ❌ | ❌ | ✅ |
 
 ### Mobile & tablet

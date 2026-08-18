@@ -42,10 +42,10 @@ product-level rationale — this doc is the implementation-level ERD.
 | max_users | int, **nullable** | NULL = unlimited (Pro Max) |
 | max_locations | int NOT NULL | 1 / 2 / 5 |
 | price_monthly, price_yearly | numeric(10,2) | |
-| features | jsonb | rest of the §6 feature matrix (item_images, section_pricing, kot_printing, qr_upi, discount_types, tax_mode, export_formats, kds, priority_support, ...) — editable by product_owner without a redeploy |
+| features | jsonb | rest of the §6 feature matrix (item_images, section_pricing, kot_printing, qr_upi, discount_types, tax_mode, export_formats, kds, priority_support, report_printing, pos_operator_role, ...) — editable by product_owner without a redeploy. `kds` gates the whole KOT screen + `kitchen` role (Pro Max only, production feedback round 2 — was Pro+ before); `pos_operator_role` gates the `pos_operator` role (Pro Max only, same round). |
 | is_active | bool | |
 
-**`roles`** — shared lookup: `product_owner`, `tenant_admin`, `pos_user`, `waiter`, `kitchen`.
+**`roles`** — shared lookup: `product_owner`, `tenant_admin`, `pos_user`, `waiter`, `kitchen`, `pos_operator`.
 
 **`tenants`** — the Company Master (CLAUDE.md §4/§9)
 | column | type | notes |
@@ -60,6 +60,9 @@ product-level rationale — this doc is the implementation-level ERD.
 | pincode | varchar(6), CHECK `^[1-9][0-9]{5}$` | |
 | is_active | bool | |
 | stock_management_enabled | bool NOT NULL, default false | tenant-wide soft-disable switch for stock-quantity tracking (Pro/Pro Max only — see `plans.features.stock_management`); toggling never touches `items.track_inventory`/`available_qty` |
+| show_tamil_categories | bool NOT NULL, default true | tenant-wide toggle for Tamil labels on the POS category rail/strip only |
+| default_payment_method | varchar(10) NOT NULL, default `cash`, CHECK ∈ upi/cash/card | pre-selects the POS billing screen's payment method |
+| report_printing_enabled | bool NOT NULL, default false | tenant-wide soft-disable switch for report printing (Pro Max only — see `plans.features.report_printing`) |
 
 ### Tenant-scoped
 
@@ -95,7 +98,7 @@ for the overdue-lookup query. RLS-enabled like every other tenant-scoped table.
 | password_hash | varchar(255) | bcrypt, set in Phase 02 |
 | role_id | uuid FK → roles | |
 | name, phone | | |
-| incentive_rate | numeric(5,2), nullable | % on net sale value; meaningful only when role=`pos_user` (cashier) |
+| incentive_rate | numeric(5,2), nullable | % on net sale value; meaningful only when role=`pos_user` (cashier) or role=`pos_operator` (POS Operator, Pro Max only) |
 | is_active | bool | |
 
 **`user_location_access`** — join table, FK `user_id`, `location_id`, unique
@@ -214,12 +217,14 @@ best-for-customer active flat rule discounts the bill remainder, and an active c
 (entered by the cashier) discounts what's left after those — all three stack. See
 `bill_service._compute_discount`.
 
-**`printers`** — `location_id`, `name`, `target` ∈ kot/bill, `printer_type` ∈
-thermal/dotmatrix, `connection_type` ∈ network/usb/local_agent/wifi/bluetooth (wifi +
-bluetooth added Phase 15), `connection_details` (jsonb — `{ip_address, port}` for
-network/wifi, `{device_name}` for bluetooth), `paper_width_mm` (int, nullable — Phase
-15; UI offers 58/80/241mm presets or free entry, not a CHECK constraint since actual
-hardware varies).
+**`printers`** — `location_id`, `name`, `target` ∈ kot/bill/reports (`reports` added
+production feedback round 1, Pro Max only — see `plans.features.report_printing`),
+`printer_type` ∈ thermal/dotmatrix, `connection_type` ∈
+network/usb/local_agent/wifi/bluetooth/rawbt (wifi + bluetooth added Phase 15, rawbt
+added production feedback round 1), `connection_details` (jsonb — `{ip_address, port}`
+for network/wifi, `{device_name}` for bluetooth), `paper_width_mm` (int, nullable —
+Phase 15; UI offers 58/80/241mm presets or free entry, not a CHECK constraint since
+actual hardware varies).
 
 **`hotel_master`** — one row per `tenant_location` (unique `location_id`). `name`, same
 Indian address fields as `tenants`, `phone`, `gstin` (CHECK format), `logo_url`,
@@ -304,6 +309,27 @@ for the full chain. Resuming the list for the manual-testing-fix backlog phases:
     extends `stock_ledger`'s `reason` CHECK constraint with `bill_deduction`, covering
     order lines billed directly without ever being sent to KOT (previously never
     decremented stock at all — see the `stock_ledger` table description above).
+18. **`tenant show_tamil_categories`** (production feedback round 1, revision
+    `c1a9e7d4f230`) — adds `tenants.show_tamil_categories` (bool, default true).
+19. **`perf top sellers index`** (production feedback round 1, revision `d2f6a91c4e58`) —
+    adds `ix_bills_tenant_id_created_at` on `bills`, for the POS "Top Selling" tab's
+    1-hour rolling-window query (`item_service.list_top_sellers`).
+20. **`tenant pos preferences`** (production feedback round 1, revision `e7b3c85a1f92`) —
+    adds `tenants.default_payment_method` (CHECK ∈ upi/cash/card, default `cash`) and
+    `tenants.report_printing_enabled` (bool, default false).
+21. **`printer reports target`** (production feedback round 1, revision `f4a01d6c3b87`) —
+    widens `printers.target`'s CHECK constraint from kot/bill to also allow `reports`,
+    and JSONB-merges `report_printing: true` onto the seeded `pro_max` plan's `features`
+    only (same pattern as revision 15's `stock_management` change).
+22. **`seed pos_operator role`** (production feedback round 2, revision `a5c8f1d4e93b`) —
+    data-only: inserts the `pos_operator` row into `roles` (no CHECK constraint on
+    `roles.code`, just `UNIQUE` — a plain data insert, same shape as the original
+    `seed plans and roles` migration).
+23. **`plan features pos_operator_role and kds tightening`** (production feedback round
+    2, revision `b7e2a6f905dc`) — data-only: JSONB-merges `pos_operator_role: true` onto
+    the seeded `pro_max` plan's `features` only, and flips the seeded `pro` plan's
+    `features.kds` from `true` to `false` (Lite was already `false`) — the whole KOT
+    screen + `kitchen`/`pos_operator` roles are now Pro Max only, not Pro+.
 
 ### Gotcha for Phase 02: setting the RLS session vars
 

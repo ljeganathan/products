@@ -13,6 +13,9 @@ interface CartPanelProps {
   onClear: () => void;
   kotSending: boolean;
   showSyncIndicator?: boolean;
+  // KOT screen is Pro Max only (production feedback round 2) — Lite/Pro tenants skip
+  // the KOT step entirely and bill items directly.
+  kdsEnabled: boolean;
 }
 
 export function CartPanel({
@@ -26,8 +29,9 @@ export function CartPanel({
   onClear,
   kotSending,
   showSyncIndicator,
+  kdsEnabled,
 }: CartPanelProps) {
-  const canBill = role === "pos_user" || role === "tenant_admin";
+  const canBill = role === "pos_user" || role === "tenant_admin" || role === "pos_operator";
   const isEmpty = !order || order.items.length === 0;
   const itemTally = order?.items.reduce((sum, l) => sum + l.quantity, 0) ?? 0;
 
@@ -125,17 +129,17 @@ export function CartPanel({
                     <button
                       type="button"
                       onClick={() => onQuantityChange(line.item_id, line.notes, line.quantity - 1)}
-                      className="flex h-6 w-6 items-center justify-center bg-surface-2 text-sm font-extrabold hover:bg-surface-3"
+                      className="flex h-10 w-10 items-center justify-center bg-surface-2 text-base font-extrabold hover:bg-surface-3"
                       aria-label={`Decrease ${line.name_en}`}
                     >
                       −
                     </button>
-                    <span className="tabular-nums w-6 text-center text-[12px] font-bold">{line.quantity}</span>
+                    <span className="tabular-nums w-8 text-center text-sm font-bold">{line.quantity}</span>
                     <button
                       type="button"
                       onClick={() => onQuantityChange(line.item_id, line.notes, line.quantity + 1)}
                       disabled={outOfStock}
-                      className="flex h-6 w-6 items-center justify-center bg-surface-2 text-sm font-extrabold hover:bg-surface-3 disabled:opacity-40"
+                      className="flex h-10 w-10 items-center justify-center bg-surface-2 text-base font-extrabold hover:bg-surface-3 disabled:opacity-40"
                       aria-label={`Increase ${line.name_en}`}
                     >
                       +
@@ -165,7 +169,7 @@ export function CartPanel({
         </div>
 
         <div className="px-3 pb-3 pt-2.5">
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className={`grid gap-1.5 ${kdsEnabled ? "grid-cols-2" : "grid-cols-1"}`}>
             <button
               type="button"
               onClick={onHold}
@@ -174,15 +178,17 @@ export function CartPanel({
             >
               ⏸ Hold <span className="text-[9.5px] font-bold opacity-60">Ctrl H</span>
             </button>
-            <button
-              type="button"
-              onClick={onSendKot}
-              disabled={isEmpty || kotSending}
-              className="flex min-h-[34px] items-center justify-center gap-1.5 rounded-lg border border-gold bg-gold-soft text-[12px] font-extrabold text-gold disabled:opacity-40"
-            >
-              {kotSending ? "Sending…" : "🍳 Add to KOT"}
-              {!kotSending && <span className="text-[9.5px] font-bold opacity-60">Ctrl ⏎</span>}
-            </button>
+            {kdsEnabled && (
+              <button
+                type="button"
+                onClick={onSendKot}
+                disabled={isEmpty || kotSending}
+                className="flex min-h-[34px] items-center justify-center gap-1.5 rounded-lg border border-gold bg-gold-soft text-[12px] font-extrabold text-gold disabled:opacity-40"
+              >
+                {kotSending ? "Sending…" : "🍳 Add to KOT"}
+                {!kotSending && <span className="text-[9.5px] font-bold opacity-60">Ctrl ⏎</span>}
+              </button>
+            )}
           </div>
 
           {canBill && (

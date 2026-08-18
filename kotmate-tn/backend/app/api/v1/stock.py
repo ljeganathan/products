@@ -9,7 +9,12 @@ from app.db.session import get_db
 from app.models import Tenant
 from app.schemas.stock import StockItemResponse, StockUpdateRequest
 from app.services.item_service import get_item_or_404
-from app.services.stock_service import has_stock_management_feature, list_stock_items, set_item_stock
+from app.services.stock_service import (
+    clear_item_stock,
+    has_stock_management_feature,
+    list_stock_items,
+    set_item_stock,
+)
 from app.services.tenant_onboarding import get_active_plan
 
 # KOT screen's Stock Management tab (extends Phase 05/08's soft-inventory feature) —
@@ -67,6 +72,9 @@ async def update_tenant_stock_item(
 ) -> StockItemResponse:
     await _require_stock_management(db, current_user.tenant_id)
     item = await get_item_or_404(db, current_user.tenant_id, item_id)
-    item = await set_item_stock(db, current_user.tenant_id, item, payload.available_qty, "manual_set")
+    if payload.available_qty is None:
+        item = await clear_item_stock(db, current_user.tenant_id, item)
+    else:
+        item = await set_item_stock(db, current_user.tenant_id, item, payload.available_qty, "manual_set")
     await db.commit()
     return StockItemResponse.model_validate(item)

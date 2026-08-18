@@ -30,7 +30,7 @@ export function CustomerSelectorBar({ table, currentLabel, openOrders, onSelect 
             key={label}
             type="button"
             onClick={() => onSelect(resolveCustomerSlotSelection(table, label, openOrders))}
-            className={`relative shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-colors ${
+            className={`relative shrink-0 rounded-lg border px-3.5 py-2.5 text-sm font-bold transition-colors ${
               isActive
                 ? "border-accent bg-accent-soft text-accent"
                 : occupiedOrder

@@ -128,6 +128,30 @@ export function KotDisplayPage() {
     })
     .filter((item) => item.availableQty !== null && item.availableQty <= 5);
 
+  // KOT screen is Pro Max only (production feedback round 2 — was unrestricted on every
+  // tier before). Wait for `meData` to load before deciding, so a Pro Max tenant doesn't
+  // flash this message before the plan features arrive.
+  if (meData && meData.features?.kds !== true) {
+    return (
+      <div className="flex h-screen w-screen flex-col items-center justify-center gap-3 bg-background p-6 text-center text-foreground">
+        <img src={logoMark} alt="KOTMate TN" className="h-10 w-10 object-contain" />
+        <p className="text-lg font-bold">The KOT screen is only available on Pro Max</p>
+        <p className="max-w-sm text-sm text-ink-faint">
+          Upgrade your plan to unlock the kitchen ticket queue and Stock Management tab.
+        </p>
+        {role === "tenant_admin" && (
+          <Link
+            to="/dashboard"
+            className="mt-2 rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm font-bold text-ink-soft hover:border-accent hover:text-accent"
+          >
+            Back to Dashboard
+          </Link>
+        )}
+        <UserMenu />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
       <header className="flex items-center gap-2.5 border-b border-border bg-surface px-4 py-2.5 shadow-pos">

@@ -45,3 +45,8 @@ class MeResponse(BaseModel):
     # Tenant toggle for Tamil labels on the POS category rail/strip only (not gated by
     # plan) — item buttons still always show both languages per CLAUDE.md §9.
     show_tamil_categories: bool
+    # Pre-selected payment method on the POS billing screen (tenant-wide, all tiers).
+    default_payment_method: str
+    # Tenant-wide kill switch for printing reports (Pro Max only — always false when the
+    # plan lacks the feature, mirroring stock_tracking_enabled's shape).
+    report_printing_enabled: bool

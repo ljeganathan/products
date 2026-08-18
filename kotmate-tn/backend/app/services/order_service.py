@@ -509,10 +509,10 @@ async def apply_order_update(
         order.party_label = data["party_label"]
     if "status" in data:
         order.status = data["status"]
-    # Picking up/editing an order as pos_user or tenant_admin makes them the
-    # cashier-of-record from that point on (CLAUDE.md §11) — a waiter's own edits never
-    # reassign it away from whoever already claimed it.
-    if current_user.role in ("pos_user", "tenant_admin"):
+    # Picking up/editing an order as pos_user, pos_operator, or tenant_admin makes them
+    # the cashier-of-record from that point on (CLAUDE.md §11) — a waiter's own edits
+    # never reassign it away from whoever already claimed it.
+    if current_user.role in ("pos_user", "tenant_admin", "pos_operator"):
         order.pos_user_id = current_user.id
 
     await apply_line_changes(session, tenant_id, order, lines)

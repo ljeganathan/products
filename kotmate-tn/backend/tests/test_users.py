@@ -89,11 +89,11 @@ async def test_pro_max_tenant_has_unlimited_billable_seats(
         assert resp.status_code == 201
 
 
-async def test_deactivated_user_cannot_login(client: AsyncClient, tenant_admin: dict):
+async def test_deactivated_user_cannot_login(client: AsyncClient, pro_max_tenant_admin: dict):
     create_resp = await client.post(
         "/api/v1/users",
         json={"local_handle": "kot01", "name": "Kitchen One", "role": "kitchen", "password": "password123"},
-        headers=tenant_admin["headers"],
+        headers=pro_max_tenant_admin["headers"],
     )
     assert create_resp.status_code == 201
     user = create_resp.json()
@@ -104,7 +104,7 @@ async def test_deactivated_user_cannot_login(client: AsyncClient, tenant_admin: 
     assert login_ok.status_code == 200
 
     deactivate_resp = await client.patch(
-        f"/api/v1/users/{user['id']}", json={"is_active": False}, headers=tenant_admin["headers"]
+        f"/api/v1/users/{user['id']}", json={"is_active": False}, headers=pro_max_tenant_admin["headers"]
     )
     assert deactivate_resp.status_code == 200
     assert deactivate_resp.json()["is_active"] is False
@@ -229,11 +229,11 @@ async def test_non_tenant_admin_blocked_from_user_management(client: AsyncClient
     assert resp.status_code == 403
 
 
-async def test_kot_user_role_composed_correctly(client: AsyncClient, tenant_admin: dict):
+async def test_kot_user_role_composed_correctly(client: AsyncClient, pro_max_tenant_admin: dict):
     resp = await client.post(
         "/api/v1/users",
         json={"local_handle": "kot01", "name": "Kitchen One", "role": "kitchen", "password": "password123"},
-        headers=tenant_admin["headers"],
+        headers=pro_max_tenant_admin["headers"],
     )
     assert resp.status_code == 201
     body = resp.json()

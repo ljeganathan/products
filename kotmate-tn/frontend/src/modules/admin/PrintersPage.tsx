@@ -6,6 +6,7 @@ import { dispatchPrintJob } from "@/lib/printDispatch";
 import { isWebBluetoothSupported, pairBluetoothPrinter } from "@/lib/webBluetoothPrinter";
 import { isWebUSBSupported, pairPrinter } from "@/lib/webusbPrinter";
 import { listLocations } from "@/modules/admin/locationsApi";
+import { me } from "@/modules/auth/authApi";
 import {
   PRINTER_CONNECTION_TYPES,
   PRINTER_PAPER_WIDTHS_MM,
@@ -22,6 +23,13 @@ import {
 const inputClass =
   "min-h-10 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-accent";
 const labelClass = "text-xs font-medium text-foreground/70";
+
+const TARGET_LABELS: Record<string, string> = { kot: "KOT", bill: "Bill", reports: "Reports" };
+const TARGET_BADGE_CLASSES: Record<string, string> = {
+  kot: "bg-gold/15 text-gold",
+  bill: "bg-accent/15 text-accent-foreground",
+  reports: "bg-veg/15 text-veg",
+};
 
 const CONNECTION_LABELS: Record<string, string> = {
   network: "Network (Ethernet)",
@@ -75,6 +83,8 @@ export function PrinterFormModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { data: meData } = useQuery({ queryKey: ["me"], queryFn: me });
+  const reportPrintingOnPlan = meData?.features?.report_printing === true;
   const [form, setForm] = useState<PrinterFormState>(
     editingPrinter
       ? {
@@ -273,6 +283,7 @@ export function PrinterFormModal({
               >
                 <option value="kot">KOT (kitchen)</option>
                 <option value="bill">Bill (billing counter)</option>
+                {reportPrintingOnPlan && <option value="reports">Reports</option>}
               </select>
             </div>
             <div className="flex flex-col gap-1.5">
@@ -581,10 +592,10 @@ export function PrintersPage() {
                   <td className="px-4 py-2.5">
                     <span
                       className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                        printer.target === "kot" ? "bg-gold/15 text-gold" : "bg-accent/15 text-accent-foreground"
+                        TARGET_BADGE_CLASSES[printer.target] ?? "bg-accent/15 text-accent-foreground"
                       }`}
                     >
-                      {printer.target === "kot" ? "KOT" : "Bill"}
+                      {TARGET_LABELS[printer.target] ?? printer.target}
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-xs capitalize text-foreground/70">{printer.printer_type}</td>

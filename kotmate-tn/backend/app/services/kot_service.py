@@ -29,6 +29,16 @@ from app.services.stock_service import is_stock_tracking_enabled, set_item_stock
 from app.services.tenant_onboarding import get_active_plan
 
 
+def has_kds_feature(plan_features: dict | None) -> bool:
+    """Plan-tier gate for the whole KOT screen/workflow (Pro Max only, production
+    feedback round 2 — flipped from Pro+ to Pro Max only via the
+    plan_features_pos_operator_kds migration). Unlike stock_management, there is no
+    "always on for tiers without it" fallback — Lite/Pro never see the KOT screen or the
+    "Send to KOT" action at all once this is false.
+    """
+    return bool((plan_features or {}).get("kds"))
+
+
 @dataclass
 class KotSendResult:
     ticket: KotTicket

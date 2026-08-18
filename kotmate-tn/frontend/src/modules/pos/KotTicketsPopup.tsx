@@ -11,18 +11,18 @@ interface KotTicketsPopupProps {
 
 interface GroupedTicket {
   orderId: string;
-  ticketNumbers: string[];
   tableNumber: string | null;
   partyLabel: string | null;
   sectionNameEn: string;
   statuses: string[];
-  items: ActiveKotTicketItem[];
+  tickets: ActiveKotTicket[];
 }
 
 // A single table+customer can have multiple KOT tickets (repeat-KOT — add-on items sent
 // in a later batch, CLAUDE.md §8), but they all belong to the same order and get billed
-// together — so group by order_id into one row, merging item lines (same item across
-// tickets combines into one quantity) rather than listing each physical ticket separately.
+// together — so group by order_id into one row. Each ticket keeps its own item list and
+// status rather than being flattened into one merged list, so the expanded view can show
+// which items are at which kitchen status (new/preparing/ready) per ticket.
 function groupTicketsByOrder(tickets: ActiveKotTicket[]): GroupedTicket[] {
   const byOrder = new Map<string, GroupedTicket>();
   for (const ticket of tickets) {
@@ -30,22 +30,16 @@ function groupTicketsByOrder(tickets: ActiveKotTicket[]): GroupedTicket[] {
     if (!group) {
       group = {
         orderId: ticket.order_id,
-        ticketNumbers: [],
         tableNumber: ticket.table_number,
         partyLabel: ticket.party_label,
         sectionNameEn: ticket.section_name_en,
         statuses: [],
-        items: [],
+        tickets: [],
       };
       byOrder.set(ticket.order_id, group);
     }
-    group.ticketNumbers.push(ticket.ticket_number);
     if (!group.statuses.includes(ticket.status)) group.statuses.push(ticket.status);
-    for (const item of ticket.items) {
-      const existing = group.items.find((i) => i.name_en === item.name_en && i.name_ta === item.name_ta);
-      if (existing) existing.quantity += item.quantity;
-      else group.items.push({ ...item });
-    }
+    group.tickets.push(ticket);
   }
   return Array.from(byOrder.values());
 }
@@ -101,21 +95,35 @@ export function KotTicketsPopup({ onSelectOrder, onClose }: KotTicketsPopupProps
                       </span>
                     </div>
                     <span className="font-mono text-xs text-ink-faint">
-                      #{group.ticketNumbers.join(", #")}
+                      #{group.tickets.map((t) => t.ticket_number).join(", #")}
                     </span>
                   </summary>
                   <div className="border-t border-dashed border-border px-3.5 py-2">
-                    <ul className="mb-2 flex flex-col gap-0.5">
-                      {group.items.map((item, i) => (
-                        <li key={i} className="flex items-center justify-between text-xs">
-                          <span>
-                            {item.name_en}
-                            {item.name_ta && <span className="ml-1.5 text-ink-faint">{item.name_ta}</span>}
-                          </span>
-                          <span className="font-bold">×{item.quantity}</span>
-                        </li>
+                    <div className="mb-2 flex flex-col gap-2">
+                      {group.tickets.map((ticket) => (
+                        <div key={ticket.id} className="rounded-md bg-surface px-2.5 py-2">
+                          <div className="mb-1 flex items-center justify-between">
+                            <span className="font-mono text-[11px] font-bold text-ink-faint">
+                              #{ticket.ticket_number}
+                            </span>
+                            <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-extrabold capitalize text-accent">
+                              {ticket.status}
+                            </span>
+                          </div>
+                          <ul className="flex flex-col gap-0.5">
+                            {ticket.items.map((item: ActiveKotTicketItem, i: number) => (
+                              <li key={i} className="flex items-center justify-between text-xs">
+                                <span>
+                                  {item.name_en}
+                                  {item.name_ta && <span className="ml-1.5 text-ink-faint">{item.name_ta}</span>}
+                                </span>
+                                <span className="font-bold">×{item.quantity}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                     <button
                       type="button"
                       onClick={() => onSelectOrder(group.orderId)}

@@ -4,11 +4,32 @@ from fastapi import HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import BILLABLE_ROLE_CODES
+from app.core.constants import BILLABLE_ROLE_CODES, INCENTIVE_ELIGIBLE_ROLE_CODES
 from app.core.security import hash_password
 from app.models import Role, Tenant, TenantLocation, User, UserLocationAccess
 from app.schemas.users import UserCreateRequest, UserResponse, UserUpdateRequest
 from app.services.tenant_onboarding import count_active_billable_users, get_active_plan
+
+# Roles gated behind a plan feature, beyond the general TENANT_STAFF_ROLE_CODES
+# allow-list — both Pro Max only (production feedback round 2). "kitchen" is "KOT User"
+# in UI copy; the KOT screen itself is gated the same way (has_kds_feature, kot.py).
+_ROLE_PLAN_FEATURE_GATES = {
+    "kitchen": ("kds", "KOT User accounts are only available on Pro Max. Upgrade to add one."),
+    "pos_operator": (
+        "pos_operator_role",
+        "POS Operator accounts are only available on Pro Max. Upgrade to add one.",
+    ),
+}
+
+
+async def _enforce_role_plan_gate(session: AsyncSession, tenant_id: uuid.UUID, role_code: str) -> None:
+    gate = _ROLE_PLAN_FEATURE_GATES.get(role_code)
+    if gate is None:
+        return
+    feature_key, message = gate
+    plan = await get_active_plan(session, tenant_id)
+    if not plan or not plan.features.get(feature_key):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, message)
 
 
 async def _get_role_or_400(session: AsyncSession, code: str) -> Role:
@@ -124,6 +145,7 @@ async def get_user_or_404(session: AsyncSession, tenant_id: uuid.UUID, user_id: 
 
 async def create_user(session: AsyncSession, tenant: Tenant, req: UserCreateRequest) -> UserResponse:
     role = await _get_role_or_400(session, req.role)
+    await _enforce_role_plan_gate(session, tenant.id, req.role)
     await _enforce_seat_cap(session, tenant.id, req.role)
     await _validate_location_ids(session, tenant.id, req.location_ids)
 
@@ -160,8 +182,11 @@ async def update_user(
     new_role_code = req.role if req.role is not None else old_role_code
     new_is_active = req.is_active if req.is_active is not None else user.is_active
 
-    if req.incentive_rate is not None and new_role_code != "pos_user":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "incentive_rate can only be set for role=pos_user")
+    if req.incentive_rate is not None and new_role_code not in INCENTIVE_ELIGIBLE_ROLE_CODES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"incentive_rate can only be set for role in {INCENTIVE_ELIGIBLE_ROLE_CODES}",
+        )
 
     # Only re-check the seat cap when this update newly makes the user an active
     # billable seat (role change and/or reactivation) — shrinking never needs a check,
@@ -173,6 +198,7 @@ async def update_user(
 
     if req.role is not None:
         role = await _get_role_or_400(session, req.role)
+        await _enforce_role_plan_gate(session, tenant.id, req.role)
         user.role_id = role.id
     if req.name is not None:
         user.name = req.name
@@ -180,7 +206,7 @@ async def update_user(
         user.phone = req.phone
     if req.incentive_rate is not None:
         user.incentive_rate = req.incentive_rate
-    elif new_role_code != "pos_user":
+    elif new_role_code not in INCENTIVE_ELIGIBLE_ROLE_CODES:
         user.incentive_rate = None
     if req.is_active is not None:
         user.is_active = req.is_active

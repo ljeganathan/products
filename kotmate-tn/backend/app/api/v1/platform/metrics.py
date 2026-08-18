@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import BILLABLE_ROLE_CODES
 from app.db.session import get_db
 from app.models import Plan, Role, Subscription, Tenant, TenantLocation, User
 from app.schemas.platform import PlatformMetrics
@@ -49,7 +50,7 @@ async def get_platform_metrics(db: AsyncSession = Depends(get_db)) -> PlatformMe
             .select_from(User)
             .where(
                 User.is_active.is_(True),
-                User.role_id.in_(select(Role.id).where(Role.code.in_(["tenant_admin", "pos_user"]))),
+                User.role_id.in_(select(Role.id).where(Role.code.in_(BILLABLE_ROLE_CODES))),
             )
         )
     ).scalar_one()

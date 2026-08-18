@@ -46,11 +46,22 @@ class Tenant(UUIDPKMixin, TimestampMixin, Base):
     # reversal of that rule). Independent of hotel_master.show_tamil_names, which controls
     # the printed KOT/bill only. Defaults true so existing tenants see no behavior change.
     show_tamil_categories: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Pre-selected payment method on the POS billing screen (tenant-wide, all tiers) —
+    # cashiers can still change it per bill.
+    default_payment_method: Mapped[str] = mapped_column(String(10), nullable=False, default="cash")
+    # Tenant-wide kill switch for printing Reports (Pro Max only — gated separately via
+    # plans.features.report_printing). Defaults off, unlike stock_management_enabled's
+    # "always on for tiers without the feature" — Lite/Pro never see this at all.
+    report_printing_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         CheckConstraint(_STATE_CHECK_SQL, name="ck_tenants_state_valid"),
         CheckConstraint(_PINCODE_CHECK_SQL, name="ck_tenants_pincode_format"),
         CheckConstraint(_TENANT_CODE_CHECK_SQL, name="ck_tenants_tenant_code_format"),
+        CheckConstraint(
+            "default_payment_method IN ('upi', 'cash', 'card')",
+            name="ck_tenants_default_payment_method_valid",
+        ),
     )
 
 

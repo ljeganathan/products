@@ -116,6 +116,32 @@ class CashierIncentiveResponse(BaseModel):
     total_incentive_amount: float
 
 
+class PosOperatorSalesRow(BaseModel):
+    pos_user_id: uuid.UUID
+    login_id: str
+    name: str
+    bill_count: int
+    net_sale_value: float
+
+
+class PosOperatorSalesResponse(BaseModel):
+    rows: list[PosOperatorSalesRow]
+    total_net_sale_value: float
+
+
+class PosOperatorIncentiveRow(BaseModel):
+    pos_user_id: uuid.UUID
+    login_id: str
+    name: str
+    net_sale_value: float
+    incentive_amount: float
+
+
+class PosOperatorIncentiveResponse(BaseModel):
+    rows: list[PosOperatorIncentiveRow]
+    total_incentive_amount: float
+
+
 class PaymentMethodTotal(BaseModel):
     method: str
     amount: float

@@ -50,7 +50,7 @@ export const router = createBrowserRouter([
   { path: "/", element: <RootRedirect /> },
   { path: "/login", element: <LoginPage /> },
   {
-    element: <ProtectedRoute roles={["tenant_admin", "pos_user", "waiter"]} />,
+    element: <ProtectedRoute roles={["tenant_admin", "pos_user", "waiter", "pos_operator"]} />,
     children: [{ path: "/pos", element: <POSPage /> }],
   },
   {

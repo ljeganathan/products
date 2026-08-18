@@ -393,8 +393,8 @@ async def test_inactive_or_foreign_item_rejected(client: AsyncClient, tenant_adm
     assert resp.status_code == 400
 
 
-async def test_kitchen_role_blocked_from_orders(client: AsyncClient, tenant_admin: dict):
-    headers = tenant_admin["headers"]
+async def test_kitchen_role_blocked_from_orders(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
 
@@ -558,11 +558,13 @@ async def test_table_frees_only_once_all_parties_billed(client: AsyncClient, ten
     assert now_free["status"] == "free"
 
 
-async def test_multiple_kot_sends_on_same_order_club_into_one_bill(client: AsyncClient, tenant_admin: dict):
+async def test_multiple_kot_sends_on_same_order_club_into_one_bill(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
     """POS-25: a second KOT send for the same table/customer must land on the same
     order (and so the same eventual bill), not silently start a duplicate order.
     """
-    headers = tenant_admin["headers"]
+    headers = pro_max_tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     table = await _create_table(client, headers, location_id, section_id, table_number="T8")

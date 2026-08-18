@@ -31,6 +31,9 @@ export function DashboardPage() {
   const reportsLevel = (meData?.features?.reports as string | undefined) ?? "basic";
   const hasCharts = reportsLevel !== "basic";
   const hasMultiLocation = reportsLevel === "charts_csv_pdf_excel_multilocation";
+  // A cashier keeps Top Selling Items + Low Stock (operationally useful on the floor)
+  // but not the sales-figure cards — production feedback, tenant_admin-only otherwise.
+  const canSeeSalesFigures = meData?.role !== "pos_user";
 
   const [locationId, setLocationId] = useState<string>("");
 
@@ -71,11 +74,13 @@ export function DashboardPage() {
 
       {data && (
         <>
-          <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3">
-            <KpiCard label="Today's Sales" value={formatINR(data.today_sales)} />
-            <KpiCard label="Bill Count" value={String(data.bill_count)} />
-            <KpiCard label="Average Bill Value" value={formatINR(data.average_bill_value)} />
-          </div>
+          {canSeeSalesFigures && (
+            <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3">
+              <KpiCard label="Today's Sales" value={formatINR(data.today_sales)} />
+              <KpiCard label="Bill Count" value={String(data.bill_count)} />
+              <KpiCard label="Average Bill Value" value={formatINR(data.average_bill_value)} />
+            </div>
+          )}
 
           <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="rounded-lg border border-border bg-surface p-4">
@@ -101,38 +106,39 @@ export function DashboardPage() {
             <LowStockSection />
           </div>
 
-          {hasCharts ? (
-            <div className="mb-6 rounded-lg border border-border bg-surface p-4">
-              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-foreground/60">
-                Hourly Sales Trend
-              </h2>
-              <div className="h-64 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={data.hourly_trend}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                    <XAxis dataKey="hour" tickFormatter={(h: number) => `${h}:00`} fontSize={11} />
-                    <YAxis fontSize={11} tickFormatter={(v: number) => `₹${v}`} />
-                    <Tooltip
-                      // recharts' Formatter type covers array-valued series too, which
-                      // this single-series bar chart never produces — narrow loosely
-                      // rather than fight its generic signature for a tooltip label.
-                      formatter={((v: unknown) => formatINR(Number(v))) as never}
-                      labelFormatter={(h: ReactNode) => `${String(h)}:00`}
-                    />
-                    <Bar dataKey="sales" fill="hsl(var(--accent))" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+          {canSeeSalesFigures &&
+            (hasCharts ? (
+              <div className="mb-6 rounded-lg border border-border bg-surface p-4">
+                <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-foreground/60">
+                  Hourly Sales Trend
+                </h2>
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={data.hourly_trend}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                      <XAxis dataKey="hour" tickFormatter={(h: number) => `${h}:00`} fontSize={11} />
+                      <YAxis fontSize={11} tickFormatter={(v: number) => `₹${v}`} />
+                      <Tooltip
+                        // recharts' Formatter type covers array-valued series too, which
+                        // this single-series bar chart never produces — narrow loosely
+                        // rather than fight its generic signature for a tooltip label.
+                        formatter={((v: unknown) => formatINR(Number(v))) as never}
+                        labelFormatter={(h: ReactNode) => `${String(h)}:00`}
+                      />
+                      <Bar dataKey="sales" fill="hsl(var(--accent))" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
-            </div>
-          ) : (
-            <p className="mb-6 rounded-lg border border-dashed border-border bg-surface/50 p-4 text-sm text-foreground/60">
-              Charts and trend analysis are available on Pro and Pro Max plans.
-            </p>
-          )}
+            ) : (
+              <p className="mb-6 rounded-lg border border-dashed border-border bg-surface/50 p-4 text-sm text-foreground/60">
+                Charts and trend analysis are available on Pro and Pro Max plans.
+              </p>
+            ))}
         </>
       )}
 
-      {hasMultiLocation && <MultiLocationSection />}
+      {hasMultiLocation && meData?.role === "tenant_admin" && <MultiLocationSection />}
     </div>
   );
 }

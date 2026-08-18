@@ -21,8 +21,16 @@ const inputClass =
   "min-h-10 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-accent";
 const labelClass = "text-xs font-medium text-foreground/70";
 
-const STAFF_ROLES: StaffRole[] = ["tenant_admin", "pos_user", "waiter", "kitchen"];
-const BILLABLE_ROLES: StaffRole[] = ["tenant_admin", "pos_user"];
+const STAFF_ROLES: StaffRole[] = ["tenant_admin", "pos_user", "waiter", "kitchen", "pos_operator"];
+const BILLABLE_ROLES: StaffRole[] = ["tenant_admin", "pos_user", "pos_operator"];
+const INCENTIVE_ROLES: StaffRole[] = ["pos_user", "pos_operator"];
+// Both Pro Max only (production feedback round 2) — hidden from the role dropdown
+// entirely rather than shown-then-rejected, same pattern as other plan-gated options
+// elsewhere in Settings/Printers.
+const PLAN_GATED_ROLES: Partial<Record<StaffRole, string>> = {
+  kitchen: "kds",
+  pos_operator: "pos_operator_role",
+};
 
 function apiErrorMessage(err: unknown, fallback: string): string {
   if (axios.isAxiosError(err) && err.response?.data?.detail) {
@@ -37,6 +45,7 @@ function RoleBadge({ role }: { role: StaffRole }) {
     pos_user: "bg-accent/15 text-accent-foreground",
     waiter: "bg-gold/15 text-gold",
     kitchen: "bg-foreground/10 text-foreground/70",
+    pos_operator: "bg-veg/15 text-veg",
   };
   return (
     <span
@@ -72,14 +81,22 @@ function UserFormModal({
   tenantCode,
   locations,
   seatUsage,
+  planFeatures,
   onClose,
 }: {
   editingUser: TenantUser | null;
   tenantCode: string | null;
   locations: { id: string; name: string }[];
   seatUsage: { active_billable_users: number; max_users: number | null } | undefined;
+  planFeatures: Record<string, boolean | string | string[] | undefined> | null | undefined;
   onClose: () => void;
 }) {
+  const visibleRoles = STAFF_ROLES.filter((role) => {
+    const featureKey = PLAN_GATED_ROLES[role];
+    // Editing an existing user of a role that's since become plan-gated-off still shows
+    // it, so the dropdown doesn't silently drop the currently-selected value.
+    return !featureKey || planFeatures?.[featureKey] === true || editingUser?.role === role;
+  });
   const queryClient = useQueryClient();
   const [form, setForm] = useState<UserFormState>(
     editingUser
@@ -117,7 +134,7 @@ function UserFormModal({
         phone: form.phone || undefined,
         role: form.role,
         incentive_rate:
-          form.role === "pos_user" && form.incentive_rate ? Number(form.incentive_rate) : null,
+          INCENTIVE_ROLES.includes(form.role) && form.incentive_rate ? Number(form.incentive_rate) : null,
         location_ids: form.location_ids,
       }),
     onSuccess: () => {
@@ -149,7 +166,8 @@ function UserFormModal({
       phone: form.phone || undefined,
       role: form.role,
       password: form.password,
-      incentive_rate: form.role === "pos_user" && form.incentive_rate ? Number(form.incentive_rate) : null,
+      incentive_rate:
+        INCENTIVE_ROLES.includes(form.role) && form.incentive_rate ? Number(form.incentive_rate) : null,
       location_ids: form.location_ids,
     });
   }
@@ -212,7 +230,7 @@ function UserFormModal({
                 value={form.role}
                 onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as StaffRole }))}
               >
-                {STAFF_ROLES.map((role) => (
+                {visibleRoles.map((role) => (
                   <option key={role} value={role}>
                     {STAFF_ROLE_LABELS[role]}
                   </option>
@@ -235,7 +253,7 @@ function UserFormModal({
             </div>
           )}
 
-          {form.role === "pos_user" && (
+          {INCENTIVE_ROLES.includes(form.role) && (
             <div className="flex flex-col gap-1.5">
               <label className={labelClass}>Incentive Rate (% of net sale value)</label>
               <input
@@ -492,7 +510,7 @@ export function UsersPage() {
                       : u.location_ids.map((id) => locationNameById.get(id) ?? id).join(", ")}
                   </td>
                   <td className="px-4 py-2.5 text-xs">
-                    {u.role === "pos_user" && u.incentive_rate != null ? `${u.incentive_rate}%` : "—"}
+                    {INCENTIVE_ROLES.includes(u.role) && u.incentive_rate != null ? `${u.incentive_rate}%` : "—"}
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex gap-3 text-xs font-semibold">
@@ -528,6 +546,7 @@ export function UsersPage() {
           tenantCode={meData?.tenant_code ?? null}
           locations={locations}
           seatUsage={seatUsage}
+          planFeatures={meData?.features}
           onClose={() => setFormUser(null)}
         />
       )}

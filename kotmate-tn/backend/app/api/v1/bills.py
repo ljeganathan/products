@@ -21,16 +21,19 @@ from app.services.bill_service import (
     reprint_bill,
     search_bills,
 )
+from app.ws.manager import manager as ws_manager
 
-# Finalizing/reading bills is tenant_admin/pos_user only — a `waiter` token is rejected
-# with 403 even if called directly (CLAUDE.md §5/§9: a waiter can never finalize/print a
-# bill or take payment), enforced once here for the whole router rather than per-route.
+# Finalizing/reading bills is tenant_admin/pos_user/pos_operator only — a `waiter` token
+# is rejected with 403 even if called directly (CLAUDE.md §5/§9: a waiter can never
+# finalize/print a bill or take payment), enforced once here for the whole router rather
+# than per-route. pos_operator (Pro Max only, production feedback round 2) has identical
+# POS billing capability to pos_user/Cashier.
 router = APIRouter(
     prefix="/bills",
     tags=["bills"],
     dependencies=[
         Depends(require_tenant_scope),
-        Depends(require_role("tenant_admin", "pos_user")),
+        Depends(require_role("tenant_admin", "pos_user", "pos_operator")),
     ],
 )
 
@@ -52,6 +55,13 @@ async def create_tenant_bill(
 ) -> BillResponse:
     result = await finalize_bill(db, current_user.tenant_id, current_user, payload)
     await db.commit()
+
+    # Lightweight refetch signal for the POS "Top Selling" tab (1-hour rolling window,
+    # item_service.list_top_sellers) — no payload needed, just tells open POS screens at
+    # this location to re-pull the ranked list. Same broadcast channel kot.py already
+    # uses for kot_ticket/item_stock.
+    await ws_manager.broadcast(result.location_id, {"type": "top_sellers_changed"})
+
     return result
 
 

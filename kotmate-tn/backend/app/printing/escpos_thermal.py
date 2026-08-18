@@ -180,8 +180,13 @@ def render_bill(bill: BillRenderData) -> bytes:
     elif bill.discount_amount:
         discount_label = "-" + format_inr(bill.discount_amount, symbol="Rs.")
         out += _text(f"{'Discount':<{label_w}}{discount_label:>{amount_w}}")
-    out += _text(f"{'CGST':<{label_w}}{format_inr(bill.cgst_amount, symbol='Rs.'):>{amount_w}}")
-    out += _text(f"{'SGST':<{label_w}}{format_inr(bill.sgst_amount, symbol='Rs.'):>{amount_w}}")
+    # Zero-rated tax lines are skipped to save space on narrow paper (production
+    # feedback) — CGST/SGST still always print as two separate lines whenever either is
+    # actually nonzero, never merged into one (CLAUDE.md §9).
+    if bill.cgst_amount:
+        out += _text(f"{'CGST':<{label_w}}{format_inr(bill.cgst_amount, symbol='Rs.'):>{amount_w}}")
+    if bill.sgst_amount:
+        out += _text(f"{'SGST':<{label_w}}{format_inr(bill.sgst_amount, symbol='Rs.'):>{amount_w}}")
     round_off_label = (
         f"+{format_inr(bill.round_off_amount, symbol='Rs.')}"
         if bill.round_off_amount >= 0

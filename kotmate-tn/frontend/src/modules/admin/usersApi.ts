@@ -1,14 +1,16 @@
 import { api } from "@/lib/api";
 
 // CLAUDE.md §5 — "kitchen" is labeled "KOT User" everywhere in UI copy; role code
-// stays `kitchen` for backend/API/RLS continuity.
-export type StaffRole = "tenant_admin" | "pos_user" | "waiter" | "kitchen";
+// stays `kitchen` for backend/API/RLS continuity. "pos_operator" ("POS Operator") is
+// POS-screen-only, Pro Max only — production feedback round 2.
+export type StaffRole = "tenant_admin" | "pos_user" | "waiter" | "kitchen" | "pos_operator";
 
 export const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
   tenant_admin: "Admin",
   pos_user: "Cashier",
   waiter: "Waiter",
   kitchen: "KOT User",
+  pos_operator: "POS Operator",
 };
 
 export interface TenantUser {

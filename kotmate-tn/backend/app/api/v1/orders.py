@@ -22,14 +22,14 @@ _DUPLICATE_PARTY_DETAIL = (
     "just claimed it. Refresh and pick another."
 )
 
-# waiter/pos_user/tenant_admin can all build a cart; `kitchen` has no POS access
-# whatsoever (CLAUDE.md §5) — enforced once here for the whole router.
+# waiter/pos_user/pos_operator/tenant_admin can all build a cart; `kitchen` has no POS
+# access whatsoever (CLAUDE.md §5) — enforced once here for the whole router.
 router = APIRouter(
     prefix="/orders",
     tags=["orders"],
     dependencies=[
         Depends(require_tenant_scope),
-        Depends(require_role("tenant_admin", "pos_user", "waiter")),
+        Depends(require_role("tenant_admin", "pos_user", "waiter", "pos_operator")),
     ],
 )
 

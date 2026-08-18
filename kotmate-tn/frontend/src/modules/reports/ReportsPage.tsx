@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
+import axios from "axios";
 import { useState } from "react";
 
+import { dispatchPrintJob } from "@/lib/printDispatch";
 import { formatINR } from "@/lib/utils";
 import { listLocations } from "@/modules/admin/locationsApi";
 import { me } from "@/modules/auth/authApi";
@@ -11,16 +13,22 @@ import {
   getCashierWiseSales,
   getCategoryWiseSales,
   getItemWiseSales,
+  getPosOperatorIncentive,
+  getPosOperatorWiseSales,
   getSalesSummary,
   getTaxSummary,
   getWaiterIncentive,
   getWaiterWiseSales,
   getZReport,
+  printReport,
 } from "@/modules/reports/reportsApi";
 
 const inputClass =
   "min-h-9 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-accent";
 
+// pos-operator-wise/incentive are Pro Max only (filtered at render time below, per
+// meData.features.pos_operator_role) — kept in this static list (not conditionally
+// built) so ReportKey stays a plain union type.
 const REPORTS = [
   { key: "sales-summary", label: "Sales Summary" },
   { key: "item-wise", label: "Item-wise Sales" },
@@ -30,9 +38,15 @@ const REPORTS = [
   { key: "cashier-wise", label: "Cashier-wise Sales" },
   { key: "waiter-incentive", label: "Waiter Incentive" },
   { key: "cashier-incentive", label: "Cashier Incentive" },
+  { key: "pos-operator-wise", label: "POS Operator-wise Sales" },
+  { key: "pos-operator-incentive", label: "POS Operator Incentive" },
   { key: "z-report", label: "Z-Report (Shift Close)" },
 ] as const;
 type ReportKey = (typeof REPORTS)[number]["key"];
+const PLAN_GATED_REPORTS: Partial<Record<ReportKey, string>> = {
+  "pos-operator-wise": "pos_operator_role",
+  "pos-operator-incentive": "pos_operator_role",
+};
 
 const EXPORT_LABELS: Record<ExportFormat, string> = { csv: "CSV", excel: "Excel", pdf: "PDF" };
 
@@ -49,8 +63,11 @@ export function ReportsPage() {
   const [dateTo, setDateTo] = useState(todayIso());
   const [locationId, setLocationId] = useState<string>("");
   const [downloading, setDownloading] = useState<ExportFormat | null>(null);
+  const [printing, setPrinting] = useState(false);
+  const [printNotice, setPrintNotice] = useState<string | null>(null);
 
   const exportFormats = (meData?.features?.export_formats as string[] | undefined) ?? [];
+  const canPrintReports = meData?.report_printing_enabled === true;
   const params = { date_from: dateFrom, date_to: dateTo, location_id: locationId || undefined };
 
   const { data, isLoading, isError } = useQuery<unknown>({
@@ -73,6 +90,10 @@ export function ReportsPage() {
           return getWaiterIncentive(params);
         case "cashier-incentive":
           return getCashierIncentive(params);
+        case "pos-operator-wise":
+          return getPosOperatorWiseSales(params);
+        case "pos-operator-incentive":
+          return getPosOperatorIncentive(params);
         case "z-report":
           return getZReport(dateFrom, locationId || undefined);
       }
@@ -92,6 +113,34 @@ export function ReportsPage() {
     }
   }
 
+  async function handlePrint() {
+    setPrinting(true);
+    setPrintNotice(null);
+    try {
+      const result = await printReport(
+        reportKey === "z-report"
+          ? { report_type: reportKey, report_date: dateFrom, location_id: locationId || undefined }
+          : { report_type: reportKey, date_from: dateFrom, date_to: dateTo, location_id: locationId || undefined },
+      );
+      if (result.print_job) {
+        const dispatchError = await dispatchPrintJob(result.print_job);
+        setPrintNotice(dispatchError ?? "Sent to printer.");
+      } else if (result.printed) {
+        setPrintNotice("Sent to printer.");
+      } else {
+        setPrintNotice(result.print_error ?? "Couldn't print this report.");
+      }
+    } catch (err) {
+      setPrintNotice(
+        axios.isAxiosError(err) && err.response?.data?.detail
+          ? String(err.response.data.detail)
+          : "Couldn't print this report.",
+      );
+    } finally {
+      setPrinting(false);
+    }
+  }
+
   return (
     <div className="min-h-screen w-full bg-background p-6 text-foreground">
       <div className="mb-6">
@@ -102,7 +151,10 @@ export function ReportsPage() {
       </div>
 
       <div className="mb-4 flex flex-wrap gap-1.5">
-        {REPORTS.map((r) => (
+        {REPORTS.filter((r) => {
+          const featureKey = PLAN_GATED_REPORTS[r.key];
+          return !featureKey || meData?.features?.[featureKey] === true;
+        }).map((r) => (
           <button
             key={r.key}
             type="button"
@@ -155,7 +207,7 @@ export function ReportsPage() {
           </div>
         )}
 
-        {exportFormats.length > 0 && (
+        {(exportFormats.length > 0 || canPrintReports) && (
           <div className="ml-auto flex items-end gap-1.5">
             {exportFormats.map((fmt) => (
               <button
@@ -168,10 +220,21 @@ export function ReportsPage() {
                 {downloading === fmt ? "Exporting…" : `⬇ ${EXPORT_LABELS[fmt as ExportFormat]}`}
               </button>
             ))}
+            {canPrintReports && (
+              <button
+                type="button"
+                onClick={() => void handlePrint()}
+                disabled={printing || !data}
+                className="rounded-md border border-border px-3 py-2 text-xs font-semibold hover:bg-accent/10 disabled:opacity-50"
+              >
+                {printing ? "Printing…" : "🖨 Print"}
+              </button>
+            )}
           </div>
         )}
       </div>
 
+      {printNotice && <p className="mb-4 text-sm text-foreground/70">{printNotice}</p>}
       {isLoading && <p className="text-sm text-foreground/60">Loading…</p>}
       {isError && <p className="text-sm text-chili">Failed to load this report.</p>}
       {data ? <ReportTable reportKey={reportKey} data={data} /> : null}
@@ -400,6 +463,70 @@ function ReportTable({ reportKey, data }: { reportKey: ReportKey; data: any }) {
             <thead className={theadClass}>
               <tr>
                 <th className={thClass}>Cashier</th>
+                <th className={`${thClass} text-right`}>Net Sale Value</th>
+                <th className={`${thClass} text-right`}>Incentive</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((r: { pos_user_id: string; name: string; login_id: string; net_sale_value: number; incentive_amount: number }) => (
+                <tr key={r.pos_user_id} className="border-t border-border">
+                  <td className={tdClass}>
+                    {r.name} <span className="text-foreground/50">({r.login_id})</span>
+                  </td>
+                  <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.net_sale_value)}</td>
+                  <td className={`${tdClass} text-right tabular-nums font-bold text-gold`}>
+                    {formatINR(r.incentive_amount)}
+                  </td>
+                </tr>
+              ))}
+              <tr className={totalRowClass}>
+                <td className={tdClass}>TOTAL</td>
+                <td className={tdClass} />
+                <td className={`${tdClass} text-right tabular-nums`}>{formatINR(data.total_incentive_amount)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      );
+
+    case "pos-operator-wise":
+      return (
+        <div className={tableWrapClass}>
+          <table className={tableClass}>
+            <thead className={theadClass}>
+              <tr>
+                <th className={thClass}>POS Operator</th>
+                <th className={`${thClass} text-right`}>Bills</th>
+                <th className={`${thClass} text-right`}>Net Sale Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((r: { pos_user_id: string; name: string; login_id: string; bill_count: number; net_sale_value: number }) => (
+                <tr key={r.pos_user_id} className="border-t border-border">
+                  <td className={tdClass}>
+                    {r.name} <span className="text-foreground/50">({r.login_id})</span>
+                  </td>
+                  <td className={`${tdClass} text-right tabular-nums`}>{r.bill_count}</td>
+                  <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.net_sale_value)}</td>
+                </tr>
+              ))}
+              <tr className={totalRowClass}>
+                <td className={tdClass}>TOTAL</td>
+                <td className={tdClass} />
+                <td className={`${tdClass} text-right tabular-nums`}>{formatINR(data.total_net_sale_value)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      );
+
+    case "pos-operator-incentive":
+      return (
+        <div className={tableWrapClass}>
+          <table className={tableClass}>
+            <thead className={theadClass}>
+              <tr>
+                <th className={thClass}>POS Operator</th>
                 <th className={`${thClass} text-right`}>Net Sale Value</th>
                 <th className={`${thClass} text-right`}>Incentive</th>
               </tr>

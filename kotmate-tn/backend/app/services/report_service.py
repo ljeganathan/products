@@ -4,7 +4,7 @@ from datetime import timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Bill, BillItem, Category, Item, Payment, User, Waiter
+from app.models import Bill, BillItem, Category, Item, Payment, Role, User, Waiter
 from app.schemas.reports import (
     CashierIncentiveResponse,
     CashierIncentiveRow,
@@ -15,6 +15,10 @@ from app.schemas.reports import (
     ItemWiseSalesResponse,
     ItemWiseSalesRow,
     PaymentMethodTotal,
+    PosOperatorIncentiveResponse,
+    PosOperatorIncentiveRow,
+    PosOperatorSalesResponse,
+    PosOperatorSalesRow,
     ReportQueryParams,
     SalesSummaryResponse,
     TaxSummaryResponse,
@@ -202,6 +206,11 @@ async def waiter_wise_sales(
 async def cashier_wise_sales(
     session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
 ) -> CashierSalesResponse:
+    """Filtered to role=pos_user specifically (not just "whoever's on the bill") since
+    `bills.pos_user_id` can point at a tenant_admin or pos_operator who personally rang
+    up a sale too — without this filter this report would double-count bills that
+    already belong to the tenant_admin's own figures or to `pos_operator_wise_sales`.
+    """
     rows = (
         await session.execute(
             select(
@@ -212,7 +221,8 @@ async def cashier_wise_sales(
                 func.sum(Bill.subtotal - Bill.discount_amount),
             )
             .join(User, User.id == Bill.pos_user_id)
-            .where(*_bill_filters(tenant_id, params))
+            .join(Role, Role.id == User.role_id)
+            .where(*_bill_filters(tenant_id, params), Role.code == "pos_user")
             .group_by(User.id, User.user_id, User.name)
             .order_by(func.sum(Bill.subtotal - Bill.discount_amount).desc())
         )
@@ -272,6 +282,7 @@ async def waiter_incentive_report(
 async def cashier_incentive_report(
     session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
 ) -> CashierIncentiveResponse:
+    """Filtered to role=pos_user specifically — see cashier_wise_sales' docstring."""
     rows = (
         await session.execute(
             select(
@@ -282,7 +293,12 @@ async def cashier_incentive_report(
                 func.sum(Bill.cashier_incentive_amount),
             )
             .join(User, User.id == Bill.pos_user_id)
-            .where(*_bill_filters(tenant_id, params), Bill.cashier_incentive_amount.isnot(None))
+            .join(Role, Role.id == User.role_id)
+            .where(
+                *_bill_filters(tenant_id, params),
+                Bill.cashier_incentive_amount.isnot(None),
+                Role.code == "pos_user",
+            )
             .group_by(User.id, User.user_id, User.name)
             .having(func.sum(Bill.cashier_incentive_amount) > 0)
             .order_by(func.sum(Bill.cashier_incentive_amount).desc())
@@ -299,6 +315,77 @@ async def cashier_incentive_report(
         for uid, login_id, name, net, inc in rows
     ]
     return CashierIncentiveResponse(
+        rows=result_rows, total_incentive_amount=round(sum(r.incentive_amount for r in result_rows), 2)
+    )
+
+
+async def pos_operator_wise_sales(
+    session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
+) -> PosOperatorSalesResponse:
+    """Mirrors cashier_wise_sales exactly, filtered to role=pos_operator instead."""
+    rows = (
+        await session.execute(
+            select(
+                User.id,
+                User.user_id,
+                User.name,
+                func.count(Bill.id),
+                func.sum(Bill.subtotal - Bill.discount_amount),
+            )
+            .join(User, User.id == Bill.pos_user_id)
+            .join(Role, Role.id == User.role_id)
+            .where(*_bill_filters(tenant_id, params), Role.code == "pos_operator")
+            .group_by(User.id, User.user_id, User.name)
+            .order_by(func.sum(Bill.subtotal - Bill.discount_amount).desc())
+        )
+    ).all()
+    result_rows = [
+        PosOperatorSalesRow(
+            pos_user_id=uid, login_id=login_id, name=name, bill_count=count, net_sale_value=float(net)
+        )
+        for uid, login_id, name, count, net in rows
+    ]
+    return PosOperatorSalesResponse(
+        rows=result_rows, total_net_sale_value=round(sum(r.net_sale_value for r in result_rows), 2)
+    )
+
+
+async def pos_operator_incentive_report(
+    session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
+) -> PosOperatorIncentiveResponse:
+    """Mirrors cashier_incentive_report exactly, filtered to role=pos_operator instead."""
+    rows = (
+        await session.execute(
+            select(
+                User.id,
+                User.user_id,
+                User.name,
+                func.sum(Bill.subtotal - Bill.discount_amount),
+                func.sum(Bill.cashier_incentive_amount),
+            )
+            .join(User, User.id == Bill.pos_user_id)
+            .join(Role, Role.id == User.role_id)
+            .where(
+                *_bill_filters(tenant_id, params),
+                Bill.cashier_incentive_amount.isnot(None),
+                Role.code == "pos_operator",
+            )
+            .group_by(User.id, User.user_id, User.name)
+            .having(func.sum(Bill.cashier_incentive_amount) > 0)
+            .order_by(func.sum(Bill.cashier_incentive_amount).desc())
+        )
+    ).all()
+    result_rows = [
+        PosOperatorIncentiveRow(
+            pos_user_id=uid,
+            login_id=login_id,
+            name=name,
+            net_sale_value=float(net),
+            incentive_amount=float(inc),
+        )
+        for uid, login_id, name, net, inc in rows
+    ]
+    return PosOperatorIncentiveResponse(
         rows=result_rows, total_incentive_amount=round(sum(r.incentive_amount for r in result_rows), 2)
     )
 

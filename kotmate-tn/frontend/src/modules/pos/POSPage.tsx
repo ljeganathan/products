@@ -95,7 +95,15 @@ export function POSPage() {
   });
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: listCategories });
   const { data: allItems = [] } = useQuery({ queryKey: ["pos-items"], queryFn: () => listPosItems() });
-  const { data: topSellers = [] } = useQuery({ queryKey: ["pos-top-sellers"], queryFn: listTopSellers });
+  const { data: topSellers = [] } = useQuery({
+    queryKey: ["pos-top-sellers"],
+    queryFn: listTopSellers,
+    // Belt-and-braces fallback for the websocket push in usePosWebSocket.ts — the
+    // in-memory broadcast manager is per gunicorn worker process, so a push can
+    // occasionally miss a screen pinned to a different worker. This keeps the 1-hour
+    // rolling Top Selling list never more than ~60s stale even then.
+    refetchInterval: 60_000,
+  });
   const { data: myWaiterProfile } = useQuery({
     queryKey: ["my-waiter-profile"],
     queryFn: getMyWaiterProfile,
@@ -713,15 +721,16 @@ export function POSPage() {
             sometimes Recall too) off-screen with no way to reach them at all — found
             during real-device testing. Below `md` they collapse into the "⋮" menu. */}
         <div className="hidden items-center gap-2.5 md:flex">
-          {(role === "pos_user" || role === "tenant_admin") && (
-            <button
-              type="button"
-              onClick={() => setShowKotTickets(true)}
-              className="flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 text-xs font-bold text-ink-soft hover:border-accent hover:text-accent"
-            >
-              🍳 KOT Tickets
-            </button>
-          )}
+          {(role === "pos_user" || role === "tenant_admin" || role === "pos_operator") &&
+            meData?.features?.kds === true && (
+              <button
+                type="button"
+                onClick={() => setShowKotTickets(true)}
+                className="flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 text-xs font-bold text-ink-soft hover:border-accent hover:text-accent"
+              >
+                🍳 KOT Tickets
+              </button>
+            )}
           <button
             type="button"
             onClick={() => setShowRecall(true)}
@@ -752,18 +761,19 @@ export function POSPage() {
             <>
               <div className="fixed inset-0 z-40" onClick={() => setMobileMenuOpen(false)} />
               <div className="absolute right-0 top-full z-50 mt-1.5 flex w-44 flex-col gap-1 rounded-lg border border-border bg-surface p-1.5 shadow-pos">
-                {(role === "pos_user" || role === "tenant_admin") && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowKotTickets(true);
-                      setMobileMenuOpen(false);
-                    }}
-                    className="flex min-h-9 items-center gap-2 rounded-md px-2.5 text-left text-xs font-bold text-ink-soft hover:bg-surface-2"
-                  >
-                    🍳 KOT Tickets
-                  </button>
-                )}
+                {(role === "pos_user" || role === "tenant_admin" || role === "pos_operator") &&
+                  meData?.features?.kds === true && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowKotTickets(true);
+                        setMobileMenuOpen(false);
+                      }}
+                      className="flex min-h-9 items-center gap-2 rounded-md px-2.5 text-left text-xs font-bold text-ink-soft hover:bg-surface-2"
+                    >
+                      🍳 KOT Tickets
+                    </button>
+                  )}
                 <button
                   type="button"
                   onClick={() => {
@@ -869,6 +879,7 @@ export function POSPage() {
                 onClear={() => void handleClearCart()}
                 kotSending={kotSending}
                 showSyncIndicator
+                kdsEnabled={meData?.features?.kds === true}
               />
             </div>
           </div>
@@ -911,6 +922,7 @@ export function POSPage() {
                 onClear={() => void handleClearCart()}
                 kotSending={kotSending}
                 showSyncIndicator
+                kdsEnabled={meData?.features?.kds === true}
               />
             </div>
           </div>
@@ -939,7 +951,7 @@ export function POSPage() {
       {showBilling && order && (
         <BillingModal
           order={order}
-          initialPaymentMethod="upi"
+          initialPaymentMethod={meData?.default_payment_method ?? "cash"}
           onClose={() => setShowBilling(false)}
           onFinalized={handleBillFinalized}
         />

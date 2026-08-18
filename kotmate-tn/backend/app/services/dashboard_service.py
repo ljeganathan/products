@@ -53,7 +53,10 @@ async def dashboard_summary(
             .join(Bill, Bill.id == BillItem.bill_id)
             .where(*filters)
             .group_by(BillItem.item_id, BillItem.name_en_snapshot)
-            .order_by(func.sum(BillItem.line_total).desc())
+            # Ordered by units sold (matches the `quantity_sold` field below), not
+            # revenue — production feedback: "top selling item count should be
+            # descending order".
+            .order_by(func.sum(BillItem.quantity).desc())
             .limit(5)
         )
     ).all()

@@ -44,8 +44,8 @@ async def _create_order(
     return resp.json()
 
 
-async def test_send_kot_creates_ticket_and_marks_items_sent(client: AsyncClient, tenant_admin: dict):
-    headers = tenant_admin["headers"]
+async def test_send_kot_creates_ticket_and_marks_items_sent(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     category = await _create_category(client, headers)
@@ -60,14 +60,14 @@ async def test_send_kot_creates_ticket_and_marks_items_sent(client: AsyncClient,
     assert body["ticket_number"]
     assert body["status"] == "new"
     assert body["section_name_en"] == "AC"
-    assert body["printed"] is False  # Lite tenant
+    assert body["printed"] is False  # no printer registered
 
     refetched = (await client.get(f"/api/v1/orders/{order['id']}", headers=headers)).json()
     assert refetched["items"][0]["is_kot_sent"] is True
 
 
-async def test_repeat_kot_only_sends_new_items(client: AsyncClient, tenant_admin: dict):
-    headers = tenant_admin["headers"]
+async def test_repeat_kot_only_sends_new_items(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     category = await _create_category(client, headers)
@@ -102,8 +102,12 @@ async def test_repeat_kot_only_sends_new_items(client: AsyncClient, tenant_admin
     assert [i["name_en"] for i in first_ticket["items"]] == ["Item A"]
 
 
-async def test_stock_decrement_floors_at_zero(client: AsyncClient, tenant_admin: dict):
-    headers = tenant_admin["headers"]
+async def test_stock_decrement_floors_at_zero(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
+    # stock_management_enabled defaults off on Pro/Pro Max (opt-in soft-disable switch,
+    # CLAUDE.md §11 extension) — Lite has no such gate, which is why this fixture needs
+    # the explicit PATCH that a Lite-tenant version of this test never did.
+    await client.patch("/api/v1/settings/stock-management", json={"enabled": True}, headers=headers)
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     category = await _create_category(client, headers)
@@ -122,8 +126,8 @@ async def test_stock_decrement_floors_at_zero(client: AsyncClient, tenant_admin:
     assert updated["available_qty"] == 0
 
 
-async def test_untracked_item_stock_untouched(client: AsyncClient, tenant_admin: dict):
-    headers = tenant_admin["headers"]
+async def test_untracked_item_stock_untouched(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     category = await _create_category(client, headers)
@@ -140,8 +144,8 @@ async def test_untracked_item_stock_untouched(client: AsyncClient, tenant_admin:
     assert updated["available_qty"] is None
 
 
-async def test_active_tickets_drop_once_order_billed(client: AsyncClient, tenant_admin: dict):
-    headers = tenant_admin["headers"]
+async def test_active_tickets_drop_once_order_billed(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     category = await _create_category(client, headers)
@@ -165,7 +169,11 @@ async def test_active_tickets_drop_once_order_billed(client: AsyncClient, tenant
     assert not any(t["order_id"] == order["id"] for t in tickets_after)
 
 
-async def test_lite_tenant_never_dispatches_print(client: AsyncClient, tenant_admin: dict):
+async def test_lite_tenant_kot_endpoints_blocked_by_tier_gate(client: AsyncClient, tenant_admin: dict):
+    """The whole KOT screen/workflow — not just physical printing — is Pro Max only
+    (production feedback round 2, `kds` feature flag flipped off for Lite/Pro). A Lite
+    tenant can't reach any /kot endpoint at all now, regardless of a registered printer.
+    """
     headers = tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
@@ -175,7 +183,6 @@ async def test_lite_tenant_never_dispatches_print(client: AsyncClient, tenant_ad
         client, headers, location_id, section_id, [{"item_id": item["id"], "quantity": 1}]
     )
 
-    # Even with a printer registered, Lite's plan lacks the kot_printing feature.
     await client.post(
         "/api/v1/printers",
         json={
@@ -188,8 +195,11 @@ async def test_lite_tenant_never_dispatches_print(client: AsyncClient, tenant_ad
         headers=headers,
     )
 
-    resp = await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)
-    assert resp.json()["printed"] is False
+    send_resp = await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)
+    assert send_resp.status_code == 403
+
+    tickets_resp = await client.get("/api/v1/kot/tickets/active", headers=headers)
+    assert tickets_resp.status_code == 403
 
 
 async def test_pro_max_dispatches_print_only_with_registered_printer(
@@ -232,8 +242,8 @@ async def test_pro_max_dispatches_print_only_with_registered_printer(
     assert printed_resp.json()["printed"] is True
 
 
-async def test_kitchen_role_blocked_from_sending_kot(client: AsyncClient, tenant_admin: dict):
-    headers = tenant_admin["headers"]
+async def test_kitchen_role_blocked_from_sending_kot(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
     kot_user = (
         await client.post(
             "/api/v1/users",
@@ -252,8 +262,8 @@ async def test_kitchen_role_blocked_from_sending_kot(client: AsyncClient, tenant
     assert resp.status_code == 403
 
 
-async def test_ticket_status_transition_and_role_gating(client: AsyncClient, tenant_admin: dict):
-    headers = tenant_admin["headers"]
+async def test_ticket_status_transition_and_role_gating(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
     section_id = await _section_id(client, headers, "AC")
     category = await _create_category(client, headers)
@@ -305,8 +315,8 @@ async def test_ticket_status_transition_and_role_gating(client: AsyncClient, ten
     assert ready.json()["status"] == "ready"
 
 
-async def test_takeaway_ticket_has_no_table_number(client: AsyncClient, tenant_admin: dict):
-    headers = tenant_admin["headers"]
+async def test_takeaway_ticket_has_no_table_number(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
     takeaway_id = await _section_id(client, headers, "Takeaway")
     category = await _create_category(client, headers)

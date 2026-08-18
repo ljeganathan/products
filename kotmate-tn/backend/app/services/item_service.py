@@ -21,7 +21,11 @@ from app.services.storage import get_storage
 
 _ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 _TOP_SELLER_LIMIT = 8
-_TOP_SELLER_LOOKBACK_DAYS = 7
+# Rolling window, not a calendar day — recomputed on every call, kept live via a
+# websocket nudge on bill finalize (bills.py) plus a 60s poll fallback on the POS
+# screen, so "Top Selling" reflects what's actually selling *right now* on a busy
+# shift rather than a slow-moving multi-day average.
+_TOP_SELLER_LOOKBACK_MINUTES = 60
 
 # Low-stock threshold — CLAUDE.md §11: banner/badge (KOT/POS) and the Dashboard's Low
 # Stock widget (Phase 20) all agree a tracked item is "low" once 5 or fewer remain.
@@ -167,8 +171,9 @@ async def list_top_sellers(session: AsyncSession, tenant_id: uuid.UUID) -> list[
     Manually-pinned items (`is_top_seller=True`, set in Item Master) always show first —
     an owner can still guarantee a Meals/Thali combo leads the tab regardless of recent
     sales. When fewer than `_TOP_SELLER_LIMIT` items are pinned, the rest are filled in
-    from actual sales over the last `_TOP_SELLER_LOOKBACK_DAYS` days (Phase 18, POS-31) —
-    previously this tab was 100% manual and never reflected what was actually selling.
+    from actual sales over the last `_TOP_SELLER_LOOKBACK_MINUTES` (Phase 18 introduced a
+    7-day version of this, POS-31; narrowed to a 1-hour rolling window per production
+    feedback so it tracks what's selling on the current shift, not a multi-day average).
     """
     pinned = (
         await session.execute(
@@ -181,7 +186,7 @@ async def list_top_sellers(session: AsyncSession, tenant_id: uuid.UUID) -> list[
         return list(pinned)
 
     pinned_ids = {i.id for i in pinned}
-    cutoff = datetime.now(UTC) - timedelta(days=_TOP_SELLER_LOOKBACK_DAYS)
+    cutoff = datetime.now(UTC) - timedelta(minutes=_TOP_SELLER_LOOKBACK_MINUTES)
     ranked = await session.execute(
         select(BillItem.item_id, func.sum(BillItem.quantity).label("qty"))
         .join(Bill, Bill.id == BillItem.bill_id)

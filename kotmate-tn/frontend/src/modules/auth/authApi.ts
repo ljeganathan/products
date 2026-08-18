@@ -53,6 +53,10 @@ export interface MeResponse {
   // Tenant toggle for Tamil labels on the POS category rail/strip only — item buttons
   // still always show both languages (CLAUDE.md §9). Not plan-gated.
   show_tamil_categories: boolean;
+  // Pre-selected payment method on the POS billing screen (tenant-wide, all tiers).
+  default_payment_method: "upi" | "cash" | "card";
+  // Effective report-printing state (plan feature AND tenant toggle) — Pro Max only.
+  report_printing_enabled: boolean;
 }
 
 export async function me(): Promise<MeResponse> {

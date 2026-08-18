@@ -1,7 +1,8 @@
 import { api } from "@/lib/api";
 import type { BillPrintJob } from "@/modules/pos/billsApi";
 
-export const PRINTER_TARGETS = ["kot", "bill"] as const;
+// "reports" is Pro Max only (plan.features.report_printing) — gated in the UI, not here.
+export const PRINTER_TARGETS = ["kot", "bill", "reports"] as const;
 export const PRINTER_TYPES = ["thermal", "dotmatrix"] as const;
 export const PRINTER_CONNECTION_TYPES = ["network", "usb", "local_agent", "wifi", "bluetooth", "rawbt"] as const;
 // 58/80mm thermal roll widths, 241mm (9.5") dot-matrix continuous stationery — a "Custom"
