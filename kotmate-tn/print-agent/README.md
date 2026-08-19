@@ -11,17 +11,55 @@ permissions beyond normal printing.
 
 - Windows, with the printer already installed as a normal Windows printer (driver
   installed, visible under **Settings > Bluetooth & devices > Printers & scanners**).
-- Python 3.9+ on the counter PC (stdlib only — no extra packages to install).
 
-## Run
+## Install on a counter PC (recommended)
+
+The counter PC doesn't need Python installed at all — `installer/` packages the agent
+into a standalone `.exe` and sets it to start automatically at every Windows logon, so
+once it's installed nobody at the counter ever has to think about it again (no
+double-clicking a shortcut every morning, no window to remember to leave open).
+
+**One-time setup, from a machine with Python** (doesn't have to be the counter PC — copy
+the built `.exe` over afterward):
+
+```
+cd print-agent
+pip install -r requirements-dev.txt -r installer\requirements-build.txt
+python installer\build.py
+```
+
+Produces `dist\KOTMatePrintAgent.exe` (lean, no Pillow — this is the one for a real
+counter) and `dist\KOTMatePrintAgentEmulate.exe` (bundles Pillow, so `--emulate` works
+with nothing else to install — for a dev/test machine, never a real counter).
+
+**On the counter PC**, copy the `installer\` folder (with the built `.exe` alongside it
+in `dist\`) over and double-click **`Install.bat`**. That's the entire install — it:
+
+- copies the `.exe` to `%LOCALAPPDATA%\KOTMateTN\PrintAgent\`
+- registers it to start at every Windows logon (a Scheduled Task when the machine allows
+  it, so a crash auto-restarts it; a Startup-folder shortcut otherwise — either way, no
+  prompt, and it just picks whichever works)
+- starts it immediately, so the counter can print right away without logging out first
+
+Re-running `Install.bat` (e.g. after `build.py` produces a new version) safely replaces
+the previous install — always idempotent, safe to run again. `Uninstall.bat` reverses it
+completely. See `installer\install.ps1 -?` / `installer\uninstall.ps1 -?` for the
+`-Port`/`-ExePath`/`-Emulate` parameters if you need a non-default port or the Pillow
+build.
+
+Diagnosing a windowless instance: check
+`%LOCALAPPDATA%\KOTMateTN\PrintAgent\logs\agent.log` (rotating, keeps the last 3×2MB) —
+there's no console window to read once it's running via the installer.
+
+## Run from source (development)
 
 ```
 python agent.py
 ```
 
 Or double-click `start.bat`. Leave the window open — it needs to keep running while
-the counter is billing. (To run it automatically at Windows startup, put a shortcut to
-`start.bat` in `shell:startup`.)
+the counter is billing. Requires Python 3.9+ (stdlib only for this normal, real-printer
+code path — no extra packages to install).
 
 ## Configure in KOTMate
 

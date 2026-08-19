@@ -30,13 +30,49 @@ import ctypes
 import json
 import logging
 import os
+import sys
 from ctypes import wintypes
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 logger = logging.getLogger("kotmate.print_agent")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+
+def _default_log_dir() -> Path:
+    """`%LOCALAPPDATA%\\KOTMateTN\\PrintAgent\\logs` — the same install root the
+    Windows installer (installer/install.ps1) uses, so a background/auto-started
+    instance (no console window, --noconsole build) still leaves a diagnosable trail.
+    Falls back to a `logs/` folder next to this script when LOCALAPPDATA isn't set
+    (non-Windows dev environments).
+    """
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        return Path(base) / "KOTMateTN" / "PrintAgent" / "logs"
+    return Path(__file__).resolve().parent / "logs"
+
+
+def _configure_logging(log_dir: Path) -> None:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    file_handler = RotatingFileHandler(
+        log_dir / "agent.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+    )
+    file_handler.setFormatter(fmt)
+    root.addHandler(file_handler)
+
+    # sys.stderr is None when built with PyInstaller's --noconsole (no attached console,
+    # used by the auto-start installer so nothing pops up at every Windows login) — a
+    # StreamHandler would raise on the very first log call in that case, so only attach
+    # one when a real console stream actually exists (dev runs, --console builds).
+    if sys.stderr is not None:
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(fmt)
+        root.addHandler(stream_handler)
 
 # Only the browser tab serving the POS should be allowed to call this agent — this is a
 # local developer/single-counter tool, not a public service, so a wildcard is fine (the
@@ -204,7 +240,18 @@ def main() -> None:
         "(default DIR: ./emulated_prints). Requires Pillow: pip install -r "
         "requirements-dev.txt.",
     )
+    parser.add_argument(
+        "--log-dir",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Where to write agent.log (rotating, 3x2MB). Defaults to "
+        "%%LOCALAPPDATA%%\\KOTMateTN\\PrintAgent\\logs — the installer-managed "
+        "location — so a windowless auto-started instance is still diagnosable.",
+    )
     args = parser.parse_args()
+
+    _configure_logging(args.log_dir or _default_log_dir())
 
     if args.emulate is not None:
         EMULATE_DIR = Path(args.emulate).resolve()

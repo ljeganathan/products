@@ -13,6 +13,7 @@ Two layers are covered:
 
 import base64
 import json
+import logging
 from http.client import HTTPConnection
 from unittest.mock import MagicMock, patch
 
@@ -314,6 +315,62 @@ def test_save_emulated_print_sanitizes_printer_name(tmp_path):
     path = agent.save_emulated_print("My/Weird:Printer*Name", b"Hello\n", tmp_path)
     assert path.exists()
     assert "/" not in path.name and ":" not in path.name and "*" not in path.name
+
+
+# ---------------------------------------------------------------------------
+# Logging (installer/build.py's --noconsole builds have no console to write to)
+# ---------------------------------------------------------------------------
+
+
+def test_default_log_dir_uses_localappdata(monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\Test\AppData\Local")
+    log_dir = agent._default_log_dir()
+    assert log_dir == agent.Path(r"C:\Users\Test\AppData\Local\KOTMateTN\PrintAgent\logs")
+
+
+def test_default_log_dir_falls_back_without_localappdata(monkeypatch):
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    log_dir = agent._default_log_dir()
+    assert log_dir.name == "logs"
+    assert log_dir.parent == agent.Path(__file__).resolve().parent.parent
+
+
+def test_configure_logging_creates_dir_and_writes_file(tmp_path):
+    log_dir = tmp_path / "logs"
+    before = list(logging.getLogger().handlers)
+    agent._configure_logging(log_dir)
+    added = [h for h in logging.getLogger().handlers if h not in before]
+    try:
+        assert log_dir.is_dir()
+        agent.logger.info("hello from test")
+        log_file = log_dir / "agent.log"
+        assert log_file.exists()
+        assert "hello from test" in log_file.read_text(encoding="utf-8")
+    finally:
+        # Logging handlers persist on the root logger across tests otherwise, leaking a
+        # file handle into a tmp_path pytest is about to clean up — only remove the ones
+        # this call added, leaving any pre-existing (e.g. pytest's own) handlers intact.
+        for handler in added:
+            logging.getLogger().removeHandler(handler)
+            handler.close()
+
+
+def test_configure_logging_skips_stream_handler_when_stderr_is_none(tmp_path, monkeypatch):
+    # PyInstaller's --noconsole builds run with sys.stderr = None — attaching a
+    # StreamHandler in that case raises on the very first log call. Only checks handlers
+    # *this call* adds — the root logger may already carry pytest's own handlers
+    # (e.g. its log-capture plugin), which aren't agent._configure_logging's concern.
+    monkeypatch.setattr(agent.sys, "stderr", None)
+    before = list(logging.getLogger().handlers)
+    agent._configure_logging(tmp_path / "logs")
+    added = [h for h in logging.getLogger().handlers if h not in before]
+    try:
+        assert len(added) == 1
+        assert isinstance(added[0], agent.RotatingFileHandler)
+    finally:
+        for handler in added:
+            logging.getLogger().removeHandler(handler)
+            handler.close()
 
 
 def test_print_response_has_cors_header(agent_server):
