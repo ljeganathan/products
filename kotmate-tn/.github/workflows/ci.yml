@@ -1,3 +1,8 @@
+# NOTE: GitHub Actions only reads workflows from the repo root, so this file is never
+# actually executed — it's kept as a per-product reference copy. The workflow that
+# really runs on push/PR is /.github/workflows/kotmate-tn-deploy.yml at the products
+# monorepo root; keep both in sync when changing either (a font-install step went
+# missing here from that one once already — don't repeat that).
 name: CI
 
 on:
