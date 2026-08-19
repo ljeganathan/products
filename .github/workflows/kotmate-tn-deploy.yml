@@ -41,6 +41,12 @@ jobs:
         working-directory: kotmate-tn/backend
     steps:
       - uses: actions/checkout@v4
+      # Tamil item/category names are rasterized (KOT/bill printing, and report
+      # printing's Tamil toggle) via a Tamil-glyph font at print time, same packages
+      # kotmate-tn/backend/Dockerfile installs in the production image — the runner
+      # needs them too or every Tamil-rasterization test fails with "No Tamil font
+      # found on this system" (mirrors kotmate-tn/.github/workflows/ci.yml).
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fontconfig fonts-lohit-taml libraqm0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
