@@ -30,6 +30,12 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      # Tamil item/category names are rasterized (KOT/bill printing, and report
+      # printing's Tamil toggle — CLAUDE.md §10/§11) via a Tamil-glyph font at print
+      # time, same packages backend/Dockerfile installs in the production image — the
+      # runner needs them too or every Tamil-rasterization test fails with "No Tamil
+      # font found on this system".
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fontconfig fonts-lohit-taml libraqm0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
