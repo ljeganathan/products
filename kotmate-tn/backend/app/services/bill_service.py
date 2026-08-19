@@ -25,7 +25,6 @@ from app.models import (
     Table,
     TaxRule,
     Tenant,
-    TenantLocation,
     User,
     Waiter,
 )
@@ -42,6 +41,7 @@ from app.schemas.bills import (
     PaymentResponse,
 )
 from app.schemas.printing import PrintJobPayload
+from app.services.branch_header import resolve_branch_header
 from app.services.discount_rule_service import (
     get_active_coupon,
     get_active_item_level_rules,
@@ -421,24 +421,10 @@ async def _dispatch_print_for_bill(
     if printer is None:
         return False, None, None
 
+    branch = await resolve_branch_header(session, location_id)
     hotel = (
         await session.execute(select(HotelMaster).where(HotelMaster.location_id == location_id))
     ).scalar_one_or_none()
-    location = (
-        await session.execute(select(TenantLocation).where(TenantLocation.id == location_id))
-    ).scalar_one()
-
-    hotel_name = hotel.name if hotel else location.name
-    # Door No./Street/City/Pincode on one line, phone on its own line below — both
-    # centered by the thermal adapter (escpos_thermal.py); the printer fixes batch
-    # dropped district (redundant with city for a single-location context) and added
-    # phone as a separate, more prominent line.
-    address_parts = (
-        [p for p in [hotel.door_no, hotel.street, hotel.city, hotel.pincode] if p] if hotel else []
-    )
-    address_lines = [", ".join(address_parts)] if address_parts else []
-    if hotel and hotel.phone:
-        address_lines.append(f"Ph: {hotel.phone}")
 
     payments = (await session.execute(select(Payment).where(Payment.bill_id == bill.id))).scalars().all()
 
@@ -448,7 +434,7 @@ async def _dispatch_print_for_bill(
     qr_payload = None
     if plan_features.get("qr_upi") and hotel and hotel.upi_id and any(p.method == "upi" for p in payments):
         qr_payload = (
-            f"upi://pay?pa={quote(hotel.upi_id)}&pn={quote(hotel_name)}"
+            f"upi://pay?pa={quote(hotel.upi_id)}&pn={quote(branch.name)}"
             f"&am={float(bill.grand_total):.2f}&cu=INR&tn={quote('Bill ' + bill.bill_number)}"
         )
 
@@ -466,9 +452,9 @@ async def _dispatch_print_for_bill(
         round_off_amount=float(bill.round_off_amount),
         grand_total=float(bill.grand_total),
         payments=[(p.method, float(p.amount)) for p in payments],
-        hotel_name=hotel_name,
-        hotel_address_lines=address_lines,
-        gstin=hotel.gstin if hotel else None,
+        hotel_name=branch.name,
+        hotel_address_lines=branch.address_lines,
+        gstin=branch.gstin,
         upi_id=hotel.upi_id if hotel else None,
         qr_payload=qr_payload,
         show_tamil_names=hotel.show_tamil_names if hotel else True,
@@ -496,6 +482,7 @@ async def _dispatch_print_for_bill(
             connection_type=printer.connection_type,
             connection_details=printer.connection_details or {},
             data_base64=base64.b64encode(content).decode("ascii"),
+            paper_width_mm=printer.paper_width_mm,
         )
         printed = True
     elif printer.connection_type in ("network", "wifi"):

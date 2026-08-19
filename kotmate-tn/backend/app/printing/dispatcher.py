@@ -2,7 +2,7 @@ import logging
 
 from app.models import Printer
 from app.printing import dotmatrix_raw, escpos_thermal
-from app.printing.base import BillRenderData, KotTicketRenderData
+from app.printing.base import BillRenderData, KotTicketRenderData, ReportRenderData
 
 logger = logging.getLogger("kotmate.printing")
 
@@ -55,6 +55,28 @@ def dispatch_kot_print(printer: Printer, ticket: KotTicketRenderData) -> bytes:
         printer.connection_type,
         printer.connection_details,
         ticket.ticket_number,
+        len(content),
+    )
+    return content if isinstance(content, bytes) else content.encode("utf-8")
+
+
+def dispatch_report_print(printer: Printer, report: ReportRenderData) -> bytes:
+    """Renders and logs the print job — mirrors dispatch_bill_print/dispatch_kot_print
+    above. Reports printers are Pro Max only (CLAUDE.md §10) but can still be either
+    printer_type, same as bill/KOT printers.
+    """
+    if printer.printer_type == "thermal":
+        content: bytes | str = escpos_thermal.render_report(report)
+    else:
+        content = dotmatrix_raw.render_report(report)
+
+    logger.info(
+        "Report print job -> printer=%s type=%s connection=%s/%s report=%s bytes=%d",
+        printer.name,
+        printer.printer_type,
+        printer.connection_type,
+        printer.connection_details,
+        report.title,
         len(content),
     )
     return content if isinstance(content, bytes) else content.encode("utf-8")

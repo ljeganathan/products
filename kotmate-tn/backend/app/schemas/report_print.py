@@ -38,6 +38,14 @@ class ReportPrintingSettingsResponse(BaseModel):
     enabled: bool
 
 
+class ReportTamilNamesSettingsRequest(BaseModel):
+    enabled: bool
+
+
+class ReportTamilNamesSettingsResponse(BaseModel):
+    enabled: bool
+
+
 class ReportPrintResponse(BaseModel):
     printed: bool
     # usb/local_agent/bluetooth/rawbt printers only get rendered bytes back — see

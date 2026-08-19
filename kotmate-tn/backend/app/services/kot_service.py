@@ -200,6 +200,7 @@ async def send_kot(
                     connection_type=printer.connection_type,
                     connection_details=printer.connection_details or {},
                     data_base64=base64.b64encode(content).decode("ascii"),
+                    paper_width_mm=printer.paper_width_mm,
                 )
                 printed = True
             elif printer.connection_type in ("network", "wifi"):

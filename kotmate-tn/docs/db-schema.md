@@ -63,6 +63,7 @@ product-level rationale — this doc is the implementation-level ERD.
 | show_tamil_categories | bool NOT NULL, default true | tenant-wide toggle for Tamil labels on the POS category rail/strip only |
 | default_payment_method | varchar(10) NOT NULL, default `cash`, CHECK ∈ upi/cash/card | pre-selects the POS billing screen's payment method |
 | report_printing_enabled | bool NOT NULL, default false | tenant-wide soft-disable switch for report printing (Pro Max only — see `plans.features.report_printing`) |
+| report_tamil_names_enabled | bool NOT NULL, default false | Item Wise/Category Wise report prints show the Tamil name (rasterized, thermal only) instead of English when true; inert unless `report_printing_enabled` is also true |
 
 ### Tenant-scoped
 
@@ -330,6 +331,10 @@ for the full chain. Resuming the list for the manual-testing-fix backlog phases:
     the seeded `pro_max` plan's `features` only, and flips the seeded `pro` plan's
     `features.kds` from `true` to `false` (Lite was already `false`) — the whole KOT
     screen + `kitchen`/`pos_operator` roles are now Pro Max only, not Pro+.
+24. **`tenant report tamil names toggle`** (production feedback round 3, revision
+    `db07d0c0058e`) — adds `tenants.report_tamil_names_enabled` (bool, default false),
+    gating whether Item Wise/Category Wise report prints show the Tamil name instead of
+    English (§10's report-print restructure).
 
 ### Gotcha for Phase 02: setting the RLS session vars
 

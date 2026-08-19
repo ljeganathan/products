@@ -40,7 +40,11 @@ export async function sendPrintJobToAgent(job: BillPrintJob): Promise<void> {
     res = await fetch(`${agentBaseUrl(job.connection_details)}/print`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ printer_name: printerName, data_base64: job.data_base64 }),
+      body: JSON.stringify({
+        printer_name: printerName,
+        data_base64: job.data_base64,
+        paper_width_mm: job.paper_width_mm,
+      }),
       signal: AbortSignal.timeout(10_000),
     });
   } catch {

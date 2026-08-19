@@ -10,7 +10,12 @@ from app.models import Tenant
 from app.schemas.category_display import CategoryDisplaySettingsRequest, CategoryDisplaySettingsResponse
 from app.schemas.hotel_master import HotelMasterResponse, HotelMasterUpdateRequest
 from app.schemas.pos_preferences import DefaultPaymentMethodRequest, DefaultPaymentMethodResponse
-from app.schemas.report_print import ReportPrintingSettingsRequest, ReportPrintingSettingsResponse
+from app.schemas.report_print import (
+    ReportPrintingSettingsRequest,
+    ReportPrintingSettingsResponse,
+    ReportTamilNamesSettingsRequest,
+    ReportTamilNamesSettingsResponse,
+)
 from app.schemas.stock import StockManagementSettingsRequest, StockManagementSettingsResponse
 from app.services.hotel_master_service import (
     get_hotel_master,
@@ -140,6 +145,32 @@ async def update_report_printing_setting(
     tenant.report_printing_enabled = payload.enabled
     await db.commit()
     return ReportPrintingSettingsResponse(enabled=tenant.report_printing_enabled)
+
+
+@router.patch(
+    "/report-tamil-names",
+    response_model=ReportTamilNamesSettingsResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def update_report_tamil_names_setting(
+    payload: ReportTamilNamesSettingsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ReportTamilNamesSettingsResponse:
+    """Whether Item Wise/Category Wise report prints show the Tamil name instead of
+    English — inert unless report printing itself is on, so gated on the same Pro
+    Max-only plan feature as /report-printing above.
+    """
+    plan = await get_active_plan(db, current_user.tenant_id)
+    if not has_report_printing_feature(plan.features if plan else None):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Report printing isn't available on your current plan. Upgrade to Pro Max to use it.",
+        )
+    tenant = await _get_tenant(db, current_user)
+    tenant.report_tamil_names_enabled = payload.enabled
+    await db.commit()
+    return ReportTamilNamesSettingsResponse(enabled=tenant.report_tamil_names_enabled)
 
 
 @router.post(

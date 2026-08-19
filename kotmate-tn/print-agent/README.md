@@ -51,3 +51,84 @@ pytest
 Runs entirely without a real printer or Windows print queue — `ctypes.WinDLL` is mocked
 for the spooler-level tests, and the HTTP-layer tests run the real `Handler` on a
 background thread against an OS-assigned localhost port.
+
+## Testing prints locally — no thermal hardware needed (`--emulate`)
+
+You don't need a real printer, WebUSB, or any special hardware to check what a bill/KOT
+ticket/report will look like. Run the agent in **emulate mode** instead of the normal
+mode: every print job KOTMate sends is rendered to a PNG image on disk (using the exact
+same ESC/POS command subset the backend emits — bold, double-size text, alignment, the
+raster logo/QR/Tamil-name images, and the cut line) instead of being sent to a real
+Windows printer queue.
+
+This only covers the **Local Print Agent** connection type (`local_agent`). WebUSB
+(`usb`) genuinely needs a real USB device Chrome can enumerate — there's no
+software-only way to fake that from the browser, so it isn't testable this way.
+
+### 1. Install dependencies
+
+```
+cd print-agent
+pip install -r requirements-dev.txt
+```
+
+(This adds Pillow, needed only for `--emulate`'s image rendering — the normal
+real-printer code path stays stdlib-only.)
+
+### 2. Run the agent in emulate mode
+
+```
+python agent.py --emulate
+```
+
+Leave this window open. You'll see:
+
+```
+EMULATE MODE — print jobs will be rendered to PNG in C:\...\print-agent\emulated_prints instead of a real printer
+KOTMate print-agent listening on http://127.0.0.1:9123 (Ctrl+C to stop)
+```
+
+(Pass a custom folder with `python agent.py --emulate C:\path\to\folder` if you don't
+want the default `./emulated_prints`.)
+
+### 3. Register a test printer in KOTMate
+
+In the running app (local Docker stack or wherever you're testing), go to
+**Settings > Printers** and add/edit a printer:
+
+- Connection: **Local Print Agent**
+- Windows Printer Name: anything you like, e.g. `Emulator` — in emulate mode this name
+  is never actually looked up in Windows, it's only used to label the saved PNG filename
+- Target: Bill / KOT / Reports
+- **Paper Width**: whichever preset (58mm/80mm/241mm) or custom mm value you actually
+  want to verify — the saved PNG is rendered at this exact physical width (58mm renders
+  narrow, 80mm wider, 241mm a long dot-matrix strip), the same as the backend's own
+  formatting, so what you see is what that paper size would really produce
+
+### 4. Trigger a print from KOTMate
+
+Finalize a bill, send a KOT ticket, use **Test Print** on the printer you just
+registered, or print a report from the Reports page. Each one POSTs to the agent, which:
+
+- saves a PNG named `<timestamp>_<printer name>.png` into the emulate folder
+- opens it automatically in your default image viewer (Windows only; if nothing opens,
+  just browse to the folder)
+
+Verify visually: table number is the dominant element, CGST/SGST print as two separate
+lines, Round Off always shows, the QR code renders and looks scannable, Tamil item names
+appear correctly on bills/KOT tickets (rasterized) but not on reports (reports are plain
+text, so Tamil shows as tofu boxes there — that's correct, matching what a real printer
+without a Tamil code page would also show), and nothing gets truncated at whichever
+paper-width preset you configured.
+
+### 5. Switch back to a real printer
+
+Stop the emulate-mode agent (Ctrl+C) and start it normally:
+
+```
+python agent.py
+```
+
+No changes needed in KOTMate itself — the printer's connection settings (name, target,
+paper width) work the same either way; only the agent's own `--emulate` flag decides
+whether jobs go to a real Windows queue or a PNG file.

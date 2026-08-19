@@ -26,7 +26,10 @@ import { updateCategoryDisplaySetting } from "@/modules/admin/categoryDisplaySet
 import { updateDefaultPaymentMethod } from "@/modules/admin/paymentPreferencesApi";
 import { PrinterFormModal } from "@/modules/admin/PrintersPage";
 import { type Printer, listPrinters } from "@/modules/admin/printersApi";
-import { updateReportPrintingSetting } from "@/modules/admin/reportPrintingSettingsApi";
+import {
+  updateReportPrintingSetting,
+  updateReportTamilNamesSetting,
+} from "@/modules/admin/reportPrintingSettingsApi";
 import { updateStockManagementSetting } from "@/modules/admin/stockSettingsApi";
 import { type TaxRule, listTaxRules } from "@/modules/admin/taxRulesApi";
 import { TaxRuleFormModal } from "@/modules/admin/TaxRulesPage";
@@ -154,6 +157,10 @@ function PreferencesTab({
     mutationFn: (next: boolean) => updateReportPrintingSetting(next),
     onSuccess: invalidateMe,
   });
+  const reportTamilNamesMutation = useMutation({
+    mutationFn: (next: boolean) => updateReportTamilNamesSetting(next),
+    onSuccess: invalidateMe,
+  });
   const paymentMethodMutation = useMutation({
     mutationFn: (method: "upi" | "cash" | "card") => updateDefaultPaymentMethod(method),
     onSuccess: invalidateMe,
@@ -225,6 +232,18 @@ function PreferencesTab({
             onChange={(next) => reportPrintingMutation.mutate(next)}
             label="Enable report printing"
             description="Lets Reports be sent to a Reports-target printer (Settings > Printers) directly from the Reports page. Pro Max only."
+          />
+        </div>
+      )}
+
+      {reportPrintingOnPlan && (
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <Switch
+            checked={meData?.report_tamil_names_enabled === true}
+            disabled={reportTamilNamesMutation.isPending}
+            onChange={(next) => reportTamilNamesMutation.mutate(next)}
+            label="Print item/category names in Tamil"
+            description="Applies to Item Wise Sales and Category Wise Sales report prints only. Rasterized on a thermal Reports printer; a dot-matrix Reports printer always prints English (no image support)."
           />
         </div>
       )}

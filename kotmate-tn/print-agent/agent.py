@@ -16,6 +16,10 @@ Then in KOTMate's Printers settings, register the bill/KOT printer with connecti
 type "Local Print Agent" and set its "Windows Printer Name" to the exact name shown in
 Windows' printer list (Settings > Bluetooth & devices > Printers & scanners), e.g.
 "POS80 Printer".
+
+For local testing without any real thermal hardware, run with `--emulate` instead —
+every print job is rendered to a PNG (via escpos_render.py) and saved to a folder
+instead of being sent to a Windows printer queue at all; see README.md.
 """
 
 from __future__ import annotations
@@ -25,8 +29,11 @@ import base64
 import ctypes
 import json
 import logging
+import os
 from ctypes import wintypes
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 logger = logging.getLogger("kotmate.print_agent")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -35,6 +42,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 # local developer/single-counter tool, not a public service, so a wildcard is fine (the
 # agent only listens on 127.0.0.1 and is not reachable from the network).
 ALLOWED_ORIGIN = "*"
+
+# Set by main() when --emulate is passed. Left None for normal (real-printer) runs, so
+# the stdlib-only/no-extra-packages promise in README.md stays true unless a developer
+# opts into emulate mode (which lazily imports Pillow — see save_emulated_print below).
+EMULATE_DIR: Path | None = None
 
 
 class DOCINFO(ctypes.Structure):
@@ -81,6 +93,38 @@ def send_raw_bytes_to_windows_printer(printer_name: str, data: bytes) -> None:
         winspool.ClosePrinter(h_printer)
 
 
+def save_emulated_print(printer_name: str, data: bytes, out_dir: Path, paper_width_mm: int | None = None) -> Path:
+    """--emulate mode's stand-in for send_raw_bytes_to_windows_printer — renders the
+    exact same bytes a real printer would have received to a PNG via escpos_render.py,
+    so a bill/KOT/report print can be visually checked on a laptop with no thermal
+    hardware attached. `printer_name` isn't looked up anywhere in emulate mode (there's
+    no real Windows queue involved); it's only used to make the saved filename
+    identifiable when more than one printer is registered. `paper_width_mm` (sent by the
+    browser alongside the print job — see PrintJobPayload on the backend) sizes the
+    output image to the printer's actual configured paper width instead of guessing.
+    """
+    from escpos_render import render_escpos_to_image  # lazy: only --emulate needs Pillow
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    image = render_escpos_to_image(data, paper_width_mm=paper_width_mm)
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in printer_name) or "printer"
+    path = out_dir / f"{datetime.now():%Y%m%d_%H%M%S_%f}_{safe_name}.png"
+    image.save(path)
+    return path
+
+
+def _maybe_open_image(path: Path) -> None:
+    """Best-effort auto-open in the OS default image viewer — a failure here (no
+    default viewer registered, headless CI, etc.) must never fail the print request
+    itself, since the PNG is already saved either way.
+    """
+    if hasattr(os, "startfile"):
+        try:
+            os.startfile(path)  # noqa: S606 — dev-only convenience, local files only
+        except OSError:
+            logger.warning("Saved %s but couldn't auto-open it — open it manually.", path)
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:  # noqa: A002
         logger.info("%s - %s", self.address_string(), format % args)
@@ -116,8 +160,23 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
             printer_name = body["printer_name"]
             data = base64.b64decode(body["data_base64"])
+            paper_width_mm = body.get("paper_width_mm")
         except (KeyError, ValueError, json.JSONDecodeError) as exc:
             self._send_json(400, {"detail": f"Invalid request: {exc}"})
+            return
+
+        if EMULATE_DIR is not None:
+            try:
+                path = save_emulated_print(printer_name, data, EMULATE_DIR, paper_width_mm=paper_width_mm)
+            except Exception as exc:  # noqa: BLE001 — surface any renderer failure to the caller, not a 500
+                logger.exception("Emulated print failed")
+                self._send_json(502, {"detail": f"Emulate render failed: {exc}"})
+                return
+            logger.info("Emulated print saved to %s", path)
+            _maybe_open_image(path)
+            self._send_json(
+                200, {"status": "emulated", "printer_name": printer_name, "bytes": len(data), "file": str(path)}
+            )
             return
 
         try:
@@ -131,9 +190,28 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    global EMULATE_DIR
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=9123)
+    parser.add_argument(
+        "--emulate",
+        nargs="?",
+        const="emulated_prints",
+        default=None,
+        metavar="DIR",
+        help="Render print jobs to PNG images in DIR instead of sending them to a real "
+        "Windows printer — for local testing with no thermal hardware attached "
+        "(default DIR: ./emulated_prints). Requires Pillow: pip install -r "
+        "requirements-dev.txt.",
+    )
     args = parser.parse_args()
+
+    if args.emulate is not None:
+        EMULATE_DIR = Path(args.emulate).resolve()
+        EMULATE_DIR.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            "EMULATE MODE — print jobs will be rendered to PNG in %s instead of a real printer", EMULATE_DIR
+        )
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     logger.info("KOTMate print-agent listening on http://127.0.0.1:%d (Ctrl+C to stop)", args.port)

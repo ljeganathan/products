@@ -38,7 +38,7 @@ from app.services import report_service
 from app.services.export_service import export_rows
 from app.services.report_print_service import (
     is_report_printing_enabled,
-    render_report_print_text,
+    render_report_print_bytes,
 )
 from app.services.tenant_onboarding import get_active_plan
 
@@ -370,7 +370,7 @@ async def print_report(
             "No active Reports printer is registered for this location — add one in Settings > Printers.",
         )
 
-    content = await render_report_print_text(db, current_user.tenant_id, payload, printer.paper_width_mm)
+    content = await render_report_print_bytes(db, tenant, payload, printer, current_user.id)
 
     # Same usb/local_agent/bluetooth/rawbt (frontend-dispatched) vs network/wifi
     # (backend-dispatched) split as bill/KOT printing (bill_service._dispatch_print_for_bill).
@@ -382,6 +382,7 @@ async def print_report(
                 connection_type=printer.connection_type,
                 connection_details=printer.connection_details or {},
                 data_base64=base64.b64encode(content).decode("ascii"),
+                paper_width_mm=printer.paper_width_mm,
             ),
         )
     if printer.connection_type in ("network", "wifi"):

@@ -229,6 +229,93 @@ def test_options_cors_preflight(agent_server):
     assert "POST" in resp.getheader("Access-Control-Allow-Methods")
 
 
+# ---------------------------------------------------------------------------
+# --emulate mode
+# ---------------------------------------------------------------------------
+
+
+def test_print_uses_emulate_when_dir_set(agent_server, tmp_path):
+    # agent.EMULATE_DIR is normally set by main() from --emulate; tests set/reset it
+    # directly since these run the Handler without going through argparse.
+    with patch.object(agent, "EMULATE_DIR", tmp_path), patch.object(
+        agent, "save_emulated_print", return_value=tmp_path / "fake.png"
+    ) as save, patch.object(agent, "_maybe_open_image") as open_img:
+        status, body = _post_json(
+            agent_server,
+            "/print",
+            {"printer_name": "POS80 Printer", "data_base64": base64.b64encode(b"hi").decode()},
+        )
+
+    assert status == 200
+    assert body["status"] == "emulated"
+    assert body["file"] == str(tmp_path / "fake.png")
+    save.assert_called_once_with("POS80 Printer", b"hi", tmp_path, paper_width_mm=None)
+    open_img.assert_called_once_with(tmp_path / "fake.png")
+
+
+def test_print_emulate_forwards_paper_width_mm(agent_server, tmp_path):
+    # The browser sends the printer's own configured paper width alongside the bytes
+    # (PrintJobPayload.paper_width_mm, lib/printAgent.ts) so the preview image comes out
+    # the same physical size as what was picked in Settings > Printers, not a guess.
+    with patch.object(agent, "EMULATE_DIR", tmp_path), patch.object(
+        agent, "save_emulated_print", return_value=tmp_path / "fake.png"
+    ) as save, patch.object(agent, "_maybe_open_image"):
+        _post_json(
+            agent_server,
+            "/print",
+            {
+                "printer_name": "POS80 Printer",
+                "data_base64": base64.b64encode(b"hi").decode(),
+                "paper_width_mm": 80,
+            },
+        )
+
+    save.assert_called_once_with("POS80 Printer", b"hi", tmp_path, paper_width_mm=80)
+
+
+def test_print_emulate_never_touches_real_printer(agent_server, tmp_path):
+    with patch.object(agent, "EMULATE_DIR", tmp_path), patch.object(
+        agent, "save_emulated_print", return_value=tmp_path / "fake.png"
+    ), patch.object(agent, "_maybe_open_image"), patch.object(
+        agent, "send_raw_bytes_to_windows_printer"
+    ) as real_print:
+        _post_json(
+            agent_server,
+            "/print",
+            {"printer_name": "POS80 Printer", "data_base64": base64.b64encode(b"hi").decode()},
+        )
+
+    real_print.assert_not_called()
+
+
+def test_print_emulate_render_failure_returns_502(agent_server, tmp_path):
+    with patch.object(agent, "EMULATE_DIR", tmp_path), patch.object(
+        agent, "save_emulated_print", side_effect=RuntimeError("boom")
+    ):
+        status, body = _post_json(
+            agent_server,
+            "/print",
+            {"printer_name": "POS80 Printer", "data_base64": base64.b64encode(b"hi").decode()},
+        )
+
+    assert status == 502
+    assert "boom" in body["detail"]
+
+
+def test_save_emulated_print_writes_png(tmp_path):
+    path = agent.save_emulated_print("POS80 Printer", b"Hello\n", tmp_path)
+    assert path.exists()
+    assert path.parent == tmp_path
+    assert path.suffix == ".png"
+    assert "POS80_Printer" in path.name
+
+
+def test_save_emulated_print_sanitizes_printer_name(tmp_path):
+    path = agent.save_emulated_print("My/Weird:Printer*Name", b"Hello\n", tmp_path)
+    assert path.exists()
+    assert "/" not in path.name and ":" not in path.name and "*" not in path.name
+
+
 def test_print_response_has_cors_header(agent_server):
     with patch.object(agent, "send_raw_bytes_to_windows_printer"):
         resp, conn = _request(

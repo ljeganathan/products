@@ -76,6 +76,7 @@ async def test_print_printer(payload: PrinterTestPrintRequest) -> PrinterTestPri
                 connection_type=payload.connection_type,
                 connection_details=payload.connection_details,
                 data_base64=base64.b64encode(content).decode("ascii"),
+                paper_width_mm=payload.paper_width_mm,
             ),
         )
 

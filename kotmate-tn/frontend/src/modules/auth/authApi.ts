@@ -57,6 +57,9 @@ export interface MeResponse {
   default_payment_method: "upi" | "cash" | "card";
   // Effective report-printing state (plan feature AND tenant toggle) — Pro Max only.
   report_printing_enabled: boolean;
+  // Whether Item/Category Wise report prints show the Tamil name instead of English —
+  // inert unless report_printing_enabled is also true.
+  report_tamil_names_enabled: boolean;
 }
 
 export async function me(): Promise<MeResponse> {

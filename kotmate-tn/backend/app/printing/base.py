@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Literal
 
 # 58mm -> 32 columns is the convention every line-formatting call below was originally
 # built against; 80mm printers physically fit more (~48 cols at the same font), and
@@ -18,7 +19,7 @@ def line_chars_for_paper_width(paper_width_mm: int | None) -> int:
     return max(24, round(paper_width_mm * _DEFAULT_LINE_WIDTH / 58))
 
 
-def format_inr(amount: float, symbol: str = "₹") -> str:
+def format_inr(amount: float, symbol: str = "₹", *, always_paise: bool = False) -> str:
     """Indian lakh/crore digit grouping, ₹ prefix, paise shown only when non-zero —
     CLAUDE.md §9, mirrors the frontend's `formatINR` (frontend/src/lib/utils.ts) so
     printed amounts match what staff saw on screen.
@@ -28,6 +29,11 @@ def format_inr(amount: float, symbol: str = "₹") -> str:
     print-byte renderers below pass "Rs." instead — ₹ (U+20B9) isn't in any thermal
     printer's built-in code-page font, so sending it as-is prints as garbage/blank on
     real hardware even though it renders fine on screen.
+
+    `always_paise` forces two decimal places even when they're ".00" — report prints
+    (production feedback round 3) want a consistent financial-statement look with every
+    amount column lining up on the same number of decimals, unlike a customer bill's
+    "only show paise when non-zero" convention.
     """
     negative = amount < 0
     paise_total = round(abs(amount) * 100)
@@ -47,7 +53,7 @@ def format_inr(amount: float, symbol: str = "₹") -> str:
         grouped = digits
 
     result = f"{symbol}{grouped}"
-    if paise:
+    if paise or always_paise:
         result += f".{paise:02d}"
     return f"-{result}" if negative else result
 
@@ -304,3 +310,50 @@ def format_bill_text_lines(bill: BillRenderData) -> list[str]:
         lines.append(f"Scan to pay via UPI ({bill.upi_id})")
 
     return lines
+
+
+@dataclass
+class ReportBody:
+    """The two shapes every report reduces to for print (CLAUDE.md §10/§11 — "restructure
+    the report format in the print only", production feedback round 3):
+
+    - "keyvalue" (Sales Summary, Tax Summary, Z-Report): one field per printed line,
+      label left / value right (`pairs`) — was previously one wide row with every field
+      as its own column, unreadable at 32 columns.
+    - "grid" (everything else): a narrow, renamed column set (`headers`/`rows`, already
+      formatted strings — Indian digit grouping applied, "Rs." stripped where the round's
+      feedback asked for it). `bold_rows`/`big_rows` mark row indices (thermal only —
+      dot-matrix has no bold/double-height) for emphasis, e.g. Item/Category-wise's TOTAL
+      row. `tamil_names` maps a row index to Tamil text that should be rasterized on its
+      own line in place of that row's English name cell (thermal + the tenant's
+      `report_tamil_names_enabled` toggle only — a raster image can't share a text line
+      with the Qty/Sales columns, so that row prints as two lines instead of one; a row
+      not present here always prints its name as plain text).
+    """
+
+    kind: Literal["grid", "keyvalue"]
+    headers: list[str] = field(default_factory=list)
+    rows: list[list[str]] = field(default_factory=list)
+    bold_rows: set[int] = field(default_factory=set)
+    big_rows: set[int] = field(default_factory=set)
+    tamil_names: dict[int, str] = field(default_factory=dict)
+    pairs: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class ReportRenderData:
+    """Everything an adapter needs to render one report print job — branch identity and
+    a timestamp are new on every report this round (production feedback round 3);
+    `extra_header_lines` are Z-Report's own "Shift Close Time: ..." and "Closed By: ..."
+    lines, printed in addition to the generic `printed_at_label` every report already
+    gets. Empty for every other report type.
+    """
+
+    title: str
+    printed_at_label: str
+    extra_header_lines: list[str]
+    branch_name: str
+    branch_address_lines: list[str]
+    branch_gstin: str | None
+    paper_width_mm: int | None
+    body: ReportBody

@@ -1,9 +1,11 @@
 from datetime import datetime
 
+from app.printing import report_print
 from app.printing.base import (
     _PAYMENT_LABELS,
     BillRenderData,
     KotTicketRenderData,
+    ReportRenderData,
     format_inr,
     line_chars_for_paper_width,
     two_column_lines,
@@ -212,4 +214,66 @@ def render_bill(bill: BillRenderData) -> bytes:
         out += sep
         out += _text(f"Scan to pay via UPI ({bill.upi_id})")
 
+    return out + b"\n\n" + _CUT
+
+
+def render_report(data: ReportRenderData) -> bytes:
+    """ESC/POS byte stream for a thermal Reports printer (Pro Max only, CLAUDE.md §10) —
+    branch identity + print timestamp header on every report (production feedback round
+    3), then either a label:value list (`body.kind == "keyvalue"` — Sales Summary, Tax
+    Summary, Z-Report) or a narrow renamed column grid (everything else). A grid row
+    present in `body.tamil_names` prints its Tamil name as its own rasterized line (same
+    technique as `_tamil_line` above) followed by a second line carrying just the
+    numeric columns, since a raster image can't share a text line with them — see
+    `ReportBody`'s own docstring (printing/base.py).
+    """
+    line_width = line_chars_for_paper_width(data.paper_width_mm)
+    sep = _text("-" * line_width)
+    max_width_px = line_width * _PX_PER_CHAR
+
+    def _wrapped(text: str) -> bytes:
+        # Header lines are plain sentences, not column data — word-wrap rather than
+        # truncate, since a long hotel name/branch address/"Shift Close Time: ..." line
+        # would otherwise overflow the printer's actual line width (report_print.py's
+        # wrap_line docstring has the concrete example).
+        out = b""
+        for wrapped_line in report_print.wrap_line(text, line_width):
+            out += _text(wrapped_line)
+        return out
+
+    out = _INIT + _CENTER + _BOLD_ON + _SIZE_DOUBLE_HEIGHT
+    out += _wrapped(data.branch_name)
+    out += _SIZE_NORMAL + _BOLD_OFF
+    for addr_line in data.branch_address_lines:
+        out += _wrapped(addr_line)
+    if data.branch_gstin:
+        out += _wrapped(f"GSTIN: {data.branch_gstin}")
+    out += sep
+    out += _BOLD_ON + _wrapped(data.title) + _BOLD_OFF
+    out += _wrapped(data.printed_at_label)
+    for line in data.extra_header_lines:
+        out += _wrapped(line)
+    out += _LEFT + sep
+
+    body = data.body
+    if body.kind == "keyvalue":
+        for label, value in body.pairs:
+            for line in two_column_lines(label, value, line_width):
+                out += _text(line)
+    else:
+        widths = report_print.column_widths(body.headers, body.rows, line_width)
+        out += _BOLD_ON + _text(report_print.format_row(body.headers, widths)) + _BOLD_OFF
+        out += sep
+        for i, row in enumerate(body.rows):
+            if i in body.tamil_names:
+                out += _tamil_line(body.tamil_names[i], max_width_px)
+                row = ["", *row[1:]]
+            line = report_print.format_row(row, widths)
+            is_bold = i in body.bold_rows
+            is_big = i in body.big_rows
+            out += (_BOLD_ON if is_bold else b"") + (_SIZE_DOUBLE_HEIGHT if is_big else b"")
+            out += _text(line)
+            out += (_SIZE_NORMAL if is_big else b"") + (_BOLD_OFF if is_bold else b"")
+
+    out += sep
     return out + b"\n\n" + _CUT

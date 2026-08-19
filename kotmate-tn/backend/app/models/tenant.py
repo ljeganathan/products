@@ -53,6 +53,11 @@ class Tenant(UUIDPKMixin, TimestampMixin, Base):
     # plans.features.report_printing). Defaults off, unlike stock_management_enabled's
     # "always on for tiers without the feature" — Lite/Pro never see this at all.
     report_printing_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Whether Item Wise Sales / Category Wise Sales report prints show the Tamil name
+    # (rasterized as an image on a thermal printer — dot-matrix always falls back to
+    # English, same limitation dot-matrix bill/KOT already have) instead of English.
+    # Inert unless report_printing_enabled is also on. Defaults off.
+    report_tamil_names_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         CheckConstraint(_STATE_CHECK_SQL, name="ck_tenants_state_valid"),

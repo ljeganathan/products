@@ -50,6 +50,11 @@ export interface BillPrintJob {
   connection_type: "usb" | "local_agent" | "bluetooth" | "rawbt";
   connection_details: Record<string, unknown>;
   data_base64: string;
+  // The printer's own configured paper width (Settings > Printers) — the bytes above
+  // are already formatted/sized to it. Forwarded to the local print-agent so its
+  // --emulate mode can size the preview image to match (print-agent/README.md);
+  // otherwise unused by the real WebUSB/Bluetooth/RawBT dispatch paths.
+  paper_width_mm: number | null;
 }
 
 export interface Bill extends BillTotals {

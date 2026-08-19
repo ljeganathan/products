@@ -34,3 +34,6 @@ backend/uploads/
 
 # --- Deploy artifacts (see scripts/backup_db.sh, docs/DEPLOYMENT.md) --------
 /backups/
+
+# --- print-agent --emulate mode output (see print-agent/README.md) ---------
+print-agent/emulated_prints/

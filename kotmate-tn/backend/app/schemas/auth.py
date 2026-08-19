@@ -50,3 +50,7 @@ class MeResponse(BaseModel):
     # Tenant-wide kill switch for printing reports (Pro Max only — always false when the
     # plan lacks the feature, mirroring stock_tracking_enabled's shape).
     report_printing_enabled: bool
+    # Whether Item Wise/Category Wise report prints show the Tamil name instead of
+    # English — raw tenant value, not derived, since it's inert unless
+    # report_printing_enabled is already true.
+    report_tamil_names_enabled: bool

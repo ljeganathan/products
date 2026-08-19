@@ -47,10 +47,14 @@ def _bill_filters(tenant_id: uuid.UUID, params: ReportQueryParams) -> list:
     return filters
 
 
-async def sales_summary(
+async def _totals_and_payments(
     session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
-) -> SalesSummaryResponse:
-    row = (
+) -> tuple[int, float, float, float, float, float, float, list[PaymentMethodTotal]]:
+    """Shared by sales_summary and z_report — both need the exact same bill totals plus
+    a per-payment-method breakdown (production feedback round 3 added the breakdown to
+    Sales Summary too, to match Z-Report, so this is now the one place that query lives).
+    """
+    totals = (
         await session.execute(
             select(
                 func.count(Bill.id),
@@ -63,17 +67,47 @@ async def sales_summary(
             ).where(*_bill_filters(tenant_id, params))
         )
     ).one()
-    bill_count, subtotal, discount, cgst, sgst, round_off, grand_total = row
-    average_bill_value = round(float(grand_total) / bill_count, 2) if bill_count else 0.0
+    bill_count, subtotal, discount, cgst, sgst, round_off, grand_total = totals
+
+    payment_rows = (
+        await session.execute(
+            select(Payment.method, func.sum(Payment.amount))
+            .join(Bill, Bill.id == Payment.bill_id)
+            .where(*_bill_filters(tenant_id, params))
+            .group_by(Payment.method)
+        )
+    ).all()
+    payments = [PaymentMethodTotal(method=method, amount=float(amount)) for method, amount in payment_rows]
+
+    return (
+        bill_count,
+        float(subtotal),
+        float(discount),
+        float(cgst),
+        float(sgst),
+        float(round_off),
+        float(grand_total),
+        payments,
+    )
+
+
+async def sales_summary(
+    session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
+) -> SalesSummaryResponse:
+    bill_count, subtotal, discount, cgst, sgst, round_off, grand_total, payments = await _totals_and_payments(
+        session, tenant_id, params
+    )
+    average_bill_value = round(grand_total / bill_count, 2) if bill_count else 0.0
     return SalesSummaryResponse(
         bill_count=bill_count,
-        subtotal=float(subtotal),
-        discount_amount=float(discount),
-        cgst_amount=float(cgst),
-        sgst_amount=float(sgst),
-        round_off_amount=float(round_off),
-        grand_total=float(grand_total),
+        subtotal=subtotal,
+        discount_amount=discount,
+        cgst_amount=cgst,
+        sgst_amount=sgst,
+        round_off_amount=round_off,
+        grand_total=grand_total,
         average_bill_value=average_bill_value,
+        payments=payments,
     )
 
 
@@ -397,38 +431,18 @@ async def z_report(
     single day, but nothing here forces that; passing a wider range just produces a
     multi-day shift-close total, which is a harmless generalization.
     """
-    totals = (
-        await session.execute(
-            select(
-                func.count(Bill.id),
-                func.coalesce(func.sum(Bill.subtotal), 0),
-                func.coalesce(func.sum(Bill.discount_amount), 0),
-                func.coalesce(func.sum(Bill.cgst_amount), 0),
-                func.coalesce(func.sum(Bill.sgst_amount), 0),
-                func.coalesce(func.sum(Bill.round_off_amount), 0),
-                func.coalesce(func.sum(Bill.grand_total), 0),
-            ).where(*_bill_filters(tenant_id, params))
-        )
-    ).one()
-    bill_count, subtotal, discount, cgst, sgst, round_off, grand_total = totals
-
-    payment_rows = (
-        await session.execute(
-            select(Payment.method, func.sum(Payment.amount))
-            .join(Bill, Bill.id == Payment.bill_id)
-            .where(*_bill_filters(tenant_id, params))
-            .group_by(Payment.method)
-        )
-    ).all()
+    bill_count, subtotal, discount, cgst, sgst, round_off, grand_total, payments = await _totals_and_payments(
+        session, tenant_id, params
+    )
 
     return ZReportResponse(
         report_date=params.date_from,
         bill_count=bill_count,
-        subtotal=float(subtotal),
-        discount_amount=float(discount),
-        cgst_amount=float(cgst),
-        sgst_amount=float(sgst),
-        round_off_amount=float(round_off),
-        grand_total=float(grand_total),
-        payments=[PaymentMethodTotal(method=method, amount=float(amount)) for method, amount in payment_rows],
+        subtotal=subtotal,
+        discount_amount=discount,
+        cgst_amount=cgst,
+        sgst_amount=sgst,
+        round_off_amount=round_off,
+        grand_total=grand_total,
+        payments=payments,
     )

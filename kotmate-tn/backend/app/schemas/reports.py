@@ -16,6 +16,11 @@ class ReportQueryParams(BaseModel):
     location_id: uuid.UUID | None = None
 
 
+class PaymentMethodTotal(BaseModel):
+    method: str
+    amount: float
+
+
 class SalesSummaryResponse(BaseModel):
     bill_count: int
     subtotal: float
@@ -25,6 +30,10 @@ class SalesSummaryResponse(BaseModel):
     round_off_amount: float
     grand_total: float
     average_bill_value: float
+    # Per-payment-method breakdown, same shape as ZReportResponse.payments below — added
+    # so Sales Summary's print/export can show "Payment - Cash/UPI/Card" like the Z-Report
+    # already does (production feedback round 3).
+    payments: list[PaymentMethodTotal]
 
 
 class ItemWiseSalesRow(BaseModel):
@@ -140,11 +149,6 @@ class PosOperatorIncentiveRow(BaseModel):
 class PosOperatorIncentiveResponse(BaseModel):
     rows: list[PosOperatorIncentiveRow]
     total_incentive_amount: float
-
-
-class PaymentMethodTotal(BaseModel):
-    method: str
-    amount: float
 
 
 class ZReportResponse(BaseModel):

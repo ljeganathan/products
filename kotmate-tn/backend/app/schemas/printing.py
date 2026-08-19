@@ -15,3 +15,9 @@ class PrintJobPayload(BaseModel):
     connection_type: str
     connection_details: dict
     data_base64: str
+    # The printer's own configured paper width (Settings > Printers) — the bytes above
+    # are already formatted/sized to this width, so the frontend forwards it verbatim
+    # rather than re-deriving it. Consumed by lib/printAgent.ts so the local print-agent
+    # can render an accurately-sized preview image in --emulate mode (print-agent/
+    # README.md) instead of guessing a width from content alone.
+    paper_width_mm: int | None = None
