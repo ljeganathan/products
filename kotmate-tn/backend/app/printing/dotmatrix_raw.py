@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from app.printing import report_print
 from app.printing.base import (
     BillRenderData,
@@ -8,6 +6,7 @@ from app.printing.base import (
     format_bill_text_lines,
     format_kot_text_lines,
     line_chars_for_paper_width,
+    now_ist,
     two_column_lines,
 )
 
@@ -27,7 +26,7 @@ def render_test_print(paper_width_mm: int | None) -> str:
         "If you can read this, the",
         "printer is set up correctly.",
         sep,
-        datetime.now().strftime("%d-%b-%Y %I:%M %p"),
+        now_ist().strftime("%d-%b-%Y %I:%M %p"),
     ]
     return "\n".join(lines) + "\n" + _FORM_FEED
 

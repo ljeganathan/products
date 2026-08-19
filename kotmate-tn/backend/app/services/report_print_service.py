@@ -1,12 +1,11 @@
 import uuid
-from datetime import datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Printer, Role, Tenant, User
-from app.printing.base import _PAYMENT_LABELS, ReportBody, ReportRenderData, format_inr
+from app.printing.base import _PAYMENT_LABELS, ReportBody, ReportRenderData, format_inr, now_ist
 from app.printing.dispatcher import dispatch_report_print
 from app.schemas.report_print import ReportPrintRequest
 from app.schemas.reports import (
@@ -205,7 +204,7 @@ async def render_report_print_bytes(
     """
     title = _TITLES[req.report_type]
     # No "Printed:" label prefix — just the date and time (production feedback round 3).
-    printed_at_label = datetime.now().strftime("%d-%b-%Y %I:%M %p")
+    printed_at_label = now_ist().strftime("%d-%b-%Y %I:%M %p")
     branch = await resolve_branch_header(session, printer.location_id)
     extra_header_lines: list[str] = []
 
@@ -216,7 +215,7 @@ async def render_report_print_bytes(
             date_from=req.report_date, date_to=req.report_date, location_id=req.location_id
         )
         result = await report_service.z_report(session, tenant.id, params)
-        shift_time = datetime.now().strftime("%I:%M %p")
+        shift_time = now_ist().strftime("%I:%M %p")
         extra_header_lines = [
             f"Shift Close Time: {result.report_date.strftime('%d-%b-%Y')} {shift_time}",
             await _closed_by_label(session, current_user_id),

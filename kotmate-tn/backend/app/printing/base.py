@@ -1,6 +1,30 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
+from zoneinfo import ZoneInfo
+
+# KOTMate TN is exclusively for Tamil Nadu businesses — every printed timestamp (bill/
+# KOT date-time, report "Printed" stamp, Z-Report's Shift Close Time) must show India
+# Standard Time regardless of what timezone the server/container itself runs in
+# (production feedback: "all print time zone is not set to Asia/kolkata"). `created_at`
+# columns are `DateTime(timezone=True)` (db/mixins.py's TimestampMixin) so they always
+# come back tz-aware — usually UTC — from the DB; printing one directly via .strftime()
+# without converting first silently shows UTC wall-clock time on the receipt.
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def now_ist() -> datetime:
+    return datetime.now(IST)
+
+
+def to_ist(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        # Every created_at in this codebase is tz-aware (TimestampMixin), so this is
+        # defensive only — treat a naive datetime as UTC rather than let astimezone()
+        # silently assume the server's local zone.
+        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+    return dt.astimezone(IST)
+
 
 # 58mm -> 32 columns is the convention every line-formatting call below was originally
 # built against; 80mm printers physically fit more (~48 cols at the same font), and
@@ -118,7 +142,7 @@ def format_kot_text_lines(ticket: KotTicketRenderData) -> list[str]:
     lines = [
         f"KOT #{ticket.ticket_number}",
         ticket.header_label,
-        ticket.created_at.strftime("%d-%b-%Y %I:%M %p"),
+        to_ist(ticket.created_at).strftime("%d-%b-%Y %I:%M %p"),
         sep,
     ]
     for line in ticket.lines:
@@ -249,7 +273,7 @@ def format_bill_text_lines(bill: BillRenderData) -> list[str]:
     # Table/waiter (what staff/kitchen call out) on the left; bill#/date-time (what a
     # customer cross-checks) on the right — two lines, not four, per-side grouping
     # requested directly during manual testing.
-    date_str = bill.created_at.strftime("%d-%b-%Y %I:%M %p")
+    date_str = to_ist(bill.created_at).strftime("%d-%b-%Y %I:%M %p")
     lines.extend(two_column_lines(bill.header_label, f"Bill #{bill.bill_number}", bill.line_width))
     waiter_label = f"Waiter: {bill.waiter_name}" if bill.waiter_name else ""
     lines.extend(two_column_lines(waiter_label, date_str, bill.line_width))

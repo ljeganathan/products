@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from app.printing import report_print
 from app.printing.base import (
     _PAYMENT_LABELS,
@@ -8,6 +6,8 @@ from app.printing.base import (
     ReportRenderData,
     format_inr,
     line_chars_for_paper_width,
+    now_ist,
+    to_ist,
     two_column_lines,
 )
 from app.printing.qr import generate_qr_escpos
@@ -81,7 +81,7 @@ def render_test_print(paper_width_mm: int | None) -> bytes:
     out += _text("If you can read this,")
     out += _text("the printer is set up correctly.")
     out += sep
-    out += _text(datetime.now().strftime("%d-%b-%Y %I:%M %p"))
+    out += _text(now_ist().strftime("%d-%b-%Y %I:%M %p"))
     out += _LEFT
     return out + b"\n\n" + _CUT
 
@@ -101,7 +101,7 @@ def render_kot(ticket: KotTicketRenderData) -> bytes:
     out += _text(f"KOT #{ticket.ticket_number}")
     out += _SIZE_NORMAL + _BOLD_OFF + _LEFT
     out += _text(ticket.header_label)
-    out += _text(ticket.created_at.strftime("%d-%b-%Y %I:%M %p"))
+    out += _text(to_ist(ticket.created_at).strftime("%d-%b-%Y %I:%M %p"))
     out += sep
     for line in ticket.lines:
         out += _text(f"{line.quantity} x {line.name_en}")
@@ -152,7 +152,7 @@ def render_bill(bill: BillRenderData) -> bytes:
     out += sep
     # Table/waiter (what staff/kitchen call out) on the left; bill#/date-time (what a
     # customer cross-checks) on the right — requested directly during manual testing.
-    date_str = bill.created_at.strftime("%d-%b-%Y %I:%M %p")
+    date_str = to_ist(bill.created_at).strftime("%d-%b-%Y %I:%M %p")
     for header_line in two_column_lines(bill.header_label, f"Bill #{bill.bill_number}", line_width):
         out += _text(header_line)
     waiter_label = f"Waiter: {bill.waiter_name}" if bill.waiter_name else ""
