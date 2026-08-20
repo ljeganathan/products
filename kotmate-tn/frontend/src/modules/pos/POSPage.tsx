@@ -1052,7 +1052,7 @@ export function POSPage() {
             setItemCodeError(null);
           }}
           itemCodeError={itemCodeError}
-          onSubmit={(onDone) => void handleItemCodeSubmit(onDone)}
+          onSubmit={() => void handleItemCodeSubmit()}
           onClose={() => setShowItemCodeModal(false)}
         />
       )}
