@@ -102,6 +102,66 @@ async def test_repeat_kot_only_sends_new_items(client: AsyncClient, pro_max_tena
     assert [i["name_en"] for i in first_ticket["items"]] == ["Item A"]
 
 
+async def test_reordering_an_already_sent_item_creates_a_new_sendable_line(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    """Production feedback: "again i am ordering dosai for the same table but its not
+    adding" — merging a repeat add-on into the already-KOT-sent line's quantity left it
+    permanently invisible to repeat-KOT's is_kot_sent=false filter, so the kitchen never
+    found out about the extra portion. The fix requires the client to echo each line's
+    own `id` (OrderLineInput.id, order_service.compute_updated_lines) when it wants to
+    edit that specific row — an input line with no id always becomes a new, unsent row,
+    exactly what POSPage.tsx's handleAddItem now does for a repeat add of an
+    already-sent item.
+    """
+    headers = pro_max_tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    category = await _create_category(client, headers)
+    dosai = await _create_item(client, headers, category["id"], name_en="Dosai", price=50)
+    order = await _create_order(
+        client, headers, location_id, section_id, [{"item_id": dosai["id"], "quantity": 1}]
+    )
+    sent_line_id = order["items"][0]["id"]
+
+    first = await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)
+    assert first.status_code == 201
+
+    # Same item ordered again — the already-sent line's id is echoed unchanged, and the
+    # add-on is a brand-new line with no id (POSPage.tsx's handleAddItem behavior).
+    updated = await client.patch(
+        f"/api/v1/orders/{order['id']}",
+        json={
+            "items": [
+                {"id": sent_line_id, "item_id": dosai["id"], "quantity": 1},
+                {"item_id": dosai["id"], "quantity": 1},
+            ]
+        },
+        headers=headers,
+    )
+    assert updated.status_code == 200, updated.text
+    items = updated.json()["items"]
+    assert len(items) == 2
+    sent_line = next(i for i in items if i["id"] == sent_line_id)
+    new_line = next(i for i in items if i["id"] != sent_line_id)
+    assert sent_line["is_kot_sent"] is True
+    assert sent_line["quantity"] == 1
+    assert new_line["is_kot_sent"] is False
+    assert new_line["quantity"] == 1
+    assert updated.json()["subtotal"] == 100  # both lines bill correctly, no quantity lost
+
+    second = await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)
+    assert second.status_code == 201, second.text
+
+    tickets = (await client.get("/api/v1/kot/tickets/active", headers=headers)).json()
+    second_ticket = next(t for t in tickets if t["ticket_number"] == second.json()["ticket_number"])
+    assert [i["name_en"] for i in second_ticket["items"]] == ["Dosai"]
+    assert second_ticket["items"][0]["quantity"] == 1  # only the add-on, never double-counted
+
+    first_ticket = next(t for t in tickets if t["ticket_number"] == first.json()["ticket_number"])
+    assert first_ticket["items"][0]["quantity"] == 1  # the original ticket is untouched
+
+
 async def test_stock_decrement_floors_at_zero(client: AsyncClient, pro_max_tenant_admin: dict):
     headers = pro_max_tenant_admin["headers"]
     # stock_management_enabled defaults off on Pro/Pro Max (opt-in soft-disable switch,

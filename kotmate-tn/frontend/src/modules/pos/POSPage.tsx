@@ -48,7 +48,15 @@ type SyncState = "idle" | "saving" | "saved" | "error";
 
 function toLineInputs(order: Order | null): OrderLineInput[] {
   if (!order) return [];
-  return order.items.map((line) => ({ item_id: line.item_id, quantity: line.quantity, notes: line.notes }));
+  // Echo each line's own id so the backend matches it back to the exact OrderItem row
+  // (compute_updated_lines) instead of a fuzzy item_id/notes guess — required for two
+  // lines of the same item (one already sent to KOT, one not) to never collide.
+  return order.items.map((line) => ({
+    id: line.id,
+    item_id: line.item_id,
+    quantity: line.quantity,
+    notes: line.notes,
+  }));
 }
 
 export function POSPage() {
@@ -217,7 +225,14 @@ export function POSPage() {
   }
 
   function quantityInCartFor(item: PosItem): number {
-    return order?.items.find((l) => l.item_id === item.id && !l.notes)?.quantity ?? 0;
+    // Summed, not just the first match — the same item can legitimately span two lines
+    // (one already sent to KOT, one not yet) once a repeat add-on has happened, see
+    // handleAddItem below.
+    return (
+      order?.items
+        .filter((l) => l.item_id === item.id && !l.notes)
+        .reduce((sum, l) => sum + l.quantity, 0) ?? 0
+    );
   }
 
   async function syncCart(nextItems: OrderLineInput[]) {
@@ -263,9 +278,15 @@ export function POSPage() {
       return;
     }
     const current = toLineInputs(order);
-    const existing = current.find((l) => l.item_id === item.id && !l.notes);
-    const next = existing
-      ? current.map((l) => (l === existing ? { ...l, quantity: l.quantity + 1 } : l))
+    // Only ever bump a line that hasn't been sent to the kitchen yet — merging into an
+    // already-sent line's quantity would silently increase the bill without the kitchen
+    // ever finding out, since kot_service.send_kot only re-fires not-yet-sent lines
+    // (production feedback: adding more of an already-KOT-sent item wasn't reaching the
+    // kitchen). If every existing line for this item is already sent, this becomes a
+    // brand-new, still-unsent line instead.
+    const unsentLine = order?.items.find((l) => l.item_id === item.id && !l.notes && !l.is_kot_sent);
+    const next = unsentLine
+      ? current.map((l) => (l.id === unsentLine.id ? { ...l, quantity: l.quantity + 1 } : l))
       : [...current, { item_id: item.id, quantity: 1 }];
     await syncCart(next);
   }
@@ -276,12 +297,15 @@ export function POSPage() {
     searchInputRef.current?.focus();
   }
 
-  async function handleQuantityChange(itemId: string, notes: string | null, newQty: number) {
+  // Keyed by the specific line's own id, not (item_id, notes) — the same item can now
+  // legitimately have two lines (one already sent to KOT, one not), so identifying
+  // "which one this +/- tap belongs to" needs the line's real identity.
+  async function handleQuantityChange(lineId: string, newQty: number) {
     const current = toLineInputs(order);
     const next =
       newQty <= 0
-        ? current.filter((l) => !(l.item_id === itemId && l.notes === notes))
-        : current.map((l) => (l.item_id === itemId && l.notes === notes ? { ...l, quantity: newQty } : l));
+        ? current.filter((l) => l.id !== lineId)
+        : current.map((l) => (l.id === lineId ? { ...l, quantity: newQty } : l));
     await syncCart(next);
   }
 
@@ -728,7 +752,7 @@ export function POSPage() {
             )}
           </div>
 
-          <label className="hidden min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 md:flex">
+          <label className="hidden min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 lg:flex">
             <span className="text-xs">#️⃣</span>
             <input
               ref={itemCodeInputRef}
@@ -751,11 +775,14 @@ export function POSPage() {
           </label>
         </div>
 
-        {/* KOT Tickets / Recall / Dashboard all fit fine on tablet+, but on a phone
-            they were the reason the header overflowed and pushed Dashboard (and
-            sometimes Recall too) off-screen with no way to reach them at all — found
-            during real-device testing. Below `md` they collapse into the "⋮" menu. */}
-        <div className="hidden items-center gap-2.5 md:flex">
+        {/* KOT Tickets / Recall / Dashboard (+ the inline Code field above) all fit fine
+            on a genuinely spacious desktop, but crowd the header into overflow anywhere
+            narrower — including tablet-landscape/phone-landscape widths in the 768-
+            1024px range, where the item-code entry point was getting clipped off-screen
+            with no way to reach it at all (production feedback) after `md` (768px)
+            turned out too tight once the Code field joined this same header. `lg`
+            (1024px) leaves real margin; below it these collapse into the "⋮" menu instead. */}
+        <div className="hidden items-center gap-2.5 lg:flex">
           {(role === "pos_user" || role === "tenant_admin" || role === "pos_operator") &&
             meData?.features?.kds === true && (
               <button
@@ -783,7 +810,7 @@ export function POSPage() {
           )}
         </div>
 
-        <div className="relative md:hidden">
+        <div className="relative lg:hidden">
           <button
             type="button"
             onClick={() => setMobileMenuOpen((v) => !v)}

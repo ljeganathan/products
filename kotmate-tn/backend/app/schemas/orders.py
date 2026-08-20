@@ -10,6 +10,12 @@ EDITABLE_ORDER_STATUSES = [s for s in ORDER_STATUSES if s != "billed"]
 
 
 class OrderLineInput(BaseModel):
+    # Set by the POS client for a line that already exists on the order (echoing
+    # OrderItemLine.id from the last response) so a cart-replace update can match this
+    # input back to its exact OrderItem row — see compute_updated_lines. Omitted (None)
+    # for a genuinely new line being added; a `None` id always creates a new row rather
+    # than matching an existing one, even if item_id/notes happen to coincide.
+    id: uuid.UUID | None = None
     item_id: uuid.UUID
     quantity: int = Field(gt=0)
     notes: str | None = Field(default=None, max_length=300)

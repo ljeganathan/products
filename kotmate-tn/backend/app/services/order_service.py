@@ -238,8 +238,19 @@ async def _build_response(
 
 
 async def _load_lines(session: AsyncSession, order: Order) -> list[_LineData]:
+    # Ordered explicitly — an UPDATE (e.g. a quantity change) gives a row a new physical
+    # tuple version, so an unordered scan of this table can silently return a different
+    # row order after any edit, making cart lines appear to reshuffle on screen even
+    # though nothing about their logical position changed (production feedback).
+    # `line_no` is the real, explicit ordering (set once at insert, see create_order/
+    # apply_line_changes); `created_at`/`id` are just deterministic tiebreaks for the
+    # pre-line_no rows every existing order already has (they all backfilled to 0).
     order_items = (
-        await session.execute(select(OrderItem).where(OrderItem.order_id == order.id))
+        await session.execute(
+            select(OrderItem)
+            .where(OrderItem.order_id == order.id)
+            .order_by(OrderItem.line_no, OrderItem.created_at, OrderItem.id)
+        )
     ).scalars().all()
     lines = []
     for oi in order_items:
@@ -280,7 +291,7 @@ async def create_order(
     await session.flush()
 
     lines = [await _new_line(session, tenant_id, req.section_id, line_in) for line_in in req.items]
-    for line in lines:
+    for line_no, line in enumerate(lines):
         session.add(
             OrderItem(
                 tenant_id=tenant_id,
@@ -290,6 +301,7 @@ async def create_order(
                 quantity=line.quantity,
                 notes=line.notes,
                 is_kot_sent=False,
+                line_no=line_no,
             )
         )
     await session.flush()
@@ -334,22 +346,49 @@ async def compute_updated_lines(
     """Pure computation, no persistence — shared by the dry-run preview and the real
     apply path so they can never drift apart.
 
-    When `items_input` is given (a cart replace — add/remove/quantity edit), existing
-    rows are matched to the new input by (item_id, notes) so an edit that doesn't touch
-    a given line keeps that `OrderItem` row's identity rather than deleting and
-    recreating it — Phase 08's `kot_ticket_items` will FK to these ids, so an
-    already-fired line surviving an unrelated cart edit must not silently get a new id.
+    When `items_input` is given (a cart replace — add/remove/quantity edit), each input
+    line is matched back to its exact `OrderItem` row by `line_in.id` (echoed from the
+    last response) whenever the client provided one, so an edit that doesn't touch a
+    given line keeps that row's identity rather than deleting and recreating it — Phase
+    08's `kot_ticket_items` FKs to these ids, so an already-fired line surviving an
+    unrelated cart edit must not silently get a new id.
+
+    An input line with `id=None` always becomes a brand-new row, even if its item_id/
+    notes happen to match an existing one — this is what makes "add one more of an item
+    that's already been sent to the kitchen" work correctly: the POS client (POSPage.tsx's
+    handleAddItem) only reuses an *unsent* existing line's id when bumping a quantity, so
+    an add-on ordered after the first KOT ticket always lands in a fresh, still-unsent
+    line instead of silently inflating the already-fired row's quantity — which would
+    have left the kitchen never finding out about the extra portion, since kot_service.
+    send_kot only re-fires rows where is_kot_sent is still false (production feedback:
+    "again i am ordering dosai for the same table but its not adding").
+
+    A `line_in.id` with no matching row (e.g. stale client state) falls back to matching
+    by (item_id, notes) among rows no id-based match has already claimed, preferring an
+    unsent one — purely defensive, since every current caller always supplies an id for
+    an existing line.
     """
     if items_input is not None:
         existing_rows = list(
             (await session.execute(select(OrderItem).where(OrderItem.order_id == order.id))).scalars()
         )
+        by_id = {row.id: row for row in existing_rows}
         unmatched = list(existing_rows)
         lines: list[_LineData] = []
         for line_in in items_input:
-            match = next(
-                (r for r in unmatched if r.item_id == line_in.item_id and r.notes == line_in.notes), None
-            )
+            match = by_id.get(line_in.id) if line_in.id is not None else None
+            if match is not None and match not in unmatched:
+                match = None  # already claimed by an earlier input line with the same id
+            if match is None and line_in.id is None:
+                # No id supplied — fall back to a fuzzy match, preferring a not-yet-sent
+                # row so an id-less caller can't accidentally inflate an already-fired line.
+                candidates = [
+                    r for r in unmatched if r.item_id == line_in.item_id and r.notes == line_in.notes
+                ]
+                match = next(
+                    (r for r in candidates if not r.is_kot_sent),
+                    candidates[0] if candidates else None,
+                )
             item = await _get_item_or_400(session, tenant_id, line_in.item_id)
             unit_price = await resolve_item_price(session, tenant_id, item, target_section_id)
             if match is not None:
@@ -382,7 +421,13 @@ async def compute_updated_lines(
         return existing_lines
     return [
         await _repriced_line(session, tenant_id, target_section_id, oi)
-        for oi in (await session.execute(select(OrderItem).where(OrderItem.order_id == order.id))).scalars()
+        for oi in (
+            await session.execute(
+                select(OrderItem)
+                .where(OrderItem.order_id == order.id)
+                .order_by(OrderItem.line_no, OrderItem.created_at, OrderItem.id)
+            )
+        ).scalars()
     ]
 
 
@@ -399,6 +444,10 @@ async def apply_line_changes(
         for oi in (await session.execute(select(OrderItem).where(OrderItem.order_id == order.id))).scalars()
     }
     keep_ids: set[uuid.UUID] = set()
+    # A brand-new line is always appended after everything already in the cart, never
+    # interleaved — matches how a cashier actually experiences "add one more" (POSPage.
+    # tsx's handleAddItem), and keeps every existing line's own line_no untouched.
+    next_line_no = max((row.line_no for row in existing_rows.values()), default=-1) + 1
 
     for line in lines:
         if line.existing_id is not None and line.existing_id in existing_rows:
@@ -417,8 +466,10 @@ async def apply_line_changes(
                     quantity=line.quantity,
                     notes=line.notes,
                     is_kot_sent=line.is_kot_sent,
+                    line_no=next_line_no,
                 )
             )
+            next_line_no += 1
 
     stale_ids = [row_id for row_id in existing_rows if row_id not in keep_ids]
     if stale_ids:

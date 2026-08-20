@@ -170,7 +170,10 @@ non-seating orders and single-customer (label-less) orders unconstrained.
 **`order_items`** — `order_id`, `item_id`, **`unit_price`** (snapshotted at add-time from
 the section-resolved price — later item/section-price edits never retroactively change
 an open/held order line), `quantity` (CHECK > 0), `notes`, `is_kot_sent` (repeat-KOT
-tracking, Phase 08).
+tracking, Phase 08), `line_no` (explicit cart position, set once at insert — the real
+ordering; `created_at`/`id` are only a tiebreak for pre-existing rows that all
+backfilled to 0, production feedback: a quantity change was reshuffling other cart
+lines because nothing pinned display order to something an UPDATE never touches).
 
 **`kot_tickets`** — `order_id`, `ticket_number` (unique per tenant), `status` ∈
 new/preparing/ready.
@@ -199,7 +202,12 @@ changes later.
 | waiter_incentive_amount, cashier_incentive_amount | numeric(10,2), nullable | informational only — never printed on the customer bill |
 
 **`bill_items`** — `bill_id`, `item_id`, `name_en_snapshot`/`name_ta_snapshot` (frozen at
-bill time), `unit_price`, `quantity`, `line_total`.
+bill time), `unit_price`, `quantity`, `line_total`. Still one row per originating
+`order_items` row (never merged in storage), so a repeat-KOT add-on (§11) persists as
+two rows here too — `bill_service.py`'s `_consolidate_bill_lines()` groups same
+`item_id`+`unit_price` rows back into one line wherever a bill is *shown* (preview, the
+finalize/GET response, print, reprint), so this granularity stays an audit-trail detail,
+never something a customer or a report sees duplicated.
 
 **`payments`** — split payment lines. `bill_id`, `method` ∈ upi/cash/card (CLAUDE.md §9
 orders these UPI-first in the UI), `amount`.
@@ -335,6 +343,15 @@ for the full chain. Resuming the list for the manual-testing-fix backlog phases:
     `db07d0c0058e`) — adds `tenants.report_tamil_names_enabled` (bool, default false),
     gating whether Item Wise/Category Wise report prints show the Tamil name instead of
     English (§10's report-print restructure).
+25. **`order items line_no`** (production feedback round 4, revision `a1c9e4d7b3f2`) —
+    adds `order_items.line_no` (int, backfilled to 0), an explicit cart-position column
+    set once at insert by `order_service.py`'s `create_order`/`apply_line_changes` and
+    never touched again. Fixes a quantity change reordering the other cart lines on
+    screen: the previous unordered/`created_at`-ordered SELECT could return a different
+    row order after any UPDATE (a row gets a new physical tuple version), and
+    `created_at` alone ties for every line inserted in the same multi-row INSERT (the
+    common case — one statement per `create_order` call). See `order_items` table notes
+    above.
 
 ### Gotcha for Phase 02: setting the RLS session vars
 

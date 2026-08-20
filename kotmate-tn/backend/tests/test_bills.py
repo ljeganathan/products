@@ -107,6 +107,69 @@ async def test_finalize_bill_computes_tax_and_round_off(client: AsyncClient, ten
     assert order_after["status"] == "billed"
 
 
+async def test_repeat_kot_add_on_consolidates_into_one_bill_line(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    """Production feedback: ordering more of an item that's already been sent to KOT
+    correctly becomes a second, separate `order_items`/`kot_ticket_items` row (see
+    test_kot.py's own regression test for that) — but a customer's bill, its on-screen
+    preview, and the physical print must still show that as one line with the combined
+    quantity, not two entries for the same item. KOT tickets themselves stay separate.
+    """
+    headers = pro_max_tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    await _create_tax_rule(client, headers)
+    category = await _create_category(client, headers)
+    dosai = await _create_item(client, headers, category["id"], name_en="Dosai", price=50)
+
+    order = await _create_order(
+        client, headers, location_id, section_id, [{"item_id": dosai["id"], "quantity": 1}]
+    )
+    sent_line_id = order["items"][0]["id"]
+    first_kot = await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)
+    assert first_kot.status_code == 201, first_kot.text
+
+    updated = await client.patch(
+        f"/api/v1/orders/{order['id']}",
+        json={
+            "items": [
+                {"id": sent_line_id, "item_id": dosai["id"], "quantity": 1},
+                {"item_id": dosai["id"], "quantity": 1},
+            ]
+        },
+        headers=headers,
+    )
+    assert updated.status_code == 200, updated.text
+    assert len(updated.json()["items"]) == 2  # still two order_items rows
+
+    second_kot = await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)
+    assert second_kot.status_code == 201, second_kot.text
+
+    preview = await client.post(
+        "/api/v1/bills/preview", json={"order_id": order["id"]}, headers=headers
+    )
+    assert preview.status_code == 200, preview.text
+    assert len(preview.json()["items"]) == 1
+    assert preview.json()["items"][0]["quantity"] == 2
+    assert preview.json()["items"][0]["line_total"] == 100.0
+
+    bill = await client.post(
+        "/api/v1/bills",
+        json={"order_id": order["id"], "payments": [{"method": "cash", "amount": 124.0}]},
+        headers=headers,
+    )
+    assert bill.status_code == 201, bill.text
+    body = bill.json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["quantity"] == 2
+    assert body["items"][0]["line_total"] == 100.0
+
+    fetched = await client.get(f"/api/v1/bills/{body['id']}", headers=headers)
+    assert len(fetched.json()["items"]) == 1
+    assert fetched.json()["items"][0]["quantity"] == 2
+
+
 async def test_billed_order_drops_from_kot_tickets_popup(client: AsyncClient, pro_max_tenant_admin: dict):
     headers = pro_max_tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)

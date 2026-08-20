@@ -309,16 +309,41 @@ def _incentive_amount(rate: float | None, net_taxable_value: float) -> float | N
     return round(float(rate) * net_taxable_value / 100, 2)
 
 
-def _item_response(priced: _PricedItem) -> BillItemResponse:
-    return BillItemResponse(
-        id=None,
-        item_id=priced.item.id,
-        name_en=priced.item.name_en,
-        name_ta=priced.item.name_ta,
-        unit_price=priced.unit_price,
-        quantity=priced.quantity,
-        line_total=priced.line_total,
-    )
+# (item_id, name_en, name_ta, unit_price, quantity, line_total, source_id) — source_id is
+# whichever bill_item/order_item row a consolidated row happens to be labeled with (only
+# meaningful as a stable React key on the frontend; None before a bill is persisted).
+_ConsolidatedRow = tuple[uuid.UUID, str, str | None, float, int, float, uuid.UUID | None]
+
+
+def _consolidate_bill_lines(rows: list[_ConsolidatedRow]) -> list[_ConsolidatedRow]:
+    """Groups by (item_id, unit_price) and sums quantity/line_total, preserving
+    first-seen order — a bill (its on-screen preview, its actual print, and a reprint)
+    shows one line per item even when ordering more of an already-KOT-sent item split it
+    across multiple order_items/bill_items rows (production feedback: billing an order
+    with a repeat add-on was showing two separate entries, on screen and on the printed
+    bill). KOT tickets themselves are unaffected — each send still prints/displays
+    separately, which is exactly what makes repeat-KOT correct in the first place (see
+    order_service.py's compute_updated_lines' docstring). `bill_items` itself also stays
+    one row per originating order_item, for audit/reporting granularity — this only
+    consolidates what gets *shown*, never what's persisted.
+    """
+    grouped: dict[tuple[uuid.UUID, float], list] = {}
+    order: list[tuple[uuid.UUID, float]] = []
+    for item_id, name_en, name_ta, unit_price, quantity, line_total, source_id in rows:
+        key = (item_id, unit_price)
+        if key not in grouped:
+            grouped[key] = [name_en, name_ta, 0, 0.0, source_id]
+            order.append(key)
+        entry = grouped[key]
+        entry[2] += quantity
+        entry[3] += line_total
+    return [
+        (
+            key[0], grouped[key][0], grouped[key][1], key[1],
+            grouped[key][2], round(grouped[key][3], 2), grouped[key][4],
+        )
+        for key in order
+    ]
 
 
 async def _next_bill_number(session: AsyncSession, tenant_id: uuid.UUID) -> str:
@@ -352,7 +377,18 @@ async def preview_bill(
 
     return BillPreviewResponse(
         order_id=order.id,
-        items=[_item_response(p) for p in totals.priced_items],
+        items=[
+            BillItemResponse(
+                id=None, item_id=item_id, name_en=name_en, name_ta=name_ta,
+                unit_price=unit_price, quantity=quantity, line_total=line_total,
+            )
+            for item_id, name_en, name_ta, unit_price, quantity, line_total, _ in _consolidate_bill_lines(
+                [
+                    (p.item.id, p.item.name_en, p.item.name_ta, p.unit_price, p.quantity, p.line_total, None)
+                    for p in totals.priced_items
+                ]
+            )
+        ],
         subtotal=totals.subtotal,
         discount_amount=totals.discount_amount,
         discount_note=discount_note,
@@ -604,8 +640,13 @@ async def finalize_bill(
     await session.flush()
 
     lines = [
-        BillLine(p.item.name_en, p.item.name_ta, p.quantity, p.unit_price, p.line_total)
-        for p in totals.priced_items
+        BillLine(name_en, name_ta, quantity, unit_price, line_total)
+        for _, name_en, name_ta, unit_price, quantity, line_total, _ in _consolidate_bill_lines(
+            [
+                (p.item.id, p.item.name_en, p.item.name_ta, p.unit_price, p.quantity, p.line_total, None)
+                for p in totals.priced_items
+            ]
+        )
     ]
     printed, print_job, print_error = (
         await _dispatch_print_for_bill(
@@ -681,6 +722,13 @@ async def build_bill_response(
     pos_user = (await session.execute(select(User).where(User.id == bill.pos_user_id))).scalar_one()
     bill_items = (await session.execute(select(BillItem).where(BillItem.bill_id == bill.id))).scalars().all()
     payments = (await session.execute(select(Payment).where(Payment.bill_id == bill.id))).scalars().all()
+    consolidated_items = _consolidate_bill_lines(
+        [
+            (bi.item_id, bi.name_en_snapshot, bi.name_ta_snapshot,
+             float(bi.unit_price), bi.quantity, float(bi.line_total), bi.id)
+            for bi in bill_items
+        ]
+    )
 
     return BillResponse(
         id=bill.id,
@@ -699,15 +747,10 @@ async def build_bill_response(
         status=bill.status,
         items=[
             BillItemResponse(
-                id=bi.id,
-                item_id=bi.item_id,
-                name_en=bi.name_en_snapshot,
-                name_ta=bi.name_ta_snapshot,
-                unit_price=float(bi.unit_price),
-                quantity=bi.quantity,
-                line_total=float(bi.line_total),
+                id=source_id, item_id=item_id, name_en=name_en, name_ta=name_ta,
+                unit_price=unit_price, quantity=quantity, line_total=line_total,
             )
-            for bi in bill_items
+            for item_id, name_en, name_ta, unit_price, quantity, line_total, source_id in consolidated_items
         ],
         subtotal=float(bill.subtotal),
         discount_amount=float(bill.discount_amount),
@@ -745,10 +788,14 @@ async def reprint_bill(
         (await session.execute(select(BillItem).where(BillItem.bill_id == bill.id))).scalars().all()
     )
     lines = [
-        BillLine(
-            bi.name_en_snapshot, bi.name_ta_snapshot, bi.quantity, float(bi.unit_price), float(bi.line_total)
+        BillLine(name_en, name_ta, quantity, unit_price, line_total)
+        for _, name_en, name_ta, unit_price, quantity, line_total, _ in _consolidate_bill_lines(
+            [
+                (bi.item_id, bi.name_en_snapshot, bi.name_ta_snapshot,
+                 float(bi.unit_price), bi.quantity, float(bi.line_total), bi.id)
+                for bi in bill_items
+            ]
         )
-        for bi in bill_items
     ]
     waiter = (
         (await session.execute(select(Waiter).where(Waiter.id == bill.waiter_id))).scalar_one_or_none()

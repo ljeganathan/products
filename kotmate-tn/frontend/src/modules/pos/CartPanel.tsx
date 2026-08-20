@@ -6,7 +6,7 @@ interface CartPanelProps {
   order: Order | null;
   role: Role;
   syncState: "idle" | "saving" | "saved" | "error";
-  onQuantityChange: (itemId: string, notes: string | null, newQty: number) => void;
+  onQuantityChange: (lineId: string, newQty: number) => void;
   onHold: () => void;
   onSendKot: () => void;
   onBill: () => void;
@@ -114,7 +114,18 @@ export function CartPanel({
                   className="flex items-start gap-2 border-b border-dashed border-border py-2.5"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-bold leading-tight">{line.name_en}</p>
+                    <p className="truncate text-[13px] font-bold leading-tight">
+                      {line.name_en}
+                      {/* Two lines for the same item are now possible — one already fired
+                          to the kitchen, one not (an add-on ordered after the first KOT
+                          send) — so a sent line is labeled to explain why it's separate
+                          from an adjacent unsent one for the same item. */}
+                      {line.is_kot_sent && (
+                        <span className="ml-1.5 rounded-full bg-gold-soft px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-gold">
+                          Sent
+                        </span>
+                      )}
+                    </p>
                     {line.name_ta && (
                       <p className="truncate text-xs font-medium leading-tight text-ink-soft">
                         {line.name_ta}
@@ -128,7 +139,7 @@ export function CartPanel({
                   <div className="flex items-center overflow-hidden rounded-lg border border-border">
                     <button
                       type="button"
-                      onClick={() => onQuantityChange(line.item_id, line.notes, line.quantity - 1)}
+                      onClick={() => line.id && onQuantityChange(line.id, line.quantity - 1)}
                       className="flex h-10 w-10 items-center justify-center bg-surface-2 text-base font-extrabold hover:bg-surface-3"
                       aria-label={`Decrease ${line.name_en}`}
                     >
@@ -137,7 +148,7 @@ export function CartPanel({
                     <span className="tabular-nums w-8 text-center text-sm font-bold">{line.quantity}</span>
                     <button
                       type="button"
-                      onClick={() => onQuantityChange(line.item_id, line.notes, line.quantity + 1)}
+                      onClick={() => line.id && onQuantityChange(line.id, line.quantity + 1)}
                       disabled={outOfStock}
                       className="flex h-10 w-10 items-center justify-center bg-surface-2 text-base font-extrabold hover:bg-surface-3 disabled:opacity-40"
                       aria-label={`Increase ${line.name_en}`}

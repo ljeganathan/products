@@ -74,6 +74,16 @@ class OrderItem(UUIDPKMixin, TimestampMixin, Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     notes: Mapped[str | None] = mapped_column(String(300))
     is_kot_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Explicit cart position, assigned once at insert (order_service.py's create_order/
+    # apply_line_changes) and never touched again — the only reliable way to keep cart
+    # line order stable: `created_at` alone ties for every line inserted in the same
+    # multi-row INSERT statement (the common case, one row per item added at order-
+    # create time), and an UPDATE to any other column gives a row a new physical tuple
+    # version, so an unordered/id-ordered scan can silently reshuffle visible line order
+    # on an unrelated edit (production feedback — a quantity change was reordering the
+    # cart). A new line always gets max(existing line_no)+1, so it's appended after
+    # everything already in the cart rather than interleaved.
+    line_no: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (
         tenant_composite_index("order_items"),

@@ -1,6 +1,12 @@
 import { api } from "@/lib/api";
 
 export interface OrderLineInput {
+  // Echoes OrderItemLine.id for a line that already exists on the order, so the backend
+  // can match this input back to its exact row (compute_updated_lines) — omit for a
+  // genuinely new line. Always omitted/undefined for a brand-new add so it can never be
+  // mistaken for (and silently merged into) an existing — possibly already-KOT-sent —
+  // row that happens to share the same item_id/notes.
+  id?: string | null;
   item_id: string;
   quantity: number;
   notes?: string | null;

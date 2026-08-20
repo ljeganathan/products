@@ -280,6 +280,63 @@ async def test_cart_replace_preserves_row_identity_for_unchanged_lines(
     assert ids_by_item[item_b["id"]] is not None
 
 
+async def test_quantity_change_does_not_reorder_other_cart_lines(
+    client: AsyncClient, tenant_admin: dict
+):
+    """Production feedback: changing an item's quantity in the cart was reshuffling the
+    other lines' on-screen order. Root cause: _load_lines' SELECT had no ORDER BY, so an
+    UPDATEd row's new physical tuple could come back in a different scan position than
+    before — this asserts the fix (ordering by created_at, which an update never
+    touches) keeps line order stable across an edit to any one of them.
+    """
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    category = await _create_category(client, headers)
+    item_a = await _create_item(client, headers, category["id"], name_en="Item A", price=50)
+    item_b = await _create_item(client, headers, category["id"], name_en="Item B", price=30)
+    item_c = await _create_item(client, headers, category["id"], name_en="Item C", price=20)
+
+    order = (
+        await client.post(
+            "/api/v1/orders",
+            json={
+                "location_id": location_id,
+                "section_id": section_id,
+                "items": [
+                    {"item_id": item_a["id"], "quantity": 1},
+                    {"item_id": item_b["id"], "quantity": 1},
+                    {"item_id": item_c["id"], "quantity": 1},
+                ],
+            },
+            headers=headers,
+        )
+    ).json()
+    original_order = [line["item_id"] for line in order["items"]]
+    assert original_order == [item_a["id"], item_b["id"], item_c["id"]]
+    lines_by_item = {line["item_id"]: line for line in order["items"]}
+
+    # Bump the *middle* line's quantity — the one most likely to visibly "jump" if row
+    # order isn't pinned to something an UPDATE never touches.
+    updated = (
+        await client.patch(
+            f"/api/v1/orders/{order['id']}",
+            json={
+                "items": [
+                    {"id": lines_by_item[item_a["id"]]["id"], "item_id": item_a["id"], "quantity": 1},
+                    {"id": lines_by_item[item_b["id"]]["id"], "item_id": item_b["id"], "quantity": 3},
+                    {"id": lines_by_item[item_c["id"]]["id"], "item_id": item_c["id"], "quantity": 1},
+                ]
+            },
+            headers=headers,
+        )
+    ).json()
+    assert [line["item_id"] for line in updated["items"]] == original_order
+
+    refetched = (await client.get(f"/api/v1/orders/{order['id']}", headers=headers)).json()
+    assert [line["item_id"] for line in refetched["items"]] == original_order
+
+
 async def test_waiter_role_order_auto_locks_to_own_linked_waiter(client: AsyncClient, tenant_admin: dict):
     headers = tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)
