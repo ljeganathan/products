@@ -38,7 +38,8 @@ interface TableWaiterBarProps {
   waiterLocked: boolean;
   lockedWaiterName?: string;
   onSelectTable: (selection: TableSelection) => void;
-  onSelectWaiter: (waiterId: string | null) => void;
+  // Mandatory — the picker below only ever hands back a real waiter id, never null.
+  onSelectWaiter: (waiterId: string) => void;
   // Controlled from the parent so the F10/F11 keyboard shortcuts (CLAUDE.md §9) can
   // open these pickers without duplicating open/close state in two places.
   openPicker: "table" | "waiter" | null;
@@ -148,33 +149,34 @@ function WaiterPickerModal({
   onClose,
 }: {
   waiters: Waiter[];
-  onSelect: (waiterId: string | null) => void;
+  onSelect: (waiterId: string) => void;
   onClose: () => void;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
       <div className="max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-surface p-5 shadow-pos">
         <h2 className="mb-4 text-lg font-extrabold">🧑‍🍳 Assign Waiter</h2>
+        {/* No "Unassigned" option — waiter assignment is mandatory (production
+            feedback), so this picker only ever hands back a real waiter id. */}
         <div className="flex flex-col gap-1.5">
-          <button
-            type="button"
-            onClick={() => onSelect(null)}
-            className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-left text-sm font-bold hover:border-accent hover:bg-accent-soft hover:text-accent"
-          >
-            Unassigned
-          </button>
-          {waiters
-            .filter((w) => w.is_active)
-            .map((w) => (
-              <button
-                key={w.id}
-                type="button"
-                onClick={() => onSelect(w.id)}
-                className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-left text-sm font-bold hover:border-accent hover:bg-accent-soft hover:text-accent"
-              >
-                {w.waiter_number} · {w.name}
-              </button>
-            ))}
+          {waiters.filter((w) => w.is_active).length === 0 ? (
+            <p className="px-1 py-2 text-sm text-ink-faint">
+              No active waiters yet — a tenant_admin can add one in Waiter Master.
+            </p>
+          ) : (
+            waiters
+              .filter((w) => w.is_active)
+              .map((w) => (
+                <button
+                  key={w.id}
+                  type="button"
+                  onClick={() => onSelect(w.id)}
+                  className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-left text-sm font-bold hover:border-accent hover:bg-accent-soft hover:text-accent"
+                >
+                  {w.waiter_number} · {w.name}
+                </button>
+              ))
+          )}
         </div>
         <button
           type="button"

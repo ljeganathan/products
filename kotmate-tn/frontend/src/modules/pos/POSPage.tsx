@@ -17,6 +17,7 @@ import { BillingModal } from "@/modules/pos/BillingModal";
 import { CartPanel } from "@/modules/pos/CartPanel";
 import { ALL_ITEMS_ID, CategoryNav, TOP_SELLING_ID } from "@/modules/pos/CategoryNav";
 import { ItemCard } from "@/modules/pos/ItemCard";
+import { ItemCodeModal } from "@/modules/pos/ItemCodeModal";
 import { KotTicketsPopup } from "@/modules/pos/KotTicketsPopup";
 import { sendOrderToKot } from "@/modules/pos/kotApi";
 import {
@@ -52,6 +53,7 @@ function toLineInputs(order: Order | null): OrderLineInput[] {
 
 export function POSPage() {
   const role = useAuthStore((s) => s.role)!;
+  const isWaiterRole = role === "waiter";
   const queryClient = useQueryClient();
 
   const { data: locations = [] } = useQuery({ queryKey: ["tenant-locations"], queryFn: listLocations });
@@ -125,6 +127,17 @@ export function POSPage() {
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [syncError, setSyncError] = useState<string | null>(null);
 
+  // Table/section (or Takeaway/Online Delivery) and waiter are both mandatory before an
+  // order can be started (production feedback) — a `waiter` login is always locked to
+  // themself (TableWaiterBar's waiterLocked), so only the table/section half applies to
+  // that role; every billing role still needs a table/section picked first.
+  const readyToOrder = Boolean(sectionId) && (isWaiterRole || Boolean(waiterId));
+  const missingSelectionMessage = !sectionId
+    ? "Select a table or Takeaway first"
+    : !readyToOrder
+      ? "Assign a waiter first"
+      : null;
+
   const [activeCategoryId, setActiveCategoryId] = useState<string>(TOP_SELLING_ID);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<PosItem[]>([]);
@@ -134,6 +147,7 @@ export function POSPage() {
 
   const [openPicker, setOpenPicker] = useState<"table" | "waiter" | null>(null);
   const [showRecall, setShowRecall] = useState(false);
+  const [showItemCodeModal, setShowItemCodeModal] = useState(false);
   const [showKotTickets, setShowKotTickets] = useState(false);
   const [showBilling, setShowBilling] = useState(false);
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
@@ -152,14 +166,6 @@ export function POSPage() {
   const itemCodeInputRef = useRef<HTMLInputElement>(null);
 
   const stockOverrides = usePosWebSocket(location?.id);
-
-  // Default to the tenant's first active section once loaded, so items can be added
-  // before a table is deliberately chosen (common when a cashier starts a walk-in order).
-  useEffect(() => {
-    if (!sectionId && sections.length > 0) {
-      setSectionId(sections[0].id);
-    }
-  }, [sections, sectionId]);
 
   useEffect(() => {
     if (role === "waiter") {
@@ -247,6 +253,15 @@ export function POSPage() {
 
   async function handleAddItem(item: PosItem) {
     if (isOutOfStock(item)) return;
+    if (!readyToOrder) {
+      // Defensive — the item grid/search/code inputs are already hidden/disabled in
+      // this state, so this only matters if something bypasses that (e.g. a stray
+      // keyboard shortcut). Table/section and waiter are mandatory before any item can
+      // be added (production feedback).
+      setActionNotice(missingSelectionMessage);
+      setOpenPicker(!sectionId ? "table" : "waiter");
+      return;
+    }
     const current = toLineInputs(order);
     const existing = current.find((l) => l.item_id === item.id && !l.notes);
     const next = existing
@@ -270,9 +285,18 @@ export function POSPage() {
     await syncCart(next);
   }
 
-  async function handleItemCodeSubmit() {
+  // `onDone` lets each entry point (the desktop header's always-visible inline field, or
+  // ItemCodeModal on mobile/tablet-narrow where that field has no room — CLAUDE.md §9)
+  // manage its own refocus/select-for-retry, since they're two different DOM inputs and
+  // can't share one ref.
+  async function handleItemCodeSubmit(onDone?: (success: boolean) => void) {
     const code = itemCode.trim();
     if (!code) return;
+    if (!readyToOrder) {
+      setActionNotice(missingSelectionMessage);
+      setOpenPicker(!sectionId ? "table" : "waiter");
+      return;
+    }
     setItemCodeError(null);
     // Case-insensitive backend lookup (matches item_service.get_item_by_code) rather
     // than a client-side exact-match scan of `allItems` — that missed any code typed
@@ -282,16 +306,17 @@ export function POSPage() {
       match = await getItemByCode(code);
     } catch {
       setItemCodeError("No item found with that code");
+      onDone?.(false);
       return;
     }
     if (isOutOfStock(match)) {
       setItemCodeError(`${match.name_en} is out of stock`);
-      itemCodeInputRef.current?.select();
+      onDone?.(false);
       return;
     }
     await handleAddItem(match);
     setItemCode("");
-    itemCodeInputRef.current?.focus();
+    onDone?.(true);
   }
 
   async function loadOrderIntoDraft(orderId: string) {
@@ -431,7 +456,7 @@ export function POSPage() {
     void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
   }
 
-  async function handleSelectWaiter(newWaiterId: string | null) {
+  async function handleSelectWaiter(newWaiterId: string) {
     setWaiterId(newWaiterId);
     if (order) {
       const updated = await updateOrder(order.id, { waiter_id: newWaiterId });
@@ -446,6 +471,7 @@ export function POSPage() {
     // just abandons this local draft view of it (same reset as Hold/Bill-finalized).
     if (order.items.some((l) => l.is_kot_sent)) {
       setOrder(null);
+      setSectionId("");
       setTableId(null);
       setPartyLabel(null);
       if (!isWaiterRole) setWaiterId(null);
@@ -459,10 +485,12 @@ export function POSPage() {
     if (!order) return;
     await updateOrder(order.id, { status: "held" });
     setOrder(null);
+    setSectionId("");
     setTableId(null);
     setPartyLabel(null);
     // A waiter login stays locked to themself for the next order; anyone else starts
-    // the next bill unassigned rather than showing the just-held order's waiter.
+    // the next bill unassigned rather than showing the just-held order's waiter — table/
+    // waiter are mandatory again for whatever gets billed next (production feedback).
     if (!isWaiterRole) setWaiterId(null);
     setActionNotice("Bill held");
     void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
@@ -484,6 +512,7 @@ export function POSPage() {
       // the same pattern handleHold already uses, so the cashier is immediately
       // ready for the next table/customer.
       setOrder(null);
+      setSectionId("");
       setTableId(null);
       setPartyLabel(null);
       if (!isWaiterRole) setWaiterId(null);
@@ -521,6 +550,7 @@ export function POSPage() {
     }
     setShowBilling(false);
     setOrder(null);
+    setSectionId("");
     setTableId(null);
     setPartyLabel(null);
     if (!isWaiterRole) setWaiterId(null);
@@ -586,7 +616,6 @@ export function POSPage() {
   }, [categories, order, searchQuery, itemCode]);
 
   const cartItemCount = order?.items.reduce((sum, l) => sum + l.quantity, 0) ?? 0;
-  const isWaiterRole = role === "waiter";
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
@@ -642,6 +671,7 @@ export function POSPage() {
               <input
                 ref={searchInputRef}
                 value={searchQuery}
+                disabled={!readyToOrder}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => {
                   if (searchResults.length === 0) return;
@@ -657,8 +687,8 @@ export function POSPage() {
                     void handleSelectSearchResult(searchResults[searchHighlight]);
                   }
                 }}
-                placeholder="Search items…"
-                className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-ink-faint"
+                placeholder={readyToOrder ? "Search items…" : (missingSelectionMessage ?? "Search items…")}
+                className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-ink-faint disabled:cursor-not-allowed"
               />
               <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 text-[9.5px] font-bold text-ink-faint">
                 Ctrl K
@@ -703,15 +733,20 @@ export function POSPage() {
             <input
               ref={itemCodeInputRef}
               value={itemCode}
+              disabled={!readyToOrder}
               onChange={(e) => {
                 setItemCode(e.target.value);
                 setItemCodeError(null);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void handleItemCodeSubmit();
+                if (e.key === "Enter") {
+                  void handleItemCodeSubmit((success) =>
+                    success ? itemCodeInputRef.current?.focus() : itemCodeInputRef.current?.select(),
+                  );
+                }
               }}
               placeholder="Code"
-              className="w-14 bg-transparent text-[12.5px] font-bold outline-none placeholder:font-normal placeholder:text-ink-faint"
+              className="w-14 bg-transparent text-[12.5px] font-bold outline-none placeholder:font-normal placeholder:text-ink-faint disabled:cursor-not-allowed"
             />
           </label>
         </div>
@@ -761,6 +796,21 @@ export function POSPage() {
             <>
               <div className="fixed inset-0 z-40" onClick={() => setMobileMenuOpen(false)} />
               <div className="absolute right-0 top-full z-50 mt-1.5 flex w-44 flex-col gap-1 rounded-lg border border-border bg-surface p-1.5 shadow-pos">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    if (!readyToOrder) {
+                      setActionNotice(missingSelectionMessage);
+                      setOpenPicker(!sectionId ? "table" : "waiter");
+                    } else {
+                      setShowItemCodeModal(true);
+                    }
+                  }}
+                  className="flex min-h-9 items-center gap-2 rounded-md px-2.5 text-left text-xs font-bold text-ink-soft hover:bg-surface-2"
+                >
+                  #️⃣ Item Code
+                </button>
                 {(role === "pos_user" || role === "tenant_admin" || role === "pos_operator") &&
                   meData?.features?.kds === true && (
                     <button
@@ -850,22 +900,52 @@ export function POSPage() {
           </div>
 
           <div className="flex flex-1 overflow-hidden">
-            <div className="grid flex-1 auto-rows-min grid-cols-2 gap-2.5 overflow-y-auto bg-background p-2.5 pb-24 sm:grid-cols-3 md:grid-cols-4 md:pb-2.5 lg:grid-cols-5">
-              {(searchQuery ? searchResults : displayedItems).map((item) => (
-                <ItemCard
-                  key={item.id}
-                  item={item}
-                  resolvedPrice={resolvedPriceFor(item)}
-                  quantityInCart={quantityInCartFor(item)}
-                  stockOverride={stockOverrides[item.id]}
-                  stockTrackingEnabled={meData?.stock_tracking_enabled === true}
-                  onAdd={handleAddItem}
-                />
-              ))}
-              {(searchQuery ? searchResults : displayedItems).length === 0 && (
-                <p className="col-span-full mt-6 text-center text-sm text-ink-faint">No items found</p>
-              )}
-            </div>
+            {!readyToOrder ? (
+              // Table/section (or Takeaway) and waiter are mandatory before an order can
+              // start (production feedback) — the item grid itself is the gate, so a tap
+              // can never silently no-op the way it did when a section auto-defaulted.
+              <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-background p-8 text-center">
+                <span className="text-3xl">🍽️</span>
+                <p className="max-w-xs text-sm font-semibold text-ink-soft">{missingSelectionMessage}</p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {!sectionId && (
+                    <button
+                      type="button"
+                      onClick={() => setOpenPicker("table")}
+                      className="rounded-lg border border-accent bg-accent-soft px-4 py-2 text-sm font-extrabold text-accent"
+                    >
+                      🍽️ Select Table / Takeaway
+                    </button>
+                  )}
+                  {sectionId && !isWaiterRole && !waiterId && (
+                    <button
+                      type="button"
+                      onClick={() => setOpenPicker("waiter")}
+                      className="rounded-lg border border-gold bg-gold-soft px-4 py-2 text-sm font-extrabold text-gold"
+                    >
+                      🧑‍🍳 Assign Waiter
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="grid flex-1 auto-rows-min grid-cols-2 gap-2.5 overflow-y-auto bg-background p-2.5 pb-24 sm:grid-cols-3 md:grid-cols-4 md:pb-2.5 lg:grid-cols-5">
+                {(searchQuery ? searchResults : displayedItems).map((item) => (
+                  <ItemCard
+                    key={item.id}
+                    item={item}
+                    resolvedPrice={resolvedPriceFor(item)}
+                    quantityInCart={quantityInCartFor(item)}
+                    stockOverride={stockOverrides[item.id]}
+                    stockTrackingEnabled={meData?.stock_tracking_enabled === true}
+                    onAdd={handleAddItem}
+                  />
+                ))}
+                {(searchQuery ? searchResults : displayedItems).length === 0 && (
+                  <p className="col-span-full mt-6 text-center text-sm text-ink-faint">No items found</p>
+                )}
+              </div>
+            )}
 
             <div className="hidden md:flex md:w-80 md:flex-none md:flex-col md:border-l md:border-border lg:w-96">
               <CartPanel
@@ -962,6 +1042,18 @@ export function POSPage() {
           preview={pendingSectionChange.preview}
           onConfirm={confirmSectionChange}
           onCancel={() => setPendingSectionChange(null)}
+        />
+      )}
+      {showItemCodeModal && (
+        <ItemCodeModal
+          itemCode={itemCode}
+          onItemCodeChange={(value) => {
+            setItemCode(value);
+            setItemCodeError(null);
+          }}
+          itemCodeError={itemCodeError}
+          onSubmit={(onDone) => void handleItemCodeSubmit(onDone)}
+          onClose={() => setShowItemCodeModal(false)}
         />
       )}
     </div>
