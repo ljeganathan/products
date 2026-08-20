@@ -47,6 +47,15 @@ completely. See `installer\install.ps1 -?` / `installer\uninstall.ps1 -?` for th
 `-Port`/`-ExePath`/`-Emulate` parameters if you need a non-default port or the Pillow
 build.
 
+**Prefer a familiar Setup.exe wizard instead?** `installer\KOTMatePrintAgent.iss` builds
+the same install (copy the .exe, register auto-start, start it immediately) as a normal
+Windows installer — download [Inno Setup](https://jrsoftware.org/isdl.php) (free), build
+both `.exe`'s as above, then either run `iscc installer\KOTMatePrintAgent.iss` or open the
+`.iss` in the Inno Setup IDE and press F9. Produces `dist\KOTMatePrintAgentSetup.exe` — one
+file, double-click, Next → Next → Install → Finish, shows up under Settings > Apps with a
+real Uninstall entry. Same port prompt and lean/emulate choice as `install.ps1`'s
+parameters, just as wizard pages/checkboxes instead of command-line flags.
+
 Diagnosing a windowless instance: check
 `%LOCALAPPDATA%\KOTMateTN\PrintAgent\logs\agent.log` (rotating, keeps the last 3×2MB) —
 there's no console window to read once it's running via the installer.
