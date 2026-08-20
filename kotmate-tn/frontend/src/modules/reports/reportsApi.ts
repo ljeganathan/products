@@ -27,6 +27,11 @@ export interface ItemWiseSalesRow {
   item_id: string;
   name_en: string;
   name_ta: string | null;
+  // Item's current category — rows arrive pre-grouped category-major (categories by
+  // total revenue descending, items within a category by their own revenue descending).
+  category_id: string;
+  category_name_en: string;
+  category_name_ta: string | null;
   quantity_sold: number;
   revenue: number;
 }

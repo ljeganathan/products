@@ -3,7 +3,6 @@ import io
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
-from pydantic import BaseModel
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
@@ -17,40 +16,6 @@ _MEDIA_TYPES = {
     "pdf": "application/pdf",
 }
 _EXTENSIONS = {"csv": "csv", "excel": "xlsx", "pdf": "pdf"}
-
-
-def _humanize(field_name: str) -> str:
-    return field_name.replace("_", " ").title()
-
-
-def _coerce_cell(value: object) -> object:
-    # openpyxl only accepts a narrow set of native types per cell — a raw UUID (every
-    # report row's id field) raises ValueError otherwise. int/float/bool/None pass
-    # through untouched so Excel still treats them as real numbers, not text.
-    if value is None or isinstance(value, int | float | bool):
-        return value
-    return str(value)
-
-
-def rows_as_grid(
-    row_model: type[BaseModel],
-    rows: list[BaseModel],
-    totals_row: dict[str, object] | None,
-    *,
-    exclude_id_fields: bool = False,
-) -> tuple[list[str], list[list[object]]]:
-    """`exclude_id_fields` drops every `*_id` field (e.g. `pos_user_id`) before
-    building headers/grid — a raw UUID is legitimately useful in an exported CSV/Excel/
-    PDF for back-office reconciliation (the default), but on a printed thermal receipt
-    it's just noise that steals width a report already spends on the human-readable
-    `login_id`/`name` columns on the same row (report_print_service.py).
-    """
-    field_names = [f for f in row_model.model_fields if not (exclude_id_fields and f.endswith("_id"))]
-    headers = [_humanize(f) for f in field_names]
-    grid = [[_coerce_cell(getattr(r, f)) for f in field_names] for r in rows]
-    if totals_row is not None:
-        grid.append([_coerce_cell(totals_row.get(f, "")) for f in field_names])
-    return headers, grid
 
 
 def _to_csv(headers: list[str], grid: list[list[object]]) -> bytes:
@@ -112,22 +77,17 @@ def _to_pdf(title: str, headers: list[str], grid: list[list[object]]) -> bytes:
     return buffer.getvalue()
 
 
-def export_rows(
-    title: str,
-    row_model: type[BaseModel],
-    rows: list[BaseModel],
-    fmt: str,
-    totals_row: dict[str, object] | None = None,
-) -> tuple[bytes, str, str]:
-    """Renders any list of Pydantic row models into csv/excel/pdf bytes — shared by all
-    8 report endpoints rather than a bespoke exporter per report type. `row_model` is
-    taken explicitly (not inferred from `rows[0]`) so an empty report still exports a
-    file with the correct headers.
+def export_grid(title: str, headers: list[str], grid: list[list[object]], fmt: str) -> tuple[bytes, str, str]:
+    """Renders a pre-built header/row grid into csv/excel/pdf bytes — shared by all
+    report export endpoints. Headers and rows are supplied by the caller (report_print_
+    service.build_report_body + report_body_to_grid) rather than reflected from a
+    Pydantic model's raw field names, so every export format shows the exact same
+    renamed/no-id column set the printer version already uses (production feedback
+    round 4: "keep the same format of the columns... for csv/pdf/excel").
     """
     if fmt not in EXPORT_FORMATS:
         raise ValueError(f"Unsupported export format: {fmt}")
 
-    headers, grid = rows_as_grid(row_model, rows, totals_row)
     filename_stem = title.lower().replace(" ", "_")
 
     if fmt == "csv":

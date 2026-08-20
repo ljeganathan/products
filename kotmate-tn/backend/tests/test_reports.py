@@ -168,6 +168,168 @@ async def test_item_and_category_wise_reconcile(client: AsyncClient, tenant_admi
     assert cat_row["revenue"] == 400.0
 
 
+async def test_item_wise_grouped_by_category_ordered_by_revenue_desc(
+    client: AsyncClient, tenant_admin: dict
+):
+    """Production feedback round 4: item-wise groups by category — categories ordered by
+    their own total revenue descending, items within a category ordered by their own
+    revenue descending. Mains (200) outranks Beverages (30 + 20 = 50)... wait, Mains'
+    single item (200) still outranks Beverages' combined total (50), and within
+    Beverages, Coffee (30) outranks Tea (20).
+    """
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    await _create_tax_rule(client, headers)
+
+    mains = await _create_category(client, headers, "Mains")
+    beverages = await _create_category(client, headers, "Beverages")
+    meals = await _create_item(client, headers, mains["id"], name_en="Meals", price=200)
+    coffee = await _create_item(client, headers, beverages["id"], name_en="Coffee", price=30)
+    tea = await _create_item(client, headers, beverages["id"], name_en="Tea", price=20)
+
+    async def _bill_single_item(item_id: str, amount: float) -> None:
+        order = (
+            await client.post(
+                "/api/v1/orders",
+                json={
+                    "location_id": location_id,
+                    "section_id": section_id,
+                    "items": [{"item_id": item_id, "quantity": 1}],
+                },
+                headers=headers,
+            )
+        ).json()
+        resp = await client.post(
+            "/api/v1/bills",
+            json={"order_id": order["id"], "payments": [{"method": "cash", "amount": amount}]},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+
+    # 2.5% CGST + 2.5% SGST each, round-half-up to the nearest rupee.
+    await _bill_single_item(meals["id"], 210.0)
+    await _bill_single_item(coffee["id"], 32.0)
+    await _bill_single_item(tea["id"], 21.0)
+
+    resp = await client.get(
+        "/api/v1/reports/item-wise", params={"date_from": TODAY, "date_to": TODAY}, headers=headers
+    )
+    assert resp.status_code == 200
+    rows = resp.json()["rows"]
+    assert [r["name_en"] for r in rows] == ["Meals", "Coffee", "Tea"]
+    assert [r["category_name_en"] for r in rows] == ["Mains", "Beverages", "Beverages"]
+    assert rows[0]["category_id"] == mains["id"]
+    assert rows[1]["category_id"] == rows[2]["category_id"] == beverages["id"]
+
+
+async def test_item_wise_export_uses_printer_columns_with_category_group_rows(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    """Production feedback round 4: CSV/Excel/PDF export shares the exact column format
+    the printer version already uses — a single Name column (headers renamed Name/Qty/
+    Sales, not the raw field-name dump Item Id/Name En/Name Ta/Quantity Sold/Revenue),
+    with a category group-header row ahead of that category's items.
+    """
+    headers = pro_max_tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    await _create_tax_rule(client, headers)
+    category = await _create_category(client, headers, "Mains")
+    item = await _create_item(client, headers, category["id"], name_en="Meals", price=200)
+    order = (
+        await client.post(
+            "/api/v1/orders",
+            json={
+                "location_id": location_id,
+                "section_id": section_id,
+                "items": [{"item_id": item["id"], "quantity": 1}],
+            },
+            headers=headers,
+        )
+    ).json()
+    bill = await client.post(
+        "/api/v1/bills",
+        json={"order_id": order["id"], "payments": [{"method": "cash", "amount": 210.0}]},
+        headers=headers,
+    )
+    assert bill.status_code == 201, bill.text
+
+    resp = await client.get(
+        "/api/v1/reports/item-wise",
+        params={"date_from": TODAY, "date_to": TODAY, "export": "csv"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    text = resp.content.decode("utf-8-sig")
+    assert "Name,Qty,Sales" in text
+    assert "Item Id" not in text
+    assert "Quantity Sold" not in text
+    assert "Mains" in text  # category group-header row
+    assert "Meals" in text
+    assert "TOTAL" in text
+
+
+async def test_sales_summary_export_is_field_value_row_wise(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    """Same row-wise Field/Value shape the printer version already uses for Sales
+    Summary/Tax Summary/Z-Report (production feedback round 4), not one wide row with a
+    humanized column per field.
+    """
+    await _setup_one_bill(client, pro_max_tenant_admin)
+    headers = pro_max_tenant_admin["headers"]
+
+    resp = await client.get(
+        "/api/v1/reports/sales-summary",
+        params={"date_from": TODAY, "date_to": TODAY, "export": "csv"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    lines = resp.content.decode("utf-8-sig").strip().splitlines()
+    assert lines[0] == "Field,Value"
+    assert any(line.startswith("Total Bill Count,") for line in lines)
+    assert any(line.startswith("Grand Total,") for line in lines)
+    assert any(line.startswith("Payment - Cash,") for line in lines)
+    assert any(line.startswith("Payment - UPI,") for line in lines)
+    assert any(line.startswith("Payment - Card,") for line in lines)
+
+
+async def test_cashier_wise_export_drops_login_id_matches_print_columns(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    ctx = await _setup_one_bill(client, pro_max_tenant_admin)
+    headers = pro_max_tenant_admin["headers"]
+
+    resp = await client.get(
+        "/api/v1/reports/cashier-wise",
+        params={"date_from": TODAY, "date_to": TODAY, "export": "csv"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    text = resp.content.decode("utf-8-sig")
+    assert "Cashier Name,Bill Count,Sales" in text
+    assert ctx["cashier"]["user"]["user_id"] not in text
+    assert "Login Id" not in text
+
+
+async def test_z_report_export_shows_payment_breakdown_rows(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    await _setup_one_bill(client, pro_max_tenant_admin)
+    headers = pro_max_tenant_admin["headers"]
+
+    resp = await client.get(
+        "/api/v1/reports/z-report",
+        params={"report_date": TODAY, "export": "csv"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    text = resp.content.decode("utf-8-sig")
+    assert "Field,Value" in text
+    assert "Payment - Cash,420.00" in text
+
+
 async def test_tax_summary_reconciles(client: AsyncClient, tenant_admin: dict):
     await _setup_one_bill(client, tenant_admin)
     headers = tenant_admin["headers"]

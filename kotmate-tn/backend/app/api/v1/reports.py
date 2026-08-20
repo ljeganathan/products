@@ -14,31 +14,26 @@ from app.schemas.printing import PrintJobPayload
 from app.schemas.report_print import ReportPrintRequest, ReportPrintResponse
 from app.schemas.reports import (
     CashierIncentiveResponse,
-    CashierIncentiveRow,
     CashierSalesResponse,
-    CashierSalesRow,
     CategoryWiseSalesResponse,
-    CategoryWiseSalesRow,
     ItemWiseSalesResponse,
-    ItemWiseSalesRow,
     PosOperatorIncentiveResponse,
-    PosOperatorIncentiveRow,
     PosOperatorSalesResponse,
-    PosOperatorSalesRow,
     ReportQueryParams,
     SalesSummaryResponse,
     TaxSummaryResponse,
     WaiterIncentiveResponse,
-    WaiterIncentiveRow,
     WaiterSalesResponse,
-    WaiterSalesRow,
     ZReportResponse,
 )
 from app.services import report_service
-from app.services.export_service import export_rows
+from app.services.export_service import export_grid
 from app.services.report_print_service import (
+    REPORT_TITLES,
+    build_report_body,
     is_report_printing_enabled,
     render_report_print_bytes,
+    report_body_to_grid,
 )
 from app.services.tenant_onboarding import get_active_plan
 
@@ -69,6 +64,18 @@ def _file_response(content: bytes, media_type: str, filename: str) -> Response:
     )
 
 
+def _export_response(report_type: str, result: object, export_format: str) -> Response:
+    """Same column shape as the printer version, for every export format (production
+    feedback round 4) — `build_report_body` is the exact function `render_report_print_
+    bytes` calls too, so a CSV/Excel/PDF export can never drift from what a Reports
+    printer would show for the same data (renamed Name/Qty/Sales headers, no login_id,
+    no "Rs.", Item Wise Sales grouped by category with a group-header row per category).
+    """
+    headers, grid = report_body_to_grid(build_report_body(report_type, result))
+    content, media_type, filename = export_grid(REPORT_TITLES[report_type], headers, grid, export_format)
+    return _file_response(content, media_type, filename)
+
+
 def _params(date_from: date, date_to: date, location_id: uuid.UUID | None) -> ReportQueryParams:
     return ReportQueryParams(date_from=date_from, date_to=date_to, location_id=location_id)
 
@@ -86,10 +93,7 @@ async def get_sales_summary(
     result = await report_service.sales_summary(db, current_user.tenant_id, params)
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
-        content, media_type, filename = export_rows(
-            "Sales Summary", SalesSummaryResponse, [result], export
-        )
-        return _file_response(content, media_type, filename)
+        return _export_response("sales-summary", result, export)
     return result
 
 
@@ -107,14 +111,7 @@ async def get_item_wise_sales(
     )
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
-        content, media_type, filename = export_rows(
-            "Item Wise Sales",
-            ItemWiseSalesRow,
-            result.rows,
-            export,
-            totals_row={"name_en": "TOTAL", "revenue": result.total_revenue},
-        )
-        return _file_response(content, media_type, filename)
+        return _export_response("item-wise", result, export)
     return result
 
 
@@ -132,14 +129,7 @@ async def get_category_wise_sales(
     )
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
-        content, media_type, filename = export_rows(
-            "Category Wise Sales",
-            CategoryWiseSalesRow,
-            result.rows,
-            export,
-            totals_row={"name_en": "TOTAL", "revenue": result.total_revenue},
-        )
-        return _file_response(content, media_type, filename)
+        return _export_response("category-wise", result, export)
     return result
 
 
@@ -156,8 +146,7 @@ async def get_tax_summary(
     result = await report_service.tax_summary(db, current_user.tenant_id, params)
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
-        content, media_type, filename = export_rows("Tax Summary", TaxSummaryResponse, [result], export)
-        return _file_response(content, media_type, filename)
+        return _export_response("tax-summary", result, export)
     return result
 
 
@@ -175,14 +164,7 @@ async def get_waiter_wise_sales(
     )
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
-        content, media_type, filename = export_rows(
-            "Waiter Wise Sales",
-            WaiterSalesRow,
-            result.rows,
-            export,
-            totals_row={"waiter_name": "TOTAL", "net_sale_value": result.total_net_sale_value},
-        )
-        return _file_response(content, media_type, filename)
+        return _export_response("waiter-wise", result, export)
     return result
 
 
@@ -200,14 +182,7 @@ async def get_cashier_wise_sales(
     )
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
-        content, media_type, filename = export_rows(
-            "Cashier Wise Sales",
-            CashierSalesRow,
-            result.rows,
-            export,
-            totals_row={"name": "TOTAL", "net_sale_value": result.total_net_sale_value},
-        )
-        return _file_response(content, media_type, filename)
+        return _export_response("cashier-wise", result, export)
     return result
 
 
@@ -225,14 +200,7 @@ async def get_waiter_incentive_report(
     )
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
-        content, media_type, filename = export_rows(
-            "Waiter Incentive",
-            WaiterIncentiveRow,
-            result.rows,
-            export,
-            totals_row={"waiter_name": "TOTAL", "incentive_amount": result.total_incentive_amount},
-        )
-        return _file_response(content, media_type, filename)
+        return _export_response("waiter-incentive", result, export)
     return result
 
 
@@ -250,14 +218,7 @@ async def get_cashier_incentive_report(
     )
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
-        content, media_type, filename = export_rows(
-            "Cashier Incentive",
-            CashierIncentiveRow,
-            result.rows,
-            export,
-            totals_row={"name": "TOTAL", "incentive_amount": result.total_incentive_amount},
-        )
-        return _file_response(content, media_type, filename)
+        return _export_response("cashier-incentive", result, export)
     return result
 
 
@@ -275,14 +236,7 @@ async def get_pos_operator_wise_sales(
     )
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
-        content, media_type, filename = export_rows(
-            "POS Operator Wise Sales",
-            PosOperatorSalesRow,
-            result.rows,
-            export,
-            totals_row={"name": "TOTAL", "net_sale_value": result.total_net_sale_value},
-        )
-        return _file_response(content, media_type, filename)
+        return _export_response("pos-operator-wise", result, export)
     return result
 
 
@@ -300,14 +254,7 @@ async def get_pos_operator_incentive_report(
     )
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
-        content, media_type, filename = export_rows(
-            "POS Operator Incentive",
-            PosOperatorIncentiveRow,
-            result.rows,
-            export,
-            totals_row={"name": "TOTAL", "incentive_amount": result.total_incentive_amount},
-        )
-        return _file_response(content, media_type, filename)
+        return _export_response("pos-operator-incentive", result, export)
     return result
 
 
@@ -324,13 +271,7 @@ async def get_z_report(
     )
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
-        # `payments` is a list of sub-objects — flatten it to a readable string for the
-        # exported file rather than letting the generic exporter stringify raw Pydantic
-        # objects into the cell.
-        payments_summary = ", ".join(f"{p.method}: {p.amount:.2f}" for p in result.payments)
-        export_row = result.model_copy(update={"payments": payments_summary})
-        content, media_type, filename = export_rows("Z Report", ZReportResponse, [export_row], export)
-        return _file_response(content, media_type, filename)
+        return _export_response("z-report", result, export)
     return result
 
 

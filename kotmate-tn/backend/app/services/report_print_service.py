@@ -1,4 +1,5 @@
 import uuid
+from typing import cast
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -9,10 +10,21 @@ from app.printing.base import _PAYMENT_LABELS, ReportBody, ReportRenderData, for
 from app.printing.dispatcher import dispatch_report_print
 from app.schemas.report_print import ReportPrintRequest
 from app.schemas.reports import (
+    CashierIncentiveResponse,
+    CashierSalesResponse,
+    CategoryWiseSalesResponse,
     CategoryWiseSalesRow,
+    ItemWiseSalesResponse,
     ItemWiseSalesRow,
     PaymentMethodTotal,
+    PosOperatorIncentiveResponse,
+    PosOperatorSalesResponse,
     ReportQueryParams,
+    SalesSummaryResponse,
+    TaxSummaryResponse,
+    WaiterIncentiveResponse,
+    WaiterSalesResponse,
+    ZReportResponse,
 )
 from app.services import report_service
 from app.services.branch_header import resolve_branch_header
@@ -22,7 +34,10 @@ from app.services.branch_header import resolve_branch_header
 # only needs to cover the two labels a shift-closer can actually have.
 _CLOSER_ROLE_LABELS = {"tenant_admin": "Admin", "pos_user": "Cashier"}
 
-_TITLES = {
+# Public (not `_`-prefixed) — reports.py's export endpoints reuse this same title-per-
+# report_type map so an exported file's title/filename always matches what the print
+# path already uses (production feedback round 4: one column/title format everywhere).
+REPORT_TITLES = {
     "sales-summary": "Sales Summary",
     "item-wise": "Item Wise Sales",
     "category-wise": "Category Wise Sales",
@@ -105,28 +120,27 @@ def _summary_pairs(
     ]
 
 
-def _item_or_category_body(
-    rows_data: list[ItemWiseSalesRow] | list[CategoryWiseSalesRow],
-    tenant: Tenant,
-    total_revenue: float,
+def _category_wise_body(
+    rows_data: list[CategoryWiseSalesRow], tamil_names_enabled: bool, total_revenue: float
 ) -> ReportBody:
-    """Item Wise Sales and Category Wise Sales reduce to the exact same shape — one Name
-    column (was two: name_en + name_ta), "Qty"/"Sales" headers, no "Rs." on amounts, and
-    a bold+double-height TOTAL row (production feedback round 3).
+    """Category Wise Sales — one Name column (was two: name_en + name_ta), "Qty"/"Sales"
+    headers, no "Rs." on amounts, and a bold+double-height TOTAL row (production feedback
+    round 3).
 
     `rows[i][0]` is always the English name — needed as-is by the dot-matrix adapter
-    (which has no image support and so always falls back to English, CLAUDE.md §10) and
-    as the base row the thermal adapter blanks when it prints a rasterized Tamil line
-    instead (see ReportBody's own docstring, printing/base.py). Only `tamil_names` (built
-    here from `tenant.report_tamil_names_enabled`) tells the thermal adapter which rows
-    should show Tamil at all.
+    (which has no image support and so always falls back to English, CLAUDE.md §10), by
+    the CSV/Excel/PDF export (report_body_to_grid, production feedback round 4 — a text
+    format has no reason to ever drop the name), and as the base row the thermal adapter
+    blanks when it prints a rasterized Tamil line instead (see ReportBody's own docstring,
+    printing/base.py). Only `tamil_names` (built here from `tamil_names_enabled`) tells
+    the thermal adapter which rows should show Tamil at all.
     """
     headers = ["Name", "Qty", "Sales"]
     rows: list[list[str]] = []
     tamil_names: dict[int, str] = {}
     for idx, r in enumerate(rows_data):
         rows.append([r.name_en, str(r.quantity_sold), _amount(r.revenue)])
-        if tenant.report_tamil_names_enabled and r.name_ta:
+        if tamil_names_enabled and r.name_ta:
             tamil_names[idx] = r.name_ta
     total_idx = len(rows)
     rows.append(["TOTAL", "", _amount(total_revenue)])
@@ -135,6 +149,48 @@ def _item_or_category_body(
         headers=headers,
         rows=rows,
         bold_rows={total_idx},
+        big_rows={total_idx},
+        tamil_names=tamil_names,
+    )
+
+
+def _item_wise_body(
+    rows_data: list[ItemWiseSalesRow], tamil_names_enabled: bool, total_revenue: float
+) -> ReportBody:
+    """Item Wise Sales — same Name/Qty/Sales shape as `_category_wise_body`, but grouped
+    by category: each category gets its own bold group-header row (name only, Qty/Sales
+    left blank) ahead of its items (production feedback round 4 — applies to print and,
+    via `report_body_to_grid`, to CSV/Excel/PDF export too). `report_service.item_wise_sales`
+    already returns `rows_data` pre-ordered category-major (categories by total revenue
+    descending, items within a category by their own revenue descending), so this only
+    has to notice where one category's run of rows ends and the next begins — it never
+    re-sorts anything itself.
+    """
+    headers = ["Name", "Qty", "Sales"]
+    rows: list[list[str]] = []
+    bold_rows: set[int] = set()
+    tamil_names: dict[int, str] = {}
+    current_category_id = None
+    for r in rows_data:
+        if r.category_id != current_category_id:
+            current_category_id = r.category_id
+            header_idx = len(rows)
+            rows.append([r.category_name_en, "", ""])
+            bold_rows.add(header_idx)
+            if tamil_names_enabled and r.category_name_ta:
+                tamil_names[header_idx] = r.category_name_ta
+        idx = len(rows)
+        rows.append([r.name_en, str(r.quantity_sold), _amount(r.revenue)])
+        if tamil_names_enabled and r.name_ta:
+            tamil_names[idx] = r.name_ta
+    total_idx = len(rows)
+    bold_rows.add(total_idx)
+    rows.append(["TOTAL", "", _amount(total_revenue)])
+    return ReportBody(
+        kind="grid",
+        headers=headers,
+        rows=rows,
+        bold_rows=bold_rows,
         big_rows={total_idx},
         tamil_names=tamil_names,
     )
@@ -175,6 +231,102 @@ def _incentive_grid_body(
     return ReportBody(kind="grid", headers=headers, rows=rows)
 
 
+def build_report_body(report_type: str, result: object, tamil_names_enabled: bool = False) -> ReportBody:
+    """Builds the printer-shaped `ReportBody` (renamed/no-"Rs." grid columns, row-wise
+    key-value summaries) from an already-fetched `report_service` result — the single
+    place both the thermal/dot-matrix print path (`render_report_print_bytes` below) and
+    the CSV/Excel/PDF export path (reports.py's `_export_response`, via
+    `report_body_to_grid`) get their column shape from, so a print and an export of the
+    same report can never drift apart (production feedback round 4: "keep the same
+    format of the columns... for csv/pdf/excel").
+
+    `tamil_names_enabled` only matters to the print path (it decides which rows the
+    thermal adapter additionally rasterizes as Tamil) — export ignores `body.tamil_names`
+    entirely and always reads the row's own English text, so export call sites can leave
+    it at its default.
+    """
+    if report_type == "sales-summary":
+        result = cast(SalesSummaryResponse, result)
+        return ReportBody(kind="keyvalue", pairs=_summary_pairs(
+            result.bill_count, result.subtotal, result.discount_amount, result.cgst_amount,
+            result.sgst_amount, result.round_off_amount, result.grand_total, result.payments,
+        ))
+    if report_type == "item-wise":
+        result = cast(ItemWiseSalesResponse, result)
+        return _item_wise_body(result.rows, tamil_names_enabled, result.total_revenue)
+    if report_type == "category-wise":
+        result = cast(CategoryWiseSalesResponse, result)
+        return _category_wise_body(result.rows, tamil_names_enabled, result.total_revenue)
+    if report_type == "tax-summary":
+        result = cast(TaxSummaryResponse, result)
+        return ReportBody(
+            kind="keyvalue",
+            pairs=[
+                ("Taxable Value", _amount(result.taxable_value)),
+                ("CGST", _amount(result.cgst_amount)),
+                ("SGST", _amount(result.sgst_amount)),
+                ("Total Tax", _amount(result.total_tax)),
+            ],
+        )
+    if report_type == "waiter-wise":
+        result = cast(WaiterSalesResponse, result)
+        rows = [(r.waiter_name, r.bill_count, r.net_sale_value) for r in result.rows]
+        return _sales_grid_body(
+            ["Waiter Name", "Bill Count", "Sales"], rows, "TOTAL", result.total_net_sale_value
+        )
+    if report_type == "cashier-wise":
+        result = cast(CashierSalesResponse, result)
+        rows = [(r.name, r.bill_count, r.net_sale_value) for r in result.rows]
+        return _sales_grid_body(
+            ["Cashier Name", "Bill Count", "Sales"], rows, "TOTAL", result.total_net_sale_value
+        )
+    if report_type == "pos-operator-wise":
+        result = cast(PosOperatorSalesResponse, result)
+        rows = [(r.name, r.bill_count, r.net_sale_value) for r in result.rows]
+        return _sales_grid_body(
+            ["Name", "Bill Count", "Sales"], rows, "TOTAL", result.total_net_sale_value
+        )
+    if report_type == "waiter-incentive":
+        result = cast(WaiterIncentiveResponse, result)
+        rows = [(r.waiter_name, r.net_sale_value, r.incentive_amount) for r in result.rows]
+        return _incentive_grid_body(
+            ["Waiter Name", "Net Sales", "Incentive Amt"], rows, "TOTAL", result.total_incentive_amount
+        )
+    if report_type == "cashier-incentive":
+        result = cast(CashierIncentiveResponse, result)
+        rows = [(r.name, r.net_sale_value, r.incentive_amount) for r in result.rows]
+        return _incentive_grid_body(
+            ["Cashier Name", "Net Sales", "Incentive Amt"], rows, "TOTAL", result.total_incentive_amount
+        )
+    if report_type == "pos-operator-incentive":
+        result = cast(PosOperatorIncentiveResponse, result)
+        rows = [(r.name, r.net_sale_value, r.incentive_amount) for r in result.rows]
+        return _incentive_grid_body(
+            ["Name", "Net Sales", "Incentive Amt"], rows, "TOTAL", result.total_incentive_amount
+        )
+    if report_type == "z-report":
+        result = cast(ZReportResponse, result)
+        return ReportBody(kind="keyvalue", pairs=_summary_pairs(
+            result.bill_count, result.subtotal, result.discount_amount, result.cgst_amount,
+            result.sgst_amount, result.round_off_amount, result.grand_total, result.payments,
+        ))
+    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown report_type: {report_type}")
+
+
+def report_body_to_grid(body: ReportBody) -> tuple[list[str], list[list[str]]]:
+    """Flattens a `ReportBody` into a plain header/row grid for CSV/Excel/PDF export —
+    the same column set the printer version already uses (production feedback round 4).
+    Print-only concerns (bold/double-height styling, Tamil rasterization) don't apply to
+    a text-based export format, so they're simply dropped here — `body.rows` always
+    carries the plain English text for every row regardless of `body.tamil_names` (that
+    dict only tells the *thermal* renderer which rows to additionally rasterize; it never
+    mutates the row's own text — see `ReportBody`'s docstring, printing/base.py).
+    """
+    if body.kind == "keyvalue":
+        return ["Field", "Value"], [[label, value] for label, value in body.pairs]
+    return body.headers, body.rows
+
+
 async def _closed_by_label(session: AsyncSession, user_id: uuid.UUID) -> str:
     """"Closed By: <name> (<role>)" for the Z-Report's own print — the tenant_admin or
     Cashier currently logged in and printing it, i.e. who actually closed this shift.
@@ -197,12 +349,14 @@ async def render_report_print_bytes(
     current_user_id: uuid.UUID,
 ) -> bytes:
     """Mirrors each `/reports/*` GET endpoint's own export block (reports.py) — same
-    `report_service` call, same row model — but built into a `ReportRenderData` for
-    `dispatch_report_print` (printer_type-aware ESC/POS vs plain dot-matrix text)
-    instead of the generic CSV/Excel/PDF grid `export_service` produces. Kept as one flat
-    if/elif per report_type, matching reports.py's own repetitive-by-design shape.
+    `report_service` call, then `build_report_body` for the exact same column shape —
+    but wrapped into a `ReportRenderData` for `dispatch_report_print` (printer_type-aware
+    ESC/POS vs plain dot-matrix text) instead of a CSV/Excel/PDF grid. The per-report-type
+    branch here only decides *which* `report_service` function to call and how to build
+    `extra_header_lines` (Z-Report's own "Shift Close Time"/"Closed By") — the actual
+    column-shaping is `build_report_body`'s job, shared with the export path.
     """
-    title = _TITLES[req.report_type]
+    title = REPORT_TITLES[req.report_type]
     # No "Printed:" label prefix — just the date and time (production feedback round 3).
     printed_at_label = now_ist().strftime("%d-%b-%Y %I:%M %p")
     branch = await resolve_branch_header(session, printer.location_id)
@@ -220,19 +374,6 @@ async def render_report_print_bytes(
             f"Shift Close Time: {result.report_date.strftime('%d-%b-%Y')} {shift_time}",
             await _closed_by_label(session, current_user_id),
         ]
-        body = ReportBody(
-            kind="keyvalue",
-            pairs=_summary_pairs(
-                result.bill_count,
-                result.subtotal,
-                result.discount_amount,
-                result.cgst_amount,
-                result.sgst_amount,
-                result.round_off_amount,
-                result.grand_total,
-                result.payments,
-            ),
-        )
     else:
         if req.date_from is None or req.date_to is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "date_from and date_to are required")
@@ -240,71 +381,28 @@ async def render_report_print_bytes(
 
         if req.report_type == "sales-summary":
             result = await report_service.sales_summary(session, tenant.id, params)
-            body = ReportBody(
-                kind="keyvalue",
-                pairs=_summary_pairs(
-                    result.bill_count,
-                    result.subtotal,
-                    result.discount_amount,
-                    result.cgst_amount,
-                    result.sgst_amount,
-                    result.round_off_amount,
-                    result.grand_total,
-                    result.payments,
-                ),
-            )
         elif req.report_type == "item-wise":
             result = await report_service.item_wise_sales(session, tenant.id, params)
-            body = _item_or_category_body(result.rows, tenant, result.total_revenue)
         elif req.report_type == "category-wise":
             result = await report_service.category_wise_sales(session, tenant.id, params)
-            body = _item_or_category_body(result.rows, tenant, result.total_revenue)
         elif req.report_type == "tax-summary":
             result = await report_service.tax_summary(session, tenant.id, params)
-            body = ReportBody(
-                kind="keyvalue",
-                pairs=[
-                    ("Taxable Value", _amount(result.taxable_value)),
-                    ("CGST", _amount(result.cgst_amount)),
-                    ("SGST", _amount(result.sgst_amount)),
-                    ("Total Tax", _amount(result.total_tax)),
-                ],
-            )
         elif req.report_type == "waiter-wise":
             result = await report_service.waiter_wise_sales(session, tenant.id, params)
-            rows = [(r.waiter_name, r.bill_count, r.net_sale_value) for r in result.rows]
-            headers = ["Waiter Name", "Bill Count", "Sales"]
-            body = _sales_grid_body(headers, rows, "TOTAL", result.total_net_sale_value)
         elif req.report_type == "cashier-wise":
             result = await report_service.cashier_wise_sales(session, tenant.id, params)
-            rows = [(r.name, r.bill_count, r.net_sale_value) for r in result.rows]
-            headers = ["Cashier Name", "Bill Count", "Sales"]
-            body = _sales_grid_body(headers, rows, "TOTAL", result.total_net_sale_value)
         elif req.report_type == "pos-operator-wise":
             result = await report_service.pos_operator_wise_sales(session, tenant.id, params)
-            rows = [(r.name, r.bill_count, r.net_sale_value) for r in result.rows]
-            headers = ["Name", "Bill Count", "Sales"]
-            body = _sales_grid_body(headers, rows, "TOTAL", result.total_net_sale_value)
         elif req.report_type == "waiter-incentive":
             result = await report_service.waiter_incentive_report(session, tenant.id, params)
-            rows = [(r.waiter_name, r.net_sale_value, r.incentive_amount) for r in result.rows]
-            body = _incentive_grid_body(
-                ["Waiter Name", "Net Sales", "Incentive Amt"], rows, "TOTAL", result.total_incentive_amount
-            )
         elif req.report_type == "cashier-incentive":
             result = await report_service.cashier_incentive_report(session, tenant.id, params)
-            rows = [(r.name, r.net_sale_value, r.incentive_amount) for r in result.rows]
-            body = _incentive_grid_body(
-                ["Cashier Name", "Net Sales", "Incentive Amt"], rows, "TOTAL", result.total_incentive_amount
-            )
         elif req.report_type == "pos-operator-incentive":
             result = await report_service.pos_operator_incentive_report(session, tenant.id, params)
-            rows = [(r.name, r.net_sale_value, r.incentive_amount) for r in result.rows]
-            body = _incentive_grid_body(
-                ["Name", "Net Sales", "Incentive Amt"], rows, "TOTAL", result.total_incentive_amount
-            )
         else:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown report_type: {req.report_type}")
+
+    body = build_report_body(req.report_type, result, tenant.report_tamil_names_enabled)
 
     data = ReportRenderData(
         title=title,

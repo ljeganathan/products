@@ -114,10 +114,21 @@ async def sales_summary(
 async def item_wise_sales(
     session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
 ) -> ItemWiseSalesResponse:
-    """Groups on the bill's own snapshotted item name (`BillItem.name_en_snapshot`),
-    not a live join to `items` — a renamed/deleted item must not retroactively change
-    what a past report shows, matching why the snapshot exists in the first place
-    (Phase 09).
+    """Item name is snapshotted (`BillItem.name_en_snapshot`) — a renamed/deleted item
+    must not retroactively change what a past report shows (Phase 09). Category is a live
+    join instead (`Item.category_id` -> `Category`), same "live reference data" treatment
+    `category_wise_sales` below already uses, since categories aren't versioned anywhere
+    in this schema. `items.category_id` is NOT NULL and items are only ever soft-deleted
+    (CLAUDE.md's general pattern), so every `BillItem.item_id` always resolves through to
+    a real category — an inner join is safe here, never drops a row.
+
+    Rows are grouped by category and ordered category-major, both levels descending by
+    revenue (production feedback round 4: "grouped by the category wise and descending
+    order by the sales value... print the category name for each group"). The single
+    query below is already ordered by item revenue descending; grouping that sequence by
+    category preserves each category's own items in revenue-descending order for free (a
+    filtered subsequence of a descending list is still descending) — only the category
+    groups themselves need a second, explicit sort by each group's own total.
     """
     rows = (
         await session.execute(
@@ -125,25 +136,49 @@ async def item_wise_sales(
                 BillItem.item_id,
                 BillItem.name_en_snapshot,
                 BillItem.name_ta_snapshot,
+                Item.category_id,
+                Category.name_en,
+                Category.name_ta,
                 func.sum(BillItem.quantity),
                 func.sum(BillItem.line_total),
             )
             .join(Bill, Bill.id == BillItem.bill_id)
+            .join(Item, Item.id == BillItem.item_id)
+            .join(Category, Category.id == Item.category_id)
             .where(*_bill_filters(tenant_id, params))
-            .group_by(BillItem.item_id, BillItem.name_en_snapshot, BillItem.name_ta_snapshot)
+            .group_by(
+                BillItem.item_id,
+                BillItem.name_en_snapshot,
+                BillItem.name_ta_snapshot,
+                Item.category_id,
+                Category.name_en,
+                Category.name_ta,
+            )
             .order_by(func.sum(BillItem.line_total).desc())
         )
     ).all()
-    result_rows = [
+    flat_rows = [
         ItemWiseSalesRow(
             item_id=item_id,
             name_en=name_en,
             name_ta=name_ta,
+            category_id=cat_id,
+            category_name_en=cat_name_en,
+            category_name_ta=cat_name_ta,
             quantity_sold=int(qty),
             revenue=float(revenue),
         )
-        for item_id, name_en, name_ta, qty, revenue in rows
+        for item_id, name_en, name_ta, cat_id, cat_name_en, cat_name_ta, qty, revenue in rows
     ]
+
+    cat_totals: dict[uuid.UUID, float] = {}
+    items_by_cat: dict[uuid.UUID, list[ItemWiseSalesRow]] = {}
+    for r in flat_rows:
+        cat_totals[r.category_id] = cat_totals.get(r.category_id, 0.0) + r.revenue
+        items_by_cat.setdefault(r.category_id, []).append(r)
+    ordered_cat_ids = sorted(cat_totals, key=lambda cid: cat_totals[cid], reverse=True)
+    result_rows = [r for cid in ordered_cat_ids for r in items_by_cat[cid]]
+
     return ItemWiseSalesResponse(
         rows=result_rows, total_revenue=round(sum(r.revenue for r in result_rows), 2)
     )

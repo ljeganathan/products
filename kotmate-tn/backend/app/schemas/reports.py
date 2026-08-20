@@ -40,11 +40,21 @@ class ItemWiseSalesRow(BaseModel):
     item_id: uuid.UUID
     name_en: str
     name_ta: str | None
+    # Item's current (live) category — categories aren't versioned anywhere in this
+    # schema, same "live reference data" treatment CategoryWiseSalesRow already has, see
+    # report_service.item_wise_sales. Used to group this report by category (production
+    # feedback round 4).
+    category_id: uuid.UUID
+    category_name_en: str
+    category_name_ta: str | None
     quantity_sold: int
     revenue: float
 
 
 class ItemWiseSalesResponse(BaseModel):
+    # Pre-grouped: categories ordered by their own total revenue descending, items within
+    # each category ordered by their own revenue descending (production feedback round 4)
+    # — not a flat revenue-desc list across all items like before.
     rows: list[ItemWiseSalesRow]
     total_revenue: float
 

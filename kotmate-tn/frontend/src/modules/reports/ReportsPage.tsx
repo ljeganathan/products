@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { dispatchPrintJob } from "@/lib/printDispatch";
 import { formatINR } from "@/lib/utils";
@@ -304,7 +304,13 @@ function ReportTable({ reportKey, data }: { reportKey: ReportKey; data: any }) {
         </div>
       );
 
-    case "item-wise":
+    case "item-wise": {
+      // Rows arrive pre-grouped category-major (categories by total revenue descending,
+      // items within a category by their own revenue descending) — render a bold group
+      // header wherever the category changes rather than a flat list, so the grouping
+      // that already drives the print/export column format (production feedback round
+      // 4) reads the same way here instead of looking like an unexplained reorder.
+      let lastCategoryId: string | null = null;
       return (
         <div className={tableWrapClass}>
           <table className={tableClass}>
@@ -316,16 +322,39 @@ function ReportTable({ reportKey, data }: { reportKey: ReportKey; data: any }) {
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((r: { item_id: string; name_en: string; name_ta: string | null; quantity_sold: number; revenue: number }) => (
-                <tr key={r.item_id} className="border-t border-border">
-                  <td className={tdClass}>
-                    {r.name_en}
-                    {r.name_ta && <span className="ml-1.5 text-foreground/50">/ {r.name_ta}</span>}
-                  </td>
-                  <td className={`${tdClass} text-right tabular-nums`}>{r.quantity_sold}</td>
-                  <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.revenue)}</td>
-                </tr>
-              ))}
+              {data.rows.map(
+                (r: {
+                  item_id: string;
+                  name_en: string;
+                  name_ta: string | null;
+                  category_id: string;
+                  category_name_en: string;
+                  quantity_sold: number;
+                  revenue: number;
+                }) => {
+                  const showCategoryHeader = r.category_id !== lastCategoryId;
+                  lastCategoryId = r.category_id;
+                  return (
+                    <Fragment key={r.item_id}>
+                      {showCategoryHeader && (
+                        <tr className="border-t border-border bg-foreground/5">
+                          <td className={`${tdClass} font-semibold`} colSpan={3}>
+                            {r.category_name_en}
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="border-t border-border">
+                        <td className={tdClass}>
+                          {r.name_en}
+                          {r.name_ta && <span className="ml-1.5 text-foreground/50">/ {r.name_ta}</span>}
+                        </td>
+                        <td className={`${tdClass} text-right tabular-nums`}>{r.quantity_sold}</td>
+                        <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.revenue)}</td>
+                      </tr>
+                    </Fragment>
+                  );
+                },
+              )}
               <tr className={totalRowClass}>
                 <td className={tdClass}>TOTAL</td>
                 <td className={tdClass} />
@@ -335,6 +364,7 @@ function ReportTable({ reportKey, data }: { reportKey: ReportKey; data: any }) {
           </table>
         </div>
       );
+    }
 
     case "category-wise":
       return (
