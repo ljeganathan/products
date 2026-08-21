@@ -1,6 +1,12 @@
 # KOTMate TN — Subscription Tiers & Pricing
 
-See `CLAUDE.md` §6 for the original planning-stage feature matrix. Pricing summary:
+See `CLAUDE.md` §6 for the original planning-stage feature matrix. This file is the
+source of truth for the tier-wise feature splitup used in the customer-facing
+pamphlets (`docs/KOTMate-TN-Pamphlet.pdf` / `docs/KOTMate-TN-Pamphlet-Tamil.pdf`,
+source in `docs/pamphlet/`) — when a feature's tier gating changes here, regenerate
+those pamphlets to match (see `docs/pamphlet/README.md`).
+
+Pricing summary:
 
 | Tier | Monthly (INR) | Yearly (INR) | Users | Locations | Images | KOT Screen + Print | Section pricing |
 |---|---------------|--------------|---|---|---|---|---|
