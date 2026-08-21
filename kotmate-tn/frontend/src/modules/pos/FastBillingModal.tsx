@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { Table } from "@/modules/admin/tablesApi";
 import type { Waiter } from "@/modules/admin/waitersApi";
+import type { PosSection } from "@/modules/pos/posApi";
 import type { TableSelection } from "@/modules/pos/TableWaiterBar";
 
 type Slot = "table" | "waiter" | "item";
@@ -10,6 +11,10 @@ type ItemCodeResult = { ok: true; name: string } | { ok: false; error: string };
 interface FastBillingModalProps {
   tables: Table[];
   waiters: Waiter[];
+  // Takeaway/Online Delivery-style sections — no table_number to type a code against
+  // (CLAUDE.md §9: "Non-seating sections skip table selection entirely"), so these are
+  // offered as tap chips on the Table slot instead, same as the tap-based picker does.
+  sections: PosSection[];
   // A `waiter` login is always locked to themself (TableWaiterBar's own waiterLocked) —
   // Fast Billing drops the Waiter slot entirely in that case rather than asking for a
   // code that has only one possible answer.
@@ -57,18 +62,23 @@ function matchByCode<T extends { is_active: boolean }>(
 export function FastBillingModal({
   tables,
   waiters,
+  sections,
   waiterLocked,
   onSelectTable,
   onSelectWaiter,
   onAddItemByCode,
   onClose,
 }: FastBillingModalProps) {
+  const nonSeatingSections = sections.filter((s) => !s.is_seating);
   const slots: Slot[] = waiterLocked ? ["table", "item"] : ["table", "waiter", "item"];
   const [active, setActive] = useState<Slot>("table");
   const [tableCode, setTableCode] = useState("");
   const [waiterCode, setWaiterCode] = useState("");
   const [itemCode, setItemCode] = useState("");
-  const [resolvedTable, setResolvedTable] = useState<Table | null>(null);
+  // Display-only label for whatever the Table slot resolved to — a table number ("T5")
+  // or a non-seating section name ("Takeaway"); which one it is doesn't matter past this
+  // point, `onSelectTable` already got the right `TableSelection` shape for either.
+  const [resolvedPlaceLabel, setResolvedPlaceLabel] = useState<string | null>(null);
   const [resolvedWaiter, setResolvedWaiter] = useState<Waiter | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addedItems, setAddedItems] = useState<{ code: string; name: string }[]>([]);
@@ -90,8 +100,8 @@ export function FastBillingModal({
   // underneath this modal instead of just failing quietly).
   function isSlotUnlocked(slot: Slot): boolean {
     if (slot === "table") return true;
-    if (slot === "waiter") return !!resolvedTable;
-    return !!resolvedTable && (waiterLocked || !!resolvedWaiter);
+    if (slot === "waiter") return !!resolvedPlaceLabel;
+    return !!resolvedPlaceLabel && (waiterLocked || !!resolvedWaiter);
   }
   const unlockedSlots = slots.filter(isSlotUnlocked);
 
@@ -122,6 +132,30 @@ export function FastBillingModal({
   // table, it's set" contract the picker modals already have, not deferred to a final
   // Done step. That's what lets the Item slot add straight into the live cart the moment
   // it's reached, rather than needing its own separate "now build the cart" phase.
+  async function selectTable(table: Table) {
+    setBusy(true);
+    await onSelectTable({ kind: "direct", sectionId: table.section_id, tableId: table.id });
+    setBusy(false);
+    setError(null);
+    setResolvedPlaceLabel(table.table_number);
+    const idx = slots.indexOf("table");
+    if (idx < slots.length - 1) setActive(slots[idx + 1]);
+  }
+
+  // Takeaway/Online Delivery — tapped directly rather than typed, since there's no
+  // per-section numeric code (CLAUDE.md §9); same `TableSelection` shape as a table pick,
+  // just with `tableId: null`.
+  async function selectNonSeating(section: PosSection) {
+    setBusy(true);
+    await onSelectTable({ kind: "direct", sectionId: section.id, tableId: null });
+    setBusy(false);
+    setError(null);
+    setResolvedPlaceLabel(section.name_en);
+    setTableCode("");
+    const idx = slots.indexOf("table");
+    if (idx < slots.length - 1) setActive(slots[idx + 1]);
+  }
+
   async function confirmActive() {
     const code = valueFor(active).trim();
     if (!code || busy) return;
@@ -130,16 +164,14 @@ export function FastBillingModal({
     if (active === "table") {
       const matches = matchByCode(tables, code, (t) => t.table_number);
       if (matches.length !== 1) {
-        setError(matches.length === 0 ? `No table with code ${code}` : `More than one table matches ${code}`);
+        setError(
+          matches.length === 0
+            ? `No table with code ${code} — or tap Takeaway/Online Delivery below`
+            : `More than one table matches ${code}`,
+        );
         return;
       }
-      const table = matches[0];
-      setBusy(true);
-      await onSelectTable({ kind: "direct", sectionId: table.section_id, tableId: table.id });
-      setBusy(false);
-      setResolvedTable(table);
-      const idx = slots.indexOf("table");
-      if (idx < slots.length - 1) setActive(slots[idx + 1]);
+      await selectTable(matches[0]);
       return;
     }
 
@@ -193,9 +225,20 @@ export function FastBillingModal({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, tableCode, waiterCode, itemCode, tables, waiters, busy, resolvedTable, resolvedWaiter, waiterLocked]);
+  }, [
+    active,
+    tableCode,
+    waiterCode,
+    itemCode,
+    tables,
+    waiters,
+    busy,
+    resolvedPlaceLabel,
+    resolvedWaiter,
+    waiterLocked,
+  ]);
 
-  const canFinish = !!resolvedTable && (waiterLocked || !!resolvedWaiter);
+  const canFinish = !!resolvedPlaceLabel && (waiterLocked || !!resolvedWaiter);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
@@ -203,7 +246,7 @@ export function FastBillingModal({
         <h2 className="mb-1 text-lg font-extrabold">⚡ Fast Billing</h2>
         <p className="mb-3 text-xs text-ink-faint">
           Key in {waiterLocked ? "table, then item" : "table, waiter, then item"} codes — Enter confirms and
-          moves to the next field.
+          moves to the next field. No table code for Takeaway/Online Delivery — tap it instead.
         </p>
 
         <div className="mb-3 flex flex-col gap-1.5">
@@ -213,9 +256,24 @@ export function FastBillingModal({
             active={active === "table"}
             locked={false}
             value={tableCode}
-            resolvedLabel={resolvedTable?.table_number ?? null}
+            resolvedLabel={resolvedPlaceLabel}
             onClick={() => jumpTo("table")}
           />
+          {active === "table" && nonSeatingSections.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pl-1">
+              {nonSeatingSections.map((section) => (
+                <button
+                  key={section.id}
+                  type="button"
+                  onClick={() => void selectNonSeating(section)}
+                  disabled={busy}
+                  className="rounded-full border border-border bg-surface-2 px-3 py-1 text-[11px] font-bold text-ink-soft transition-colors hover:border-accent hover:bg-accent-soft hover:text-accent disabled:opacity-40"
+                >
+                  {section.name_en}
+                </button>
+              ))}
+            </div>
+          )}
           {!waiterLocked && (
             <SlotRow
               icon="🧑‍🍳"

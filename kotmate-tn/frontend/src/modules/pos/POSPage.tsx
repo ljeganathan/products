@@ -1109,6 +1109,7 @@ export function POSPage() {
         <FastBillingModal
           tables={tables}
           waiters={waiters}
+          sections={sections}
           waiterLocked={isWaiterRole}
           onSelectTable={handleSelectTable}
           onSelectWaiter={handleSelectWaiter}
