@@ -324,6 +324,33 @@ async def test_search_and_category_filter(client: AsyncClient, tenant_admin: dic
     assert names == ["Filter Coffee"]
 
 
+async def test_active_only_excludes_deactivated_items_pos_uses(client: AsyncClient, tenant_admin: dict):
+    """POS's item grid asks for `active_only=true` (production feedback — deactivated
+    items were showing up in the POS item list); Item Master's own listing keeps
+    defaulting to `active_only=false` so it can still show/manage deactivated items.
+    """
+    category = await _create_category(client, tenant_admin["headers"])
+    active = await _create_item(client, tenant_admin["headers"], category["id"], name_en="Filter Coffee")
+    inactive = await _create_item(client, tenant_admin["headers"], category["id"], name_en="Rose Milk")
+
+    patch_resp = await client.patch(
+        f"/api/v1/items/{inactive['id']}", json={"is_active": False}, headers=tenant_admin["headers"]
+    )
+    assert patch_resp.status_code == 200
+
+    unfiltered = await client.get("/api/v1/items", headers=tenant_admin["headers"])
+    unfiltered_ids = {i["id"] for i in unfiltered.json()}
+    assert active["id"] in unfiltered_ids
+    assert inactive["id"] in unfiltered_ids
+
+    active_only = await client.get(
+        "/api/v1/items", params={"active_only": True}, headers=tenant_admin["headers"]
+    )
+    active_only_ids = {i["id"] for i in active_only.json()}
+    assert active["id"] in active_only_ids
+    assert inactive["id"] not in active_only_ids
+
+
 async def test_non_tenant_admin_can_read_but_not_write_items(client: AsyncClient, tenant_admin: dict):
     category = await _create_category(client, tenant_admin["headers"])
     waiter = (

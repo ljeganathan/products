@@ -116,7 +116,7 @@ export interface PosItem {
 }
 
 export async function listPosItems(params?: { category_id?: string }): Promise<PosItem[]> {
-  return (await api.get<PosItem[]>("/api/v1/items", { params })).data;
+  return (await api.get<PosItem[]>("/api/v1/items", { params: { ...params, active_only: true } })).data;
 }
 
 export async function searchItems(q: string): Promise<PosItem[]> {

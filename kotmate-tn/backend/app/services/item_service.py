@@ -77,9 +77,15 @@ async def _validate_tax_class(
 
 
 async def list_items(
-    session: AsyncSession, tenant_id: uuid.UUID, category_id: uuid.UUID | None, search: str | None
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    category_id: uuid.UUID | None,
+    search: str | None,
+    active_only: bool = False,
 ) -> list[Item]:
     query = select(Item).where(Item.tenant_id == tenant_id)
+    if active_only:
+        query = query.where(Item.is_active.is_(True))
     if category_id is not None:
         query = query.where(Item.category_id == category_id)
     if search:

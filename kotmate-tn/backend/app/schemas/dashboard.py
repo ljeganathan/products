@@ -49,3 +49,13 @@ class LocationComparisonRow(BaseModel):
 
 class MultiLocationComparisonResponse(BaseModel):
     rows: list[LocationComparisonRow]
+
+
+class SalesTrendPoint(BaseModel):
+    label: str
+    sales: float
+
+
+class SalesTrendResponse(BaseModel):
+    period: str
+    points: list[SalesTrendPoint]

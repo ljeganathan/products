@@ -47,10 +47,11 @@ async def _get_tenant(db: AsyncSession, current_user: CurrentUser) -> Tenant:
 async def list_tenant_items(
     category_id: uuid.UUID | None = None,
     search: str | None = None,
+    active_only: bool = False,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ItemResponse]:
-    items = await list_items(db, current_user.tenant_id, category_id, search)
+    items = await list_items(db, current_user.tenant_id, category_id, search, active_only=active_only)
     return [ItemResponse.model_validate(i) for i in items]
 
 

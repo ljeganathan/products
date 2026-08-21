@@ -47,7 +47,9 @@ export interface ItemImportResult {
   errors: string[];
 }
 
-export async function listItems(params?: { category_id?: string; search?: string }): Promise<Item[]> {
+export async function listItems(
+  params?: { category_id?: string; search?: string; active_only?: boolean },
+): Promise<Item[]> {
   return (await api.get<Item[]>("/api/v1/items", { params })).data;
 }
 

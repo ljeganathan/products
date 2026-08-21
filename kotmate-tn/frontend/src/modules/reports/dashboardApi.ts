@@ -59,3 +59,20 @@ export async function getMultiLocationComparison(params: {
 }): Promise<MultiLocationComparison> {
   return (await api.get<MultiLocationComparison>("/api/v1/dashboard/multi-location", { params })).data;
 }
+
+export interface SalesTrendPoint {
+  label: string;
+  sales: number;
+}
+
+export interface SalesTrend {
+  period: "monthly" | "yearly";
+  points: SalesTrendPoint[];
+}
+
+export async function getSalesTrend(params: {
+  period: "monthly" | "yearly";
+  location_id?: string;
+}): Promise<SalesTrend> {
+  return (await api.get<SalesTrend>("/api/v1/dashboard/sales-trend", { params })).data;
+}

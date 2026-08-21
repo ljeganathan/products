@@ -12,8 +12,14 @@ from app.schemas.dashboard import (
     DashboardSummaryResponse,
     LowStockItemsResponse,
     MultiLocationComparisonResponse,
+    SalesTrendResponse,
 )
-from app.services.dashboard_service import dashboard_summary, low_stock_items, multi_location_comparison
+from app.services.dashboard_service import (
+    dashboard_summary,
+    low_stock_items,
+    multi_location_comparison,
+    sales_trend,
+)
 from app.services.stock_service import is_stock_tracking_enabled
 from app.services.tenant_onboarding import get_active_plan
 
@@ -53,6 +59,26 @@ async def get_low_stock_items(
     if not is_stock_tracking_enabled(tenant, plan.features if plan else None):
         return LowStockItemsResponse(rows=[])
     return await low_stock_items(db, current_user.tenant_id)
+
+
+@router.get(
+    "/sales-trend",
+    response_model=SalesTrendResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def get_sales_trend(
+    period: str,
+    location_id: uuid.UUID | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SalesTrendResponse:
+    """tenant_admin-only (production feedback) — enforced here, not just hidden on the
+    frontend, matching CLAUDE.md's usual role-gating convention (e.g. §5/§9 for waiter
+    billing). Available on every plan tier, same as the rest of the basic dashboard.
+    """
+    if period not in ("monthly", "yearly"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "period must be 'monthly' or 'yearly'")
+    return await sales_trend(db, current_user.tenant_id, period, location_id)
 
 
 @router.get("/multi-location", response_model=MultiLocationComparisonResponse)

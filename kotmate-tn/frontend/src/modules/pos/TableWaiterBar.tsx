@@ -44,6 +44,10 @@ interface TableWaiterBarProps {
   // open these pickers without duplicating open/close state in two places.
   openPicker: "table" | "waiter" | null;
   onOpenPickerChange: (picker: "table" | "waiter" | null) => void;
+  // Opens FastBillingModal (POSPage owns it, same split as the pickers above) — a
+  // calculator-style table+waiter+item code entry point for counters used to
+  // Tally/Marg/DOS-era billing machines (CLAUDE.md §9, production feedback).
+  onOpenFastBilling: () => void;
 }
 
 function TablePickerModal({
@@ -205,6 +209,7 @@ export function TableWaiterBar({
   onSelectWaiter,
   openPicker: pickerOpen,
   onOpenPickerChange: setPickerOpen,
+  onOpenFastBilling,
 }: TableWaiterBarProps) {
   const currentSection = sections.find((s) => s.id === sectionId);
   const currentTable = tables.find((t) => t.id === tableId);
@@ -219,7 +224,7 @@ export function TableWaiterBar({
       <button
         type="button"
         onClick={() => setPickerOpen("table")}
-        className="flex shrink-0 items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 transition-colors hover:border-accent"
+        className="flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border bg-surface px-3 transition-colors hover:border-accent"
       >
         <span>🍽️</span>
         <span className="text-xl font-black leading-none tracking-tight">
@@ -251,7 +256,7 @@ export function TableWaiterBar({
         type="button"
         onClick={() => !waiterLocked && setPickerOpen("waiter")}
         disabled={waiterLocked}
-        className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors disabled:cursor-default ${
+        className={`flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-sm font-bold transition-colors disabled:cursor-default ${
           waiterLocked
             ? "border-gold bg-gold-soft text-gold opacity-90"
             : currentWaiter
@@ -266,6 +271,15 @@ export function TableWaiterBar({
             F11
           </kbd>
         )}
+      </button>
+
+      <button
+        type="button"
+        onClick={onOpenFastBilling}
+        className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-sm font-bold text-ink-soft transition-colors hover:border-accent hover:text-accent"
+      >
+        <span>⚡</span>
+        Fast Billing
       </button>
 
       {pickerOpen === "table" && (

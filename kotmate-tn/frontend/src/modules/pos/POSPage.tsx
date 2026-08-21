@@ -16,6 +16,7 @@ import { UserMenu } from "@/modules/auth/UserMenu";
 import { BillingModal } from "@/modules/pos/BillingModal";
 import { CartPanel } from "@/modules/pos/CartPanel";
 import { ALL_ITEMS_ID, CategoryNav, TOP_SELLING_ID } from "@/modules/pos/CategoryNav";
+import { FastBillingModal } from "@/modules/pos/FastBillingModal";
 import { ItemCard } from "@/modules/pos/ItemCard";
 import { ItemCodeModal } from "@/modules/pos/ItemCodeModal";
 import { KotTicketsPopup } from "@/modules/pos/KotTicketsPopup";
@@ -156,6 +157,7 @@ export function POSPage() {
   const [openPicker, setOpenPicker] = useState<"table" | "waiter" | null>(null);
   const [showRecall, setShowRecall] = useState(false);
   const [showItemCodeModal, setShowItemCodeModal] = useState(false);
+  const [showFastBilling, setShowFastBilling] = useState(false);
   const [showKotTickets, setShowKotTickets] = useState(false);
   const [showBilling, setShowBilling] = useState(false);
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
@@ -309,6 +311,28 @@ export function POSPage() {
     await syncCart(next);
   }
 
+  // Shared by the header's inline Code field, ItemCodeModal (mobile/tablet-narrow), and
+  // FastBillingModal's Item slot — one place that does the actual lookup + stock check +
+  // cart-add, so all three entry points behave identically. Case-insensitive backend
+  // lookup (matches item_service.get_item_by_code) rather than a client-side exact-match
+  // scan of `allItems`, which would miss a code typed in a different case or an item
+  // added after the initial items load.
+  async function resolveAndAddItemByCode(
+    code: string,
+  ): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+    let match: PosItem;
+    try {
+      match = await getItemByCode(code);
+    } catch {
+      return { ok: false, error: "No item found with that code" };
+    }
+    if (isOutOfStock(match)) {
+      return { ok: false, error: `${match.name_en} is out of stock` };
+    }
+    await handleAddItem(match);
+    return { ok: true, name: match.name_en };
+  }
+
   // `onDone` lets each entry point (the desktop header's always-visible inline field, or
   // ItemCodeModal on mobile/tablet-narrow where that field has no room — CLAUDE.md §9)
   // manage its own refocus/select-for-retry, since they're two different DOM inputs and
@@ -322,23 +346,12 @@ export function POSPage() {
       return;
     }
     setItemCodeError(null);
-    // Case-insensitive backend lookup (matches item_service.get_item_by_code) rather
-    // than a client-side exact-match scan of `allItems` — that missed any code typed
-    // in a different case, or an item added after the initial items load.
-    let match: PosItem;
-    try {
-      match = await getItemByCode(code);
-    } catch {
-      setItemCodeError("No item found with that code");
+    const result = await resolveAndAddItemByCode(code);
+    if (!result.ok) {
+      setItemCodeError(result.error);
       onDone?.(false);
       return;
     }
-    if (isOutOfStock(match)) {
-      setItemCodeError(`${match.name_en} is out of stock`);
-      onDone?.(false);
-      return;
-    }
-    await handleAddItem(match);
     setItemCode("");
     onDone?.(true);
   }
@@ -752,7 +765,15 @@ export function POSPage() {
             )}
           </div>
 
-          <label className="hidden min-h-9 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 lg:flex">
+          {/* `shrink-0` — without it, this label was the only sibling with give left in
+              the search-wrapper's flex row once a real tenant name + multi-location
+              picker + long-ish login id pushed the header tight even above `lg`
+              (production feedback, tablet-landscape ~1200px CSS width): the search box's
+              own `flex-1` claimed space first, and this element being the next item with
+              default flex-shrink collapsed its input down to invisible, leaving only the
+              icon in a squeezed box — never actually falling back to the "⋮" menu, just
+              silently losing its input. */}
+          <label className="hidden min-h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-3 lg:flex">
             <span className="text-xs">#️⃣</span>
             <input
               ref={itemCodeInputRef}
@@ -904,6 +925,7 @@ export function POSPage() {
         onSelectWaiter={handleSelectWaiter}
         openPicker={openPicker}
         onOpenPickerChange={setOpenPicker}
+        onOpenFastBilling={() => setShowFastBilling(true)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -1081,6 +1103,17 @@ export function POSPage() {
           itemCodeError={itemCodeError}
           onSubmit={() => void handleItemCodeSubmit()}
           onClose={() => setShowItemCodeModal(false)}
+        />
+      )}
+      {showFastBilling && (
+        <FastBillingModal
+          tables={tables}
+          waiters={waiters}
+          waiterLocked={isWaiterRole}
+          onSelectTable={handleSelectTable}
+          onSelectWaiter={handleSelectWaiter}
+          onAddItemByCode={resolveAndAddItemByCode}
+          onClose={() => setShowFastBilling(false)}
         />
       )}
     </div>

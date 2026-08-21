@@ -81,7 +81,7 @@ export function KotDisplayPage() {
 
   const { data: items = [] } = useQuery({
     queryKey: ["kds-tracked-items"],
-    queryFn: () => listItems(),
+    queryFn: () => listItems({ active_only: true }),
   });
 
   useLocationSocket(location?.id, (msg) => {

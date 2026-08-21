@@ -42,8 +42,13 @@ export function UserMenu({ links = [] }: UserMenuProps) {
           {link.label}
         </Link>
       ))}
-      <span className="hidden text-xs text-ink-faint sm:inline">
-        {loginId} · {role}
+      {/* Two stacked lines rather than one "loginId · role" line — frees up horizontal
+          space in the POS header on tablet-landscape widths, where this block competes
+          with the item-code field/KOT Tickets/Recall/Dashboard for room (production
+          feedback). */}
+      <span className="hidden flex-col leading-tight text-ink-faint sm:flex">
+        <span className="text-[10.5px] font-semibold">{loginId}</span>
+        <span className="text-[9.5px]">{role}</span>
       </span>
       <button
         type="button"

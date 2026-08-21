@@ -154,6 +154,60 @@ async def test_low_stock_items_reports_tracked_items_at_or_under_threshold(
     assert out_row["available_qty"] == 0
 
 
+async def test_sales_trend_monthly_and_yearly_reconcile_with_bills(
+    client: AsyncClient, tenant_admin: dict
+):
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=200)
+    bill = await _bill_simple_order(client, headers, location_id, section_id, item["id"])
+
+    monthly = await client.get(
+        "/api/v1/dashboard/sales-trend", params={"period": "monthly"}, headers=headers
+    )
+    assert monthly.status_code == 200, monthly.text
+    monthly_body = monthly.json()
+    assert monthly_body["period"] == "monthly"
+    assert len(monthly_body["points"]) == 30
+    assert sum(p["sales"] for p in monthly_body["points"]) == bill["grand_total"]
+
+    yearly = await client.get(
+        "/api/v1/dashboard/sales-trend", params={"period": "yearly"}, headers=headers
+    )
+    assert yearly.status_code == 200, yearly.text
+    yearly_body = yearly.json()
+    assert yearly_body["period"] == "yearly"
+    assert len(yearly_body["points"]) == 12
+    assert sum(p["sales"] for p in yearly_body["points"]) == bill["grand_total"]
+
+    bad_period = await client.get(
+        "/api/v1/dashboard/sales-trend", params={"period": "weekly"}, headers=headers
+    )
+    assert bad_period.status_code == 400
+
+
+async def test_sales_trend_blocked_for_cashier(client: AsyncClient, tenant_admin: dict):
+    headers = tenant_admin["headers"]
+    cashier_user = (
+        await client.post(
+            "/api/v1/users",
+            json={"local_handle": "c1", "name": "C1", "role": "pos_user", "password": "password123"},
+            headers=headers,
+        )
+    ).json()
+    login = await client.post(
+        "/api/v1/auth/login", json={"user_id": cashier_user["user_id"], "password": "password123"}
+    )
+    cashier_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    resp = await client.get(
+        "/api/v1/dashboard/sales-trend", params={"period": "monthly"}, headers=cashier_headers
+    )
+    assert resp.status_code == 403
+
+
 async def test_waiter_role_blocked_from_dashboard(client: AsyncClient, tenant_admin: dict):
     headers = tenant_admin["headers"]
     waiter_user = (

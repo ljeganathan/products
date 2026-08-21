@@ -13,7 +13,12 @@ import {
 import { formatINR } from "@/lib/utils";
 import { listLocations } from "@/modules/admin/locationsApi";
 import { me } from "@/modules/auth/authApi";
-import { getDashboardSummary, getLowStockItems, getMultiLocationComparison } from "@/modules/reports/dashboardApi";
+import {
+  getDashboardSummary,
+  getLowStockItems,
+  getMultiLocationComparison,
+  getSalesTrend,
+} from "@/modules/reports/dashboardApi";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -138,6 +143,8 @@ export function DashboardPage() {
         </>
       )}
 
+      {meData?.role === "tenant_admin" && <SalesTrendSection locationId={locationId} />}
+
       {hasMultiLocation && meData?.role === "tenant_admin" && <MultiLocationSection />}
     </div>
   );
@@ -186,6 +193,60 @@ function LowStockSection() {
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+function SalesTrendSection({ locationId }: { locationId: string }) {
+  const [period, setPeriod] = useState<"monthly" | "yearly">("monthly");
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["sales-trend", period, locationId],
+    queryFn: () => getSalesTrend({ period, location_id: locationId || undefined }),
+  });
+
+  return (
+    <div className="mb-6 rounded-lg border border-border bg-surface p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-foreground/60">
+          Monthly Sales Trend
+        </h2>
+        <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
+          {(["monthly", "yearly"] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPeriod(p)}
+              className={`rounded px-3 py-1 text-xs font-bold capitalize ${
+                period === p ? "bg-accent-soft text-accent" : "text-foreground/60 hover:text-foreground"
+              }`}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      </div>
+      {isLoading && <p className="text-sm text-foreground/60">Loading…</p>}
+      {data && (
+        <div className="h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data.points}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+              <XAxis
+                dataKey="label"
+                fontSize={11}
+                interval={period === "monthly" ? 2 : 0}
+                angle={period === "monthly" ? -35 : 0}
+                textAnchor={period === "monthly" ? "end" : "middle"}
+                height={period === "monthly" ? 40 : 24}
+              />
+              <YAxis fontSize={11} tickFormatter={(v: number) => `₹${v}`} />
+              <Tooltip formatter={((v: unknown) => formatINR(Number(v))) as never} />
+              <Bar dataKey="sales" fill="hsl(var(--accent))" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       )}
     </div>
   );
