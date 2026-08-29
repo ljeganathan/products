@@ -60,6 +60,12 @@ export interface MeResponse {
   // Whether Item/Category Wise report prints show the Tamil name instead of English —
   // inert unless report_printing_enabled is also true.
   report_tamil_names_enabled: boolean;
+  // Which POS screen layout this tenant uses — "default" (today's hotkey-driven
+  // counter screen) or "guided" (Petpooja-style step-by-step alternative).
+  pos_layout: "default" | "guided";
+  // "Require waiter selection" toggle, common to both POS layouts. Never applies to
+  // non-seating orders (Takeaway/Online Delivery) on either layout.
+  waiter_mandatory_enabled: boolean;
 }
 
 export async function me(): Promise<MeResponse> {

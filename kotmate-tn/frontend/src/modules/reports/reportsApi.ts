@@ -129,6 +129,27 @@ export interface PosOperatorIncentive {
   total_incentive_amount: number;
 }
 
+export interface ItemListPriceOverride {
+  section_id: string;
+  section_name_en: string;
+  price: number;
+}
+export interface ItemListRow {
+  item_id: string;
+  item_code: string | null;
+  name_en: string;
+  name_ta: string | null;
+  category_id: string;
+  category_name_en: string;
+  category_name_ta: string | null;
+  base_price: number;
+  price_overrides: ItemListPriceOverride[];
+}
+export interface ItemList {
+  rows: ItemListRow[];
+  total_items: number;
+}
+
 export interface PaymentMethodTotal {
   method: string;
   amount: number;
@@ -166,6 +187,9 @@ export const getPosOperatorIncentive = (params: ReportFilterParams) =>
   getReport<PosOperatorIncentive>("pos-operator-incentive", params);
 export const getZReport = (reportDate: string, locationId?: string) =>
   getReport<ZReport>("z-report", { report_date: reportDate, location_id: locationId });
+// Item master data, not date/location scoped (items aren't location-scoped) — see
+// report_service.item_list.
+export const getItemList = () => getReport<ItemList>("item-list", {});
 
 // Report endpoints double as their own export — same path, `export=<format>` query
 // param switches the response from JSON to a file download (gated server-side against

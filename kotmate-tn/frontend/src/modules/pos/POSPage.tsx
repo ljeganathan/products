@@ -1,17 +1,8 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import axios from "axios";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import logoMark from "@/assets/logo-mark.png";
-import { dispatchPrintJob } from "@/lib/printDispatch";
 import { formatINR } from "@/lib/utils";
-import { listCategories } from "@/modules/admin/categoriesApi";
-import { listLocations } from "@/modules/admin/locationsApi";
-import { listTables } from "@/modules/admin/tablesApi";
-import { getMyWaiterProfile, listWaiters } from "@/modules/admin/waitersApi";
-import { me } from "@/modules/auth/authApi";
-import { useAuthStore } from "@/modules/auth/authStore";
 import { UserMenu } from "@/modules/auth/UserMenu";
 import { BillingModal } from "@/modules/pos/BillingModal";
 import { CartPanel } from "@/modules/pos/CartPanel";
@@ -20,132 +11,60 @@ import { FastBillingModal } from "@/modules/pos/FastBillingModal";
 import { ItemCard } from "@/modules/pos/ItemCard";
 import { ItemCodeModal } from "@/modules/pos/ItemCodeModal";
 import { KotTicketsPopup } from "@/modules/pos/KotTicketsPopup";
-import { sendOrderToKot } from "@/modules/pos/kotApi";
-import {
-  type Order,
-  type OrderLineInput,
-  type PosItem,
-  createOrder,
-  getItemByCode,
-  getOrder,
-  listOrders,
-  listPosItems,
-  listPosSections,
-  listTopSellers,
-  previewOrderUpdate,
-  searchItems,
-  updateOrder,
-} from "@/modules/pos/posApi";
+import { type PosItem, searchItems } from "@/modules/pos/posApi";
 import { RecallPanel } from "@/modules/pos/RecallPanel";
 import { SectionChangeConfirm } from "@/modules/pos/SectionChangeConfirm";
-import {
-  resolveCustomerSlotSelection,
-  type TableSelection,
-  TableWaiterBar,
-} from "@/modules/pos/TableWaiterBar";
-import { usePosWebSocket } from "@/modules/pos/usePosWebSocket";
-
-type SyncState = "idle" | "saving" | "saved" | "error";
-
-function toLineInputs(order: Order | null): OrderLineInput[] {
-  if (!order) return [];
-  // Echo each line's own id so the backend matches it back to the exact OrderItem row
-  // (compute_updated_lines) instead of a fuzzy item_id/notes guess — required for two
-  // lines of the same item (one already sent to KOT, one not) to never collide.
-  return order.items.map((line) => ({
-    id: line.id,
-    item_id: line.item_id,
-    quantity: line.quantity,
-    notes: line.notes,
-  }));
-}
+import { TableWaiterBar } from "@/modules/pos/TableWaiterBar";
+import { usePosDraftOrder } from "@/modules/pos/usePosDraftOrder";
 
 export function POSPage() {
-  const role = useAuthStore((s) => s.role)!;
-  const isWaiterRole = role === "waiter";
-  const queryClient = useQueryClient();
-
-  const { data: locations = [] } = useQuery({ queryKey: ["tenant-locations"], queryFn: listLocations });
-  // Persisted so a counter machine that's always billing for the same location doesn't
-  // need re-picking after every reload (POS-35); falls back to the tenant's first
-  // location until `locations` loads or the stored id no longer matches a real one.
-  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(() =>
-    localStorage.getItem("pos-location-id"),
-  );
-  const location = locations.find((l) => l.id === selectedLocationId) ?? locations[0];
-  useEffect(() => {
-    if (location && location.id !== selectedLocationId) {
-      setSelectedLocationId(location.id);
-      localStorage.setItem("pos-location-id", location.id);
-    }
-  }, [location, selectedLocationId]);
-
-  function handleLocationChange(nextId: string) {
-    localStorage.setItem("pos-location-id", nextId);
-    setSelectedLocationId(nextId);
-    // Tables/waiters/open-orders are all location-scoped — anything mid-draft on the
-    // old location's floor plan can't carry over to the new one.
-    setOrder(null);
-    setSectionId("");
-    setTableId(null);
-    setPartyLabel(null);
-    if (!isWaiterRole) setWaiterId(null);
-  }
-
-  const { data: meData } = useQuery({ queryKey: ["me"], queryFn: me });
-  const { data: sections = [] } = useQuery({ queryKey: ["pos-sections"], queryFn: listPosSections });
-  const { data: tables = [] } = useQuery({
-    queryKey: ["pos-tables", location?.id],
-    queryFn: () => listTables({ location_id: location!.id }),
-    enabled: !!location,
-  });
-  const { data: waiters = [] } = useQuery({
-    queryKey: ["pos-waiters", location?.id],
-    queryFn: () => listWaiters({ location_id: location!.id }),
-    enabled: !!location,
-  });
-  const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: listCategories });
-  const { data: allItems = [] } = useQuery({ queryKey: ["pos-items"], queryFn: () => listPosItems() });
-  const { data: topSellers = [] } = useQuery({
-    queryKey: ["pos-top-sellers"],
-    queryFn: listTopSellers,
-    // Belt-and-braces fallback for the websocket push in usePosWebSocket.ts — the
-    // in-memory broadcast manager is per gunicorn worker process, so a push can
-    // occasionally miss a screen pinned to a different worker. This keeps the 1-hour
-    // rolling Top Selling list never more than ~60s stale even then.
-    refetchInterval: 60_000,
-  });
-  const { data: myWaiterProfile } = useQuery({
-    queryKey: ["my-waiter-profile"],
-    queryFn: getMyWaiterProfile,
-    enabled: role === "waiter",
-  });
-  // Drives both the occupied-table badges and the party picker (Phase 19, POS-22) — one
-  // location-scoped fetch rather than a query per table tap.
-  const { data: openOrders = [] } = useQuery({
-    queryKey: ["pos-open-orders", location?.id],
-    queryFn: () => listOrders({ status: "open", location_id: location!.id }),
-    enabled: !!location,
-  });
-
-  const [order, setOrder] = useState<Order | null>(null);
-  const [sectionId, setSectionId] = useState<string>("");
-  const [tableId, setTableId] = useState<string | null>(null);
-  const [partyLabel, setPartyLabel] = useState<string | null>(null);
-  const [waiterId, setWaiterId] = useState<string | null>(null);
-  const [syncState, setSyncState] = useState<SyncState>("idle");
-  const [syncError, setSyncError] = useState<string | null>(null);
-
-  // Table/section (or Takeaway/Online Delivery) and waiter are both mandatory before an
-  // order can be started (production feedback) — a `waiter` login is always locked to
-  // themself (TableWaiterBar's waiterLocked), so only the table/section half applies to
-  // that role; every billing role still needs a table/section picked first.
-  const readyToOrder = Boolean(sectionId) && (isWaiterRole || Boolean(waiterId));
-  const missingSelectionMessage = !sectionId
-    ? "Select a table or Takeaway first"
-    : !readyToOrder
-      ? "Assign a waiter first"
-      : null;
+  const {
+    role,
+    isWaiterRole,
+    queryClient,
+    meData,
+    locations,
+    location,
+    handleLocationChange,
+    sections,
+    tables,
+    waiters,
+    categories,
+    allItems,
+    topSellers,
+    myWaiterProfile,
+    openOrders,
+    order,
+    sectionId,
+    tableId,
+    partyLabel,
+    waiterId,
+    syncState,
+    syncError,
+    readyToOrder,
+    waiterMandatory,
+    missingSelectionMessage,
+    actionNotice,
+    setActionNotice,
+    kotSending,
+    pendingSectionChange,
+    setPendingSectionChange,
+    resolvedPriceFor,
+    quantityInCartFor,
+    stockOverrides,
+    handleAddItem,
+    handleQuantityChange,
+    resolveAndAddItemByCode,
+    loadOrderIntoDraft,
+    handleSelectTable,
+    handleSelectWaiter,
+    confirmSectionChange,
+    handleClearCart,
+    handleHold,
+    handleSendKot,
+    resetDraft,
+    dropOrderFromOpenOrdersCache,
+  } = usePosDraftOrder();
 
   const [activeCategoryId, setActiveCategoryId] = useState<string>(TOP_SELLING_ID);
   const [searchQuery, setSearchQuery] = useState("");
@@ -159,29 +78,13 @@ export function POSPage() {
   const [showItemCodeModal, setShowItemCodeModal] = useState(false);
   const [showFastBilling, setShowFastBilling] = useState(false);
   const [showKotTickets, setShowKotTickets] = useState(false);
-  const [showBilling, setShowBilling] = useState(false);
+  const [billingMode, setBillingMode] = useState<"bill" | "kot-and-bill" | null>(null);
   const [mobileCartOpen, setMobileCartOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [kotSending, setKotSending] = useState(false);
-  const [actionNotice, setActionNotice] = useState<string | null>(null);
-  const [pendingSectionChange, setPendingSectionChange] = useState<{
-    sectionId: string;
-    tableId: string | null;
-    partyLabel: string | null;
-    preview: Order;
-  } | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchWrapperRef = useRef<HTMLDivElement>(null);
   const itemCodeInputRef = useRef<HTMLInputElement>(null);
-
-  const stockOverrides = usePosWebSocket(location?.id);
-
-  useEffect(() => {
-    if (role === "waiter") {
-      setWaiterId(myWaiterProfile ? myWaiterProfile.id : null);
-    }
-  }, [role, myWaiterProfile]);
 
   useEffect(() => {
     setSearchHighlight(0);
@@ -221,122 +124,15 @@ export function POSPage() {
     return allItems.filter((i) => i.category_id === activeCategoryId);
   }, [activeCategoryId, allItems, topSellers]);
 
-  function resolvedPriceFor(item: PosItem): number {
-    const line = order?.items.find((l) => l.item_id === item.id);
-    return line ? line.unit_price : item.price;
-  }
-
-  function quantityInCartFor(item: PosItem): number {
-    // Summed, not just the first match — the same item can legitimately span two lines
-    // (one already sent to KOT, one not yet) once a repeat add-on has happened, see
-    // handleAddItem below.
-    return (
-      order?.items
-        .filter((l) => l.item_id === item.id && !l.notes)
-        .reduce((sum, l) => sum + l.quantity, 0) ?? 0
-    );
-  }
-
-  async function syncCart(nextItems: OrderLineInput[]) {
-    if (!location || !sectionId) return;
-    setSyncState("saving");
-    setSyncError(null);
-    try {
-      const result = order
-        ? await updateOrder(order.id, { items: nextItems })
-        : await createOrder({
-            location_id: location.id,
-            section_id: sectionId,
-            table_id: tableId,
-            waiter_id: waiterId,
-            party_label: partyLabel,
-            items: nextItems,
-          });
-      setOrder(result);
-      setSyncState("saved");
-      void queryClient.invalidateQueries({ queryKey: ["pos-items"] });
-      void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
-    } catch (err) {
-      setSyncState("error");
-      setSyncError(axios.isAxiosError(err) ? String(err.response?.data?.detail ?? err.message) : "Sync failed");
-    }
-  }
-
-  function isOutOfStock(item: PosItem): boolean {
-    const override = stockOverrides[item.id];
-    const qty = override?.available_qty ?? item.available_qty;
-    return item.track_inventory && qty !== null && qty <= 0;
-  }
-
-  async function handleAddItem(item: PosItem) {
-    if (isOutOfStock(item)) return;
-    if (!readyToOrder) {
-      // Defensive — the item grid/search/code inputs are already hidden/disabled in
-      // this state, so this only matters if something bypasses that (e.g. a stray
-      // keyboard shortcut). Table/section and waiter are mandatory before any item can
-      // be added (production feedback).
-      setActionNotice(missingSelectionMessage);
-      setOpenPicker(!sectionId ? "table" : "waiter");
-      return;
-    }
-    const current = toLineInputs(order);
-    // Only ever bump a line that hasn't been sent to the kitchen yet — merging into an
-    // already-sent line's quantity would silently increase the bill without the kitchen
-    // ever finding out, since kot_service.send_kot only re-fires not-yet-sent lines
-    // (production feedback: adding more of an already-KOT-sent item wasn't reaching the
-    // kitchen). If every existing line for this item is already sent, this becomes a
-    // brand-new, still-unsent line instead.
-    const unsentLine = order?.items.find((l) => l.item_id === item.id && !l.notes && !l.is_kot_sent);
-    const next = unsentLine
-      ? current.map((l) => (l.id === unsentLine.id ? { ...l, quantity: l.quantity + 1 } : l))
-      : [...current, { item_id: item.id, quantity: 1 }];
-    await syncCart(next);
-  }
-
   async function handleSelectSearchResult(item: PosItem) {
     await handleAddItem(item);
     setSearchQuery("");
     searchInputRef.current?.focus();
   }
 
-  // Keyed by the specific line's own id, not (item_id, notes) — the same item can now
-  // legitimately have two lines (one already sent to KOT, one not), so identifying
-  // "which one this +/- tap belongs to" needs the line's real identity.
-  async function handleQuantityChange(lineId: string, newQty: number) {
-    const current = toLineInputs(order);
-    const next =
-      newQty <= 0
-        ? current.filter((l) => l.id !== lineId)
-        : current.map((l) => (l.id === lineId ? { ...l, quantity: newQty } : l));
-    await syncCart(next);
-  }
-
   // Shared by the header's inline Code field, ItemCodeModal (mobile/tablet-narrow), and
   // FastBillingModal's Item slot — one place that does the actual lookup + stock check +
-  // cart-add, so all three entry points behave identically. Case-insensitive backend
-  // lookup (matches item_service.get_item_by_code) rather than a client-side exact-match
-  // scan of `allItems`, which would miss a code typed in a different case or an item
-  // added after the initial items load.
-  async function resolveAndAddItemByCode(
-    code: string,
-  ): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
-    let match: PosItem;
-    try {
-      match = await getItemByCode(code);
-    } catch {
-      return { ok: false, error: "No item found with that code" };
-    }
-    if (isOutOfStock(match)) {
-      return { ok: false, error: `${match.name_en} is out of stock` };
-    }
-    await handleAddItem(match);
-    return { ok: true, name: match.name_en };
-  }
-
-  // `onDone` lets each entry point (the desktop header's always-visible inline field, or
-  // ItemCodeModal on mobile/tablet-narrow where that field has no room — CLAUDE.md §9)
-  // manage its own refocus/select-for-retry, since they're two different DOM inputs and
-  // can't share one ref.
+  // cart-add, so all three entry points behave identically.
   async function handleItemCodeSubmit(onDone?: (success: boolean) => void) {
     const code = itemCode.trim();
     if (!code) return;
@@ -356,251 +152,32 @@ export function POSPage() {
     onDone?.(true);
   }
 
-  async function loadOrderIntoDraft(orderId: string) {
-    const fetched = await getOrder(orderId);
-    if (fetched.status === "billed") {
-      // Defensive: a stale open-orders cache entry can point at an order that's since
-      // been billed elsewhere — never load an already-billed order as an editable
-      // draft, just refresh the cache and let the caller re-resolve (e.g. as a fresh
-      // "new-party" instead of a bogus "resume").
-      if (location) void queryClient.invalidateQueries({ queryKey: ["pos-open-orders", location.id] });
-      setActionNotice("That ticket has already been billed");
-      return;
-    }
-    const resumed = fetched.status === "held" ? await updateOrder(orderId, { status: "open" }) : fetched;
-    setOrder(resumed);
-    setSectionId(resumed.section_id);
-    setTableId(resumed.table_id);
-    setPartyLabel(resumed.party_label);
-    setWaiterId(resumed.waiter_id);
-  }
-
-  async function handleSelectTable(selection: TableSelection) {
-    if (selection.kind === "resume") {
-      // Picking up a specific party's existing order (or one from another device) is
-      // always a full reload of that order — never a repurposing of whatever draft
-      // happened to be in memory (Phase 19, POS-22/POS-25).
-      await loadOrderIntoDraft(selection.orderId);
-      return;
-    }
-
-    if (selection.kind === "new-party") {
-      // Starting a fresh customer slot always starts a fresh draft — abandoning the
-      // in-memory order here does not affect its persisted state; it stays open on the
-      // server and remains reachable via Recall/KOT Tickets or its own customer chip.
-      setOrder(null);
-      setSectionId(selection.sectionId);
-      setTableId(selection.tableId);
-      setPartyLabel(selection.partyLabel);
-      if (!isWaiterRole) setWaiterId(null);
-      return;
-    }
-
-    // "direct": either a non-seating section (no table, no customer concept) or a
-    // seating table just tapped in the picker.
-    const { sectionId: newSectionId, tableId: newTableId } = selection;
-
-    if (newTableId) {
-      const table = tables.find((t) => t.id === newTableId);
-      if (table) {
-        // A draft that hasn't been assigned to any table yet (a walk-in cart started
-        // before a table was picked) gets MOVED onto the tapped table under
-        // Customer-1, with the usual price-change warning if the section differs —
-        // preserves the "start cart, then assign a table" flow. Anything else (no
-        // draft, or a draft that's already seated somewhere else) resolves
-        // independently instead: resume Customer-1's existing order at the new table,
-        // or start fresh there, leaving whatever's currently in the draft untouched
-        // and still open server-side (never silently reassigned to a different table).
-        if (order && order.items.length > 0 && !tableId) {
-          if (newSectionId !== order.section_id) {
-            const preview = await previewOrderUpdate(order.id, {
-              section_id: newSectionId,
-              table_id: newTableId,
-            });
-            if (preview.subtotal_changed) {
-              setPendingSectionChange({
-                sectionId: newSectionId,
-                tableId: newTableId,
-                partyLabel: "Customer-1",
-                preview: preview.order,
-              });
-              return;
-            }
-          }
-          const updated = await updateOrder(order.id, {
-            section_id: newSectionId,
-            table_id: newTableId,
-            party_label: "Customer-1",
-          });
-          setOrder(updated);
-          setSectionId(newSectionId);
-          setTableId(newTableId);
-          setPartyLabel("Customer-1");
-          void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
-          return;
-        }
-        await handleSelectTable(resolveCustomerSlotSelection(table, "Customer-1", openOrders));
-        return;
-      }
-    }
-
-    // Non-seating section (Takeaway/Online Delivery) — unchanged pre-Phase-19/21
-    // behaviour, including moving an in-progress draft to a new non-seating section.
-    if (order && order.items.length > 0 && newSectionId !== order.section_id) {
-      const preview = await previewOrderUpdate(order.id, {
-        section_id: newSectionId,
-        table_id: newTableId,
-      });
-      if (preview.subtotal_changed) {
-        setPendingSectionChange({
-          sectionId: newSectionId,
-          tableId: newTableId,
-          partyLabel: null,
-          preview: preview.order,
-        });
-        return;
-      }
-    }
-    setSectionId(newSectionId);
-    setTableId(newTableId);
-    setPartyLabel(null);
-    if (order) {
-      const updated = await updateOrder(order.id, {
-        section_id: newSectionId,
-        table_id: newTableId,
-        party_label: null,
-      });
-      setOrder(updated);
-      // Table occupancy (the picker's gold badge/count) is driven by this same query —
-      // without invalidating it here, a table this order just vacated or claimed keeps
-      // showing its pre-move occupancy until an unrelated cart edit happens to refresh it.
-      void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
-    }
-  }
-
-  async function confirmSectionChange() {
-    if (!pendingSectionChange || !order) return;
-    const updated = await updateOrder(order.id, {
-      section_id: pendingSectionChange.sectionId,
-      table_id: pendingSectionChange.tableId,
-      party_label: pendingSectionChange.partyLabel,
-    });
-    setOrder(updated);
-    setSectionId(pendingSectionChange.sectionId);
-    setTableId(pendingSectionChange.tableId);
-    setPartyLabel(pendingSectionChange.partyLabel);
-    setPendingSectionChange(null);
-    void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
-  }
-
-  async function handleSelectWaiter(newWaiterId: string) {
-    setWaiterId(newWaiterId);
-    if (order) {
-      const updated = await updateOrder(order.id, { waiter_id: newWaiterId });
-      setOrder(updated);
-    }
-  }
-
-  async function handleClearCart() {
-    if (!order) return;
-    // Items already sent to the kitchen must never be deleted by "Clear" — this order
-    // stays open and reachable via KOT Tickets/Recall exactly as it was; Clear/Esc here
-    // just abandons this local draft view of it (same reset as Hold/Bill-finalized).
-    if (order.items.some((l) => l.is_kot_sent)) {
-      setOrder(null);
-      setSectionId("");
-      setTableId(null);
-      setPartyLabel(null);
-      if (!isWaiterRole) setWaiterId(null);
-      return;
-    }
-    if (order.items.length === 0) return;
-    await syncCart([]);
-  }
-
-  async function handleHold() {
-    if (!order) return;
-    await updateOrder(order.id, { status: "held" });
-    setOrder(null);
-    setSectionId("");
-    setTableId(null);
-    setPartyLabel(null);
-    // A waiter login stays locked to themself for the next order; anyone else starts
-    // the next bill unassigned rather than showing the just-held order's waiter — table/
-    // waiter are mandatory again for whatever gets billed next (production feedback).
-    if (!isWaiterRole) setWaiterId(null);
-    setActionNotice("Bill held");
-    void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
-  }
-
-  async function handleSendKot() {
-    if (!order) return;
-    setKotSending(true);
-    try {
-      const result = await sendOrderToKot(order.id);
-      // usb/local_agent KOT printers only get rendered bytes back from the backend —
-      // it can't reach that printer itself (it's on the counter/kitchen machine, not
-      // the server) — so forward them to the local print-agent or WebUSB here, same as
-      // the POS billing flow (lib/printDispatch.ts). A network/wifi printer was already
-      // attempted server-side; `print_error` carries why if it failed.
-      const printWarning = (await dispatchPrintJob(result.print_job)) ?? result.print_error ?? undefined;
-      // Order stays "open" server-side (still reachable via KOT Tickets or by
-      // re-picking the same table+customer) — only the local draft/screen clears,
-      // the same pattern handleHold already uses, so the cashier is immediately
-      // ready for the next table/customer.
-      setOrder(null);
-      setSectionId("");
-      setTableId(null);
-      setPartyLabel(null);
-      if (!isWaiterRole) setWaiterId(null);
-      setActionNotice(
-        printWarning
-          ? `Sent to kitchen — ticket ${result.ticket_number} — ${printWarning}`
-          : `Sent to kitchen — ticket ${result.ticket_number}`,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
-    } catch (err) {
-      setActionNotice(
-        axios.isAxiosError(err) ? String(err.response?.data?.detail ?? err.message) : "Couldn't send to kitchen",
-      );
-    } finally {
-      setKotSending(false);
-    }
-  }
+  const isNonSeating = tableId === null;
+  const kdsEnabled = meData?.features?.kds === true;
 
   function handleBill() {
     if (!order || order.items.length === 0) return;
-    setShowBilling(true);
+    setBillingMode("bill");
+  }
+
+  // Non-seating orders (Takeaway/Online Delivery) fire the kitchen ticket and finalize
+  // the bill in the same action, same as Guided POS's ItemCartScreen — a takeaway
+  // customer pays before the food is handed over (CLAUDE.md §11), so a separate
+  // "Add to KOT" step here would just be an extra click for no reason.
+  function handleSendKotClick() {
+    if (isNonSeating) setBillingMode("kot-and-bill");
+    else void handleSendKot();
   }
 
   function handleBillFinalized(printWarning?: string) {
-    // Optimistically drop the just-billed order from the open-orders cache immediately
-    // — waiting on invalidateQueries' background refetch left a window where the
-    // customer chip (CustomerSelectorBar) still resolved to the now-billed order as
-    // "resume", loading a closed/uneditable order back into the draft instead of
-    // starting fresh for the next customer at that seat.
     const billedOrderId = order?.id;
-    if (billedOrderId && location) {
-      queryClient.setQueryData<Order[]>(["pos-open-orders", location.id], (prev) =>
-        prev ? prev.filter((o) => o.id !== billedOrderId) : prev,
-      );
-    }
-    setShowBilling(false);
-    setOrder(null);
-    setSectionId("");
-    setTableId(null);
-    setPartyLabel(null);
-    if (!isWaiterRole) setWaiterId(null);
+    if (billedOrderId) dropOrderFromOpenOrdersCache(billedOrderId);
+    setBillingMode(null);
+    resetDraft();
     setActionNotice(printWarning ? `Bill finalized — ${printWarning}` : "Bill finalized");
     void queryClient.invalidateQueries({ queryKey: ["pos-items"] });
     void queryClient.invalidateQueries({ queryKey: ["pos-open-orders"] });
   }
-
-  useEffect(() => {
-    if (!actionNotice) return;
-    const t = setTimeout(() => setActionNotice(null), 3500);
-    return () => clearTimeout(t);
-  }, [actionNotice]);
 
   // Keyboard shortcuts (CLAUDE.md §9/Phase 07): F1 is always Top Selling, F2-F9 the
   // next categories (a practical cap — F-keys can't scale to an arbitrarily long
@@ -630,7 +207,7 @@ export function POSPage() {
         void handleHold();
       } else if (e.ctrlKey && e.key === "Enter") {
         e.preventDefault();
-        void handleSendKot();
+        handleSendKotClick();
       } else if (e.ctrlKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         handleBill();
@@ -1003,12 +580,14 @@ export function POSPage() {
                 syncState={syncState}
                 onQuantityChange={handleQuantityChange}
                 onHold={handleHold}
-                onSendKot={handleSendKot}
+                onSendKot={handleSendKotClick}
                 onBill={handleBill}
                 onClear={() => void handleClearCart()}
                 kotSending={kotSending}
                 showSyncIndicator
-                kdsEnabled={meData?.features?.kds === true}
+                kdsEnabled={kdsEnabled}
+                kotLabel={isNonSeating ? "KOT + Print Bill" : undefined}
+                billLabel={isNonSeating ? (kdsEnabled ? "Bill Only (No KOT)" : undefined) : undefined}
               />
             </div>
           </div>
@@ -1046,12 +625,14 @@ export function POSPage() {
                 syncState={syncState}
                 onQuantityChange={handleQuantityChange}
                 onHold={handleHold}
-                onSendKot={handleSendKot}
+                onSendKot={handleSendKotClick}
                 onBill={handleBill}
                 onClear={() => void handleClearCart()}
                 kotSending={kotSending}
                 showSyncIndicator
-                kdsEnabled={meData?.features?.kds === true}
+                kdsEnabled={kdsEnabled}
+                kotLabel={isNonSeating ? "KOT + Print Bill" : undefined}
+                billLabel={isNonSeating ? (kdsEnabled ? "Bill Only (No KOT)" : undefined) : undefined}
               />
             </div>
           </div>
@@ -1077,11 +658,12 @@ export function POSPage() {
           onClose={() => setShowKotTickets(false)}
         />
       )}
-      {showBilling && order && (
+      {billingMode && order && (
         <BillingModal
           order={order}
           initialPaymentMethod={meData?.default_payment_method ?? "cash"}
-          onClose={() => setShowBilling(false)}
+          mode={billingMode}
+          onClose={() => setBillingMode(null)}
           onFinalized={handleBillFinalized}
         />
       )}
@@ -1111,6 +693,7 @@ export function POSPage() {
           waiters={waiters}
           sections={sections}
           waiterLocked={isWaiterRole}
+          waiterMandatory={waiterMandatory}
           onSelectTable={handleSelectTable}
           onSelectWaiter={handleSelectWaiter}
           onAddItemByCode={resolveAndAddItemByCode}

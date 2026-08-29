@@ -58,6 +58,19 @@ class Tenant(UUIDPKMixin, TimestampMixin, Base):
     # English, same limitation dot-matrix bill/KOT already have) instead of English.
     # Inert unless report_printing_enabled is also on. Defaults off.
     report_tamil_names_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Which POS screen layout this tenant uses — "default" (today's hotkey-driven
+    # counter screen) or "guided" (Petpooja-style step-by-step alternative). Every
+    # tier, no plan gating — this is a workflow choice, not a premium feature.
+    pos_layout: Mapped[str] = mapped_column(String(20), nullable=False, default="default")
+    # "Require waiter selection" toggle — admin-settings-only, never exposed on the POS
+    # screen itself. Common to both POS layouts: gates whether a waiter must be chosen
+    # before a dine-in order can be billed on Default and Guided POS alike (previously
+    # Guided-POS-only, with Default hardcoded always-mandatory — that hardcoding is
+    # gone, this is now the single source of truth for both). Never applies to
+    # non-seating orders (Takeaway/Online Delivery) — those never require a waiter on
+    # any layout, regardless of this toggle. Defaults true to match the pre-existing
+    # always-mandatory behavior, so no tenant's POS experience changes on deploy.
+    waiter_mandatory_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     __table_args__ = (
         CheckConstraint(_STATE_CHECK_SQL, name="ck_tenants_state_valid"),
@@ -67,6 +80,7 @@ class Tenant(UUIDPKMixin, TimestampMixin, Base):
             "default_payment_method IN ('upi', 'cash', 'card')",
             name="ck_tenants_default_payment_method_valid",
         ),
+        CheckConstraint("pos_layout IN ('default', 'guided')", name="ck_tenants_pos_layout_valid"),
     )
 
 

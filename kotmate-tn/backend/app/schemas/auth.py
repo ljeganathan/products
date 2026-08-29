@@ -54,3 +54,10 @@ class MeResponse(BaseModel):
     # English — raw tenant value, not derived, since it's inert unless
     # report_printing_enabled is already true.
     report_tamil_names_enabled: bool
+    # Which POS screen layout this tenant uses ("default"/"guided") — raw tenant value,
+    # not plan-gated. "default" for product_owner, who has no tenant.
+    pos_layout: str
+    # "Require waiter selection" toggle, common to both POS layouts — raw tenant
+    # value. Never applies to non-seating orders on either layout. True for
+    # product_owner, matching the pre-existing always-mandatory default.
+    waiter_mandatory_enabled: bool

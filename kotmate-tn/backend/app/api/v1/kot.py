@@ -9,7 +9,9 @@ from app.db.session import get_db
 from app.models import Order, Tenant
 from app.schemas.kot import ActiveKotTicketResponse, KotSendRequest, KotSendResponse, KotTicketStatusUpdate
 from app.services.kot_service import (
+    build_active_ticket_response,
     build_kot_ticket_broadcast,
+    clear_billed_ticket,
     get_ticket_or_404,
     has_kds_feature,
     list_active_tickets,
@@ -90,16 +92,56 @@ async def set_ticket_status(
 ) -> ActiveKotTicketResponse:
     await _require_kds_feature(db, current_user.tenant_id)
     ticket = await get_ticket_or_404(db, current_user.tenant_id, ticket_id)
-    order_location_id = (
-        await db.execute(select(Order.location_id).where(Order.id == ticket.order_id))
-    ).scalar_one()
+    order = (await db.execute(select(Order).where(Order.id == ticket.order_id))).scalar_one()
+    order_location_id = order.location_id
 
     ticket = await update_ticket_status(db, ticket, payload.status)
 
-    # Look up the response data before committing — `require_tenant_scope`'s RLS var is
-    # SET LOCAL (transaction-scoped, see deps.py), so it's gone once this transaction ends.
-    tickets = await list_active_tickets(db, current_user.tenant_id, None)
-    updated = next(t for t in tickets if t.id == ticket.id)
+    # Built directly from this ticket/order rather than re-querying list_active_tickets
+    # and searching for it — a ticket marked "ready" can legitimately have just aged
+    # itself out of that active list (Guided POS's combined KOT+Bill route, where the
+    # order is already billed and this ticket's only remaining visibility exception was
+    # "not yet ready"), so a membership lookup would wrongly fail for exactly the update
+    # that's supposed to succeed.
+    updated = await build_active_ticket_response(db, ticket, order)
+    await db.commit()
+
+    await ws_manager.broadcast(
+        order_location_id,
+        {
+            "type": "kot_ticket",
+            "id": str(updated.id),
+            "ticket_number": updated.ticket_number,
+            "order_id": str(updated.order_id),
+            "table_number": updated.table_number,
+            "section_name_en": updated.section_name_en,
+            "status": updated.status,
+        },
+    )
+    return updated
+
+
+@router.post(
+    "/tickets/{ticket_id}/clear",
+    response_model=ActiveKotTicketResponse,
+    dependencies=[Depends(require_role("tenant_admin", "pos_user", "pos_operator"))],
+)
+async def clear_kot_ticket(
+    ticket_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActiveKotTicketResponse:
+    """Dismisses a "bill already printed" (order_billed_via_kot) ticket from the KOT
+    Tickets screen/popup — same billing-role gate as the popup itself, distinct from
+    `set_ticket_status` above which is Kitchen Display-only (kitchen/tenant_admin).
+    """
+    await _require_kds_feature(db, current_user.tenant_id)
+    ticket = await get_ticket_or_404(db, current_user.tenant_id, ticket_id)
+    order = (await db.execute(select(Order).where(Order.id == ticket.order_id))).scalar_one()
+    order_location_id = order.location_id
+
+    ticket = await clear_billed_ticket(db, ticket)
+    updated = await build_active_ticket_response(db, ticket, order)
     await db.commit()
 
     await ws_manager.broadcast(

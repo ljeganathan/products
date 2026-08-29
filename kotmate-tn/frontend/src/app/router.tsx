@@ -16,7 +16,7 @@ import { ProtectedRoute } from "@/modules/auth/ProtectedRoute";
 import { roleHomePath, useAuthStore } from "@/modules/auth/authStore";
 import { BillHistoryPage } from "@/modules/billing/BillHistoryPage";
 import { KotDisplayPage } from "@/modules/kot/KotDisplayPage";
-import { POSPage } from "@/modules/pos/POSPage";
+import { POSLayoutRouter } from "@/modules/pos/POSLayoutRouter";
 import { InvoicesPage } from "@/modules/product-owner/InvoicesPage";
 import { MaintenancePage } from "@/modules/product-owner/MaintenancePage";
 import { PlansPage } from "@/modules/product-owner/PlansPage";
@@ -51,7 +51,7 @@ export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   {
     element: <ProtectedRoute roles={["tenant_admin", "pos_user", "waiter", "pos_operator"]} />,
-    children: [{ path: "/pos", element: <POSPage /> }],
+    children: [{ path: "/pos", element: <POSLayoutRouter /> }],
   },
   {
     element: <ProtectedRoute roles={["tenant_admin", "kitchen"]} />,

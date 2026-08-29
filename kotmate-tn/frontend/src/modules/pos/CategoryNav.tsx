@@ -13,6 +13,10 @@ interface CategoryNavProps {
   // languages regardless (CLAUDE.md §9); this only narrows the category nav. Defaults
   // true so callers that haven't loaded /auth/me yet don't flash Tamil off then on.
   showTamilNames?: boolean;
+  // F1-F9 badges only mean anything where the F-key shortcuts are actually wired up
+  // (Default layout's POSPage.tsx) — Guided POS has no keyboard shortcuts at all
+  // (production feedback), so it opts out to avoid showing a hint that does nothing.
+  showHotkeyHints?: boolean;
 }
 
 interface NavEntry {
@@ -36,6 +40,7 @@ export function CategoryNav({
   onSelect,
   variant,
   showTamilNames = true,
+  showHotkeyHints = true,
 }: CategoryNavProps) {
   // "All" sits at the end (not right after Top Selling) so it never shifts the F2-F9
   // hotkey mapping in POSPage.tsx, which indexes straight into `categories`.
@@ -69,7 +74,7 @@ export function CategoryNav({
                 : "border-transparent text-ink-soft hover:bg-surface-2"
             }`}
           >
-            {index < 9 && (
+            {showHotkeyHints && index < 9 && (
               <span className="absolute right-2 top-1.5 text-[9px] font-extrabold text-ink-faint">
                 F{index + 1}
               </span>

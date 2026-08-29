@@ -79,6 +79,14 @@ export interface Bill extends BillTotals {
   // socket send to it failed — a message safe to show the cashier as-is.
   print_error: string | null;
   created_at: string;
+  // Populated only when this bill was created via Guided POS's combined
+  // sendKotAndFinalizeBill (non-seating orders) — a plain createBill response leaves
+  // these at their defaults. Carries the *kitchen* ticket's own print outcome, separate
+  // from print_job/print_error above (the bill printer's).
+  kot_ticket_number?: string | null;
+  kot_printed?: boolean;
+  kot_print_job?: BillPrintJob | null;
+  kot_print_error?: string | null;
 }
 
 export interface BillPreviewPayload {
@@ -111,6 +119,14 @@ export async function previewBill(payload: BillPreviewPayload): Promise<BillPrev
 
 export async function createBill(payload: BillCreatePayload): Promise<Bill> {
   return (await api.post<Bill>("/api/v1/bills", payload)).data;
+}
+
+// Guided POS's non-seating "KOT + Print Bill" action — fires a kitchen ticket and
+// finalizes the bill atomically server-side (order_id in the path is authoritative).
+// Same payload/response shape as createBill so BillingModal's mode="kot-and-bill" can
+// reuse its entire preview/payment/print-preview flow unchanged.
+export async function sendKotAndFinalizeBill(payload: BillCreatePayload): Promise<Bill> {
+  return (await api.post<Bill>(`/api/v1/orders/${payload.order_id}/kot-and-bill`, payload)).data;
 }
 
 export async function listBills(params?: BillSearchParams): Promise<Bill[]> {

@@ -4,7 +4,18 @@ from datetime import timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Bill, BillItem, Category, Item, Payment, Role, User, Waiter
+from app.models import (
+    Bill,
+    BillItem,
+    Category,
+    Item,
+    ItemSectionPrice,
+    Payment,
+    Role,
+    SeatingSection,
+    User,
+    Waiter,
+)
 from app.schemas.reports import (
     CashierIncentiveResponse,
     CashierIncentiveRow,
@@ -12,6 +23,9 @@ from app.schemas.reports import (
     CashierSalesRow,
     CategoryWiseSalesResponse,
     CategoryWiseSalesRow,
+    ItemListPriceOverride,
+    ItemListResponse,
+    ItemListRow,
     ItemWiseSalesResponse,
     ItemWiseSalesRow,
     PaymentMethodTotal,
@@ -457,6 +471,56 @@ async def pos_operator_incentive_report(
     return PosOperatorIncentiveResponse(
         rows=result_rows, total_incentive_amount=round(sum(r.incentive_amount for r in result_rows), 2)
     )
+
+
+async def item_list(session: AsyncSession, tenant_id: uuid.UUID) -> ItemListResponse:
+    """Item master data, not a sales figure — every active item, grouped by category
+    (category display_order, then item name alphabetically within it) with its base
+    price and any active per-section price overrides. There's no date range or
+    `_bill_filters` scope here at all, unlike every other report in this module.
+    """
+    rows = (
+        await session.execute(
+            select(Item, Category)
+            .join(Category, Category.id == Item.category_id)
+            .where(Item.tenant_id == tenant_id, Item.is_active.is_(True))
+            .order_by(Category.display_order, Category.name_en, Item.name_en)
+        )
+    ).all()
+
+    override_rows = (
+        await session.execute(
+            select(
+                ItemSectionPrice.item_id,
+                SeatingSection.id,
+                SeatingSection.name_en,
+                ItemSectionPrice.price,
+            )
+            .join(SeatingSection, SeatingSection.id == ItemSectionPrice.section_id)
+            .where(ItemSectionPrice.tenant_id == tenant_id, SeatingSection.is_active.is_(True))
+        )
+    ).all()
+    overrides_by_item: dict[uuid.UUID, list[ItemListPriceOverride]] = {}
+    for item_id, section_id, section_name_en, price in override_rows:
+        overrides_by_item.setdefault(item_id, []).append(
+            ItemListPriceOverride(section_id=section_id, section_name_en=section_name_en, price=float(price))
+        )
+
+    result_rows = [
+        ItemListRow(
+            item_id=item.id,
+            item_code=item.item_code,
+            name_en=item.name_en,
+            name_ta=item.name_ta,
+            category_id=category.id,
+            category_name_en=category.name_en,
+            category_name_ta=category.name_ta,
+            base_price=float(item.price),
+            price_overrides=overrides_by_item.get(item.id, []),
+        )
+        for item, category in rows
+    ]
+    return ItemListResponse(rows=result_rows, total_items=len(result_rows))
 
 
 async def z_report(

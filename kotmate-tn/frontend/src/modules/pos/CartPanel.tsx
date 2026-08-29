@@ -16,6 +16,15 @@ interface CartPanelProps {
   // KOT screen is Pro Max only (production feedback round 2) — Lite/Pro tenants skip
   // the KOT step entirely and bill items directly.
   kdsEnabled: boolean;
+  // Guided POS's non-seating orders relabel these two actions ("KOT + Print Bill" /
+  // "Bill Only (No KOT)") since sending to KOT there also finalizes the bill in the
+  // same action — everything else about this panel (line items, hold, role gating)
+  // stays identical. Defaults preserve Default layout's exact existing copy.
+  kotLabel?: string;
+  billLabel?: string;
+  // Guided POS has no keyboard shortcuts (round-2 feedback: "no need to show the hot
+  // keys in any buttons") — Default layout keeps showing them (default false/undefined).
+  hideHotkeyHints?: boolean;
 }
 
 export function CartPanel({
@@ -30,6 +39,9 @@ export function CartPanel({
   kotSending,
   showSyncIndicator,
   kdsEnabled,
+  kotLabel,
+  billLabel,
+  hideHotkeyHints,
 }: CartPanelProps) {
   const canBill = role === "pos_user" || role === "tenant_admin" || role === "pos_operator";
   const isEmpty = !order || order.items.length === 0;
@@ -187,7 +199,8 @@ export function CartPanel({
               disabled={isEmpty}
               className="flex min-h-[34px] items-center justify-center gap-1.5 rounded-lg border border-border bg-surface-2 text-[12px] font-extrabold hover:border-ink-faint disabled:opacity-40"
             >
-              ⏸ Hold <span className="text-[9.5px] font-bold opacity-60">Ctrl H</span>
+              ⏸ Hold{" "}
+              {!hideHotkeyHints && <span className="text-[9.5px] font-bold opacity-60">Ctrl H</span>}
             </button>
             {kdsEnabled && (
               <button
@@ -196,8 +209,10 @@ export function CartPanel({
                 disabled={isEmpty || kotSending}
                 className="flex min-h-[34px] items-center justify-center gap-1.5 rounded-lg border border-gold bg-gold-soft text-[12px] font-extrabold text-gold disabled:opacity-40"
               >
-                {kotSending ? "Sending…" : "🍳 Add to KOT"}
-                {!kotSending && <span className="text-[9.5px] font-bold opacity-60">Ctrl ⏎</span>}
+                {kotSending ? "Sending…" : (kotLabel ?? "🍳 Add to KOT")}
+                {!kotSending && !kotLabel && !hideHotkeyHints && (
+                  <span className="text-[9.5px] font-bold opacity-60">Ctrl ⏎</span>
+                )}
               </button>
             )}
           </div>
@@ -209,7 +224,10 @@ export function CartPanel({
               disabled={isEmpty}
               className="mt-2 flex min-h-[38px] w-full items-center justify-center gap-1.5 rounded-lg bg-accent text-sm font-extrabold text-accent-foreground disabled:opacity-40"
             >
-              🧾 Bill <span className="text-[9.5px] font-bold opacity-75">Ctrl P</span>
+              {billLabel ?? "🧾 Bill"}
+              {!billLabel && !hideHotkeyHints && (
+                <span className="text-[9.5px] font-bold opacity-75">Ctrl P</span>
+              )}
             </button>
           )}
         </div>

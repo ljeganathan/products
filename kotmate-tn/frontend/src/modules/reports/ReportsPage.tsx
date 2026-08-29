@@ -12,6 +12,7 @@ import {
   getCashierIncentive,
   getCashierWiseSales,
   getCategoryWiseSales,
+  getItemList,
   getItemWiseSales,
   getPosOperatorIncentive,
   getPosOperatorWiseSales,
@@ -31,6 +32,7 @@ const inputClass =
 // built) so ReportKey stays a plain union type.
 const REPORTS = [
   { key: "sales-summary", label: "Sales Summary" },
+  { key: "item-list", label: "Item List" },
   { key: "item-wise", label: "Item-wise Sales" },
   { key: "category-wise", label: "Category-wise Sales" },
   { key: "tax-summary", label: "Tax Summary" },
@@ -96,6 +98,8 @@ export function ReportsPage() {
           return getPosOperatorIncentive(params);
         case "z-report":
           return getZReport(dateFrom, locationId || undefined);
+        case "item-list":
+          return getItemList();
       }
     },
   });
@@ -106,7 +110,9 @@ export function ReportsPage() {
       const exportParams =
         reportKey === "z-report"
           ? { report_date: dateFrom, location_id: locationId || undefined }
-          : params;
+          : reportKey === "item-list"
+            ? {}
+            : params;
       await downloadReportExport(reportKey, exportParams, format);
     } finally {
       setDownloading(null);
@@ -120,7 +126,9 @@ export function ReportsPage() {
       const result = await printReport(
         reportKey === "z-report"
           ? { report_type: reportKey, report_date: dateFrom, location_id: locationId || undefined }
-          : { report_type: reportKey, date_from: dateFrom, date_to: dateTo, location_id: locationId || undefined },
+          : reportKey === "item-list"
+            ? { report_type: reportKey }
+            : { report_type: reportKey, date_from: dateFrom, date_to: dateTo, location_id: locationId || undefined },
       );
       if (result.print_job) {
         const dispatchError = await dispatchPrintJob(result.print_job);
@@ -171,18 +179,20 @@ export function ReportsPage() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-border bg-surface p-4">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-foreground/70">
-            {reportKey === "z-report" ? "Date" : "From"}
-          </label>
-          <input
-            type="date"
-            className={inputClass}
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-          />
-        </div>
-        {reportKey !== "z-report" && (
+        {reportKey !== "item-list" && (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-foreground/70">
+              {reportKey === "z-report" ? "Date" : "From"}
+            </label>
+            <input
+              type="date"
+              className={inputClass}
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+            />
+          </div>
+        )}
+        {reportKey !== "z-report" && reportKey !== "item-list" && (
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-foreground/70">To</label>
             <input
@@ -193,7 +203,7 @@ export function ReportsPage() {
             />
           </div>
         )}
-        {locations.length > 1 && (
+        {reportKey !== "item-list" && locations.length > 1 && (
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-foreground/70">Location</label>
             <select className={inputClass} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
@@ -303,6 +313,72 @@ function ReportTable({ reportKey, data }: { reportKey: ReportKey; data: any }) {
           </table>
         </div>
       );
+
+    case "item-list": {
+      // Item master data, not a sales figure — rows arrive pre-grouped category-major
+      // (category display_order, then item name), same group-header rendering as
+      // item-wise below. Unlike every export/screen use of this report, the print copy
+      // (report_print_service.item_list_print_body) deliberately shows only the base
+      // price and the English name — this table shows the full detail.
+      let lastCategoryId: string | null = null;
+      return (
+        <div className={tableWrapClass}>
+          <table className={tableClass}>
+            <thead className={theadClass}>
+              <tr>
+                <th className={thClass}>Code</th>
+                <th className={thClass}>Item</th>
+                <th className={`${thClass} text-right`}>Base Price</th>
+                <th className={thClass}>Price Overrides</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map(
+                (r: {
+                  item_id: string;
+                  item_code: string | null;
+                  name_en: string;
+                  name_ta: string | null;
+                  category_id: string;
+                  category_name_en: string;
+                  base_price: number;
+                  price_overrides: { section_id: string; section_name_en: string; price: number }[];
+                }) => {
+                  const showCategoryHeader = r.category_id !== lastCategoryId;
+                  lastCategoryId = r.category_id;
+                  return (
+                    <Fragment key={r.item_id}>
+                      {showCategoryHeader && (
+                        <tr className="border-t border-border bg-foreground/5">
+                          <td className={`${tdClass} font-semibold`} colSpan={4}>
+                            {r.category_name_en}
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="border-t border-border">
+                        <td className={`${tdClass} font-mono text-xs text-foreground/60`}>{r.item_code ?? "—"}</td>
+                        <td className={tdClass}>
+                          {r.name_en}
+                          {r.name_ta && <span className="ml-1.5 text-foreground/50">/ {r.name_ta}</span>}
+                        </td>
+                        <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.base_price)}</td>
+                        <td className={tdClass}>
+                          {r.price_overrides.length > 0 ? (
+                            r.price_overrides.map((o) => `${o.section_name_en}: ${formatINR(o.price)}`).join(", ")
+                          ) : (
+                            <span className="text-foreground/40">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    </Fragment>
+                  );
+                },
+              )}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
 
     case "item-wise": {
       // Rows arrive pre-grouped category-major (categories by total revenue descending,

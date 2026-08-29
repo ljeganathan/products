@@ -111,6 +111,10 @@ PLAN_CODES = ["lite", "pro", "pro_max"]
 ORDER_STATUSES = ["open", "held", "billed"]
 TABLE_STATUSES = ["free", "occupied", "billed"]
 KOT_TICKET_STATUSES = ["new", "preparing", "ready"]
+# Tenant-selectable POS screen layout — "default" is today's hotkey-driven counter
+# screen (POSPage.tsx), "guided" is the Petpooja-style step-by-step alternative
+# (GuidedPOSPage.tsx), desktop/tablet only (mobile always falls back to "default").
+POS_LAYOUTS = ["default", "guided"]
 # "reports" is Pro Max only (plan.features.report_printing) — gated at the API layer,
 # not here (kept as a valid target for every tier at the schema level, same as "kot" and
 # "bill" always have been).

@@ -9,6 +9,12 @@ from app.db.session import get_db
 from app.models import Tenant
 from app.schemas.category_display import CategoryDisplaySettingsRequest, CategoryDisplaySettingsResponse
 from app.schemas.hotel_master import HotelMasterResponse, HotelMasterUpdateRequest
+from app.schemas.pos_layout import (
+    PosLayoutSettingsRequest,
+    PosLayoutSettingsResponse,
+    WaiterMandatorySettingsRequest,
+    WaiterMandatorySettingsResponse,
+)
 from app.schemas.pos_preferences import DefaultPaymentMethodRequest, DefaultPaymentMethodResponse
 from app.schemas.report_print import (
     ReportPrintingSettingsRequest,
@@ -171,6 +177,45 @@ async def update_report_tamil_names_setting(
     tenant.report_tamil_names_enabled = payload.enabled
     await db.commit()
     return ReportTamilNamesSettingsResponse(enabled=tenant.report_tamil_names_enabled)
+
+
+@router.patch(
+    "/pos-layout",
+    response_model=PosLayoutSettingsResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def update_pos_layout_setting(
+    payload: PosLayoutSettingsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PosLayoutSettingsResponse:
+    """Tenant-wide — every tier, no plan gating (a workflow choice, not a premium
+    feature). Selects which POS screen a tenant's staff land on at /pos.
+    """
+    tenant = await _get_tenant(db, current_user)
+    tenant.pos_layout = payload.pos_layout
+    await db.commit()
+    return PosLayoutSettingsResponse(pos_layout=tenant.pos_layout)
+
+
+@router.patch(
+    "/waiter-mandatory",
+    response_model=WaiterMandatorySettingsResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def update_waiter_mandatory_setting(
+    payload: WaiterMandatorySettingsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> WaiterMandatorySettingsResponse:
+    """Common to both POS layouts — gates whether a waiter must be chosen before
+    billing a dine-in order. Never applies to non-seating orders (Takeaway/Online
+    Delivery), which never require a waiter on either layout regardless of this.
+    """
+    tenant = await _get_tenant(db, current_user)
+    tenant.waiter_mandatory_enabled = payload.enabled
+    await db.commit()
+    return WaiterMandatorySettingsResponse(enabled=tenant.waiter_mandatory_enabled)
 
 
 @router.post(

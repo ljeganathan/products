@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    Bill,
     HotelMaster,
     Item,
     KotTicket,
@@ -242,7 +243,23 @@ async def update_ticket_status(session: AsyncSession, ticket: KotTicket, new_sta
     return ticket
 
 
-async def _ticket_response(session: AsyncSession, ticket: KotTicket, order: Order) -> ActiveKotTicketResponse:
+async def clear_billed_ticket(session: AsyncSession, ticket: KotTicket) -> KotTicket:
+    """Dismisses a "bill already printed" ticket (order_billed_via_kot=True) from the
+    KOT Tickets list/popup — reuses the "ready" status, the same terminal state
+    list_active_tickets already treats as done for this class of ticket, so no new
+    status value or visibility rule is needed. Only ever called from the KOT Tickets
+    screen/popup's own Clear action, never from the Kitchen Display.
+    """
+    if not ticket.order_billed_via_kot:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Only a ticket whose bill was already printed can be cleared"
+        )
+    return await update_ticket_status(session, ticket, "ready")
+
+
+async def build_active_ticket_response(
+    session: AsyncSession, ticket: KotTicket, order: Order
+) -> ActiveKotTicketResponse:
     section, table = await _load_section_and_table(session, order)
     rows = (
         await session.execute(
@@ -256,6 +273,11 @@ async def _ticket_response(session: AsyncSession, ticket: KotTicket, order: Orde
         ActiveKotTicketItem(name_en=item.name_en, name_ta=item.name_ta, quantity=kti.quantity)
         for kti, _oi, item in rows
     ]
+    bill_number = None
+    if order.status == "billed":
+        bill_number = (
+            await session.execute(select(Bill.bill_number).where(Bill.order_id == order.id))
+        ).scalar_one_or_none()
     return ActiveKotTicketResponse(
         id=ticket.id,
         ticket_number=ticket.ticket_number,
@@ -266,6 +288,8 @@ async def _ticket_response(session: AsyncSession, ticket: KotTicket, order: Orde
         status=ticket.status,
         created_at=ticket.created_at,
         items=items,
+        order_billed_via_kot=ticket.order_billed_via_kot,
+        bill_number=bill_number,
     )
 
 
@@ -276,16 +300,28 @@ async def list_active_tickets(
     Kitchen Display and the POS billing screen's "KOT Tickets" popup (CLAUDE.md §11), so
     a ticket disappears from both the instant its order is billed, with no extra
     client-side bookkeeping.
+
+    Narrow exception: a ticket created via Guided POS's combined "KOT + Bill" route for
+    a non-seating order (`order_billed_via_kot=True`) stays visible even though its
+    order is already `billed` — the kitchen still needs to see it until it's actually
+    marked `ready` (via the existing ticket status-update endpoint, unchanged), at which
+    point it drops off same as any other fulfilled ticket. Every other ticket/order
+    keeps today's exact behavior (the column defaults False, so this OR-branch never
+    applies to them).
     """
     query = (
         select(KotTicket, Order)
         .join(Order, Order.id == KotTicket.order_id)
-        .where(KotTicket.tenant_id == tenant_id, Order.status != "billed")
+        .where(
+            KotTicket.tenant_id == tenant_id,
+            (Order.status != "billed")
+            | ((KotTicket.order_billed_via_kot.is_(True)) & (KotTicket.status != "ready")),
+        )
     )
     if location_id is not None:
         query = query.where(Order.location_id == location_id)
     rows = (await session.execute(query.order_by(KotTicket.created_at.desc()))).all()
-    return [await _ticket_response(session, ticket, order) for ticket, order in rows]
+    return [await build_active_ticket_response(session, ticket, order) for ticket, order in rows]
 
 
 def build_kot_ticket_broadcast(result: KotSendResult) -> dict:

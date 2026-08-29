@@ -20,6 +20,11 @@ export interface ActiveKotTicket {
   status: string;
   created_at: string;
   items: ActiveKotTicketItem[];
+  // True only for a ticket created via Guided POS's combined "KOT + Bill" action —
+  // its order is already billed, so the UI shouldn't offer to bill it again.
+  order_billed_via_kot: boolean;
+  // The finalized bill's number, set whenever order_billed_via_kot is true.
+  bill_number: string | null;
 }
 
 export interface KotSendResult {
@@ -49,4 +54,9 @@ export async function updateKotTicketStatus(
   status: "preparing" | "ready",
 ): Promise<ActiveKotTicket> {
   return (await api.patch<ActiveKotTicket>(`/api/v1/kot/tickets/${ticketId}/status`, { status })).data;
+}
+
+// Dismisses a "bill already printed" ticket from the KOT Tickets screen/popup.
+export async function clearBilledKotTicket(ticketId: string): Promise<ActiveKotTicket> {
+  return (await api.post<ActiveKotTicket>(`/api/v1/kot/tickets/${ticketId}/clear`)).data;
 }

@@ -24,6 +24,7 @@ import {
 } from "@/modules/admin/locationsApi";
 import { updateCategoryDisplaySetting } from "@/modules/admin/categoryDisplaySettingsApi";
 import { updateDefaultPaymentMethod } from "@/modules/admin/paymentPreferencesApi";
+import { updatePosLayoutSetting, updateWaiterMandatorySetting } from "@/modules/admin/posLayoutSettingsApi";
 import { PrinterFormModal } from "@/modules/admin/PrintersPage";
 import { type Printer, listPrinters } from "@/modules/admin/printersApi";
 import {
@@ -165,9 +166,50 @@ function PreferencesTab({
     mutationFn: (method: "upi" | "cash" | "card") => updateDefaultPaymentMethod(method),
     onSuccess: invalidateMe,
   });
+  const posLayoutMutation = useMutation({
+    mutationFn: (layout: "default" | "guided") => updatePosLayoutSetting(layout),
+    onSuccess: invalidateMe,
+  });
+  const waiterMandatoryMutation = useMutation({
+    mutationFn: (next: boolean) => updateWaiterMandatorySetting(next),
+    onSuccess: invalidateMe,
+  });
+
+  const posLayout = meData?.pos_layout ?? "default";
 
   return (
     <div className="flex max-w-xl flex-col gap-4">
+      <div className="rounded-lg border border-border bg-surface p-4">
+        <label className="mb-1.5 block text-sm font-medium text-foreground" htmlFor="pos-layout-select">
+          POS Layout
+        </label>
+        <select
+          id="pos-layout-select"
+          value={posLayout}
+          disabled={posLayoutMutation.isPending}
+          onChange={(e) => posLayoutMutation.mutate(e.target.value as "default" | "guided")}
+          className="rounded-md border border-border bg-background px-3 py-2 text-sm font-semibold disabled:opacity-60"
+        >
+          <option value="default">Default</option>
+          <option value="guided">Guided POS</option>
+        </select>
+        <p className="mt-2 text-xs text-foreground/50">
+          Which POS screen your staff land on at /pos. Guided POS is desktop/tablet only —
+          on a phone-width screen every tenant always gets the Default layout regardless of
+          this setting.
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-border bg-surface p-4">
+        <Switch
+          checked={meData?.waiter_mandatory_enabled !== false}
+          disabled={waiterMandatoryMutation.isPending}
+          onChange={(next) => waiterMandatoryMutation.mutate(next)}
+          label="Require waiter selection"
+          description="When off, billing a dine-in order no longer requires a waiter to be assigned first, on either POS layout — the bill just shows Unassigned. Takeaway/Online Delivery orders never require a waiter regardless of this setting."
+        />
+      </div>
+
       <div className="rounded-lg border border-border bg-surface p-4">
         <Switch
           checked={meData?.show_tamil_categories !== false}

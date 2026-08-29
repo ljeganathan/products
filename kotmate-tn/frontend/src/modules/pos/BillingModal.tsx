@@ -11,6 +11,7 @@ import {
   createBill,
   previewBill,
   reprintBill,
+  sendKotAndFinalizeBill,
 } from "@/modules/pos/billsApi";
 import type { Order } from "@/modules/pos/posApi";
 
@@ -19,6 +20,11 @@ interface BillingModalProps {
   initialPaymentMethod: "upi" | "cash" | "card";
   onClose: () => void;
   onFinalized: (printWarning?: string) => void;
+  // "kot-and-bill" is Guided POS's non-seating combined action — same modal, same
+  // preview/payment/print-preview flow, just finalizing via the atomic combined route
+  // instead of a plain bill, and dispatching the kitchen ticket's own print job too.
+  // Defaults to "bill" so every existing caller (Default layout) is unaffected.
+  mode?: "bill" | "kot-and-bill";
 }
 
 const PAYMENT_METHODS = [
@@ -48,7 +54,13 @@ function formatBillDateTime(iso: string): string {
   });
 }
 
-export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized }: BillingModalProps) {
+export function BillingModal({
+  order,
+  initialPaymentMethod,
+  onClose,
+  onFinalized,
+  mode = "bill",
+}: BillingModalProps) {
   const { data: meData } = useQuery({ queryKey: ["me"], queryFn: me });
   const allowedDiscountTypes = (meData?.features?.discount_types as unknown as string[] | undefined) ?? [
     "flat_percent",
@@ -109,7 +121,7 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
 
   const finalizeMutation = useMutation({
     mutationFn: () =>
-      createBill({
+      (mode === "kot-and-bill" ? sendKotAndFinalizeBill : createBill)({
         order_id: order.id,
         coupon_code: debouncedCouponCode || undefined,
         payments,
@@ -124,8 +136,16 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
       // Already dispatched server-side as part of finalize (skip_print=false) — for a
       // usb/local_agent printer that dispatch is just rendered bytes waiting on us to
       // forward them, so do that now before returning to POS. A network/wifi printer
-      // was already attempted server-side; `print_error` carries why if it failed.
-      const warning = (await dispatchPrintJob(bill.print_job)) ?? bill.print_error ?? undefined;
+      // was already attempted server-side; `print_error` carries why if it failed. The
+      // combined route also fires a kitchen ticket in the same action — its own print
+      // job (if any) is dispatched right alongside the bill's, silently when both
+      // succeed; only a genuine warning from either half surfaces to the cashier.
+      const billWarning = (await dispatchPrintJob(bill.print_job)) ?? bill.print_error ?? undefined;
+      const kotWarning =
+        mode === "kot-and-bill"
+          ? ((await dispatchPrintJob(bill.kot_print_job ?? null)) ?? bill.kot_print_error ?? undefined)
+          : undefined;
+      const warning = [billWarning, kotWarning].filter(Boolean).join(" · ") || undefined;
       onFinalized(warning);
     },
     onError: (err) =>
@@ -251,7 +271,9 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-surface p-5 shadow-pos">
-        <h2 className="mb-3 text-lg font-extrabold">🧾 Finalize Bill</h2>
+        <h2 className="mb-3 text-lg font-extrabold">
+          {mode === "kot-and-bill" ? "🍳🧾 Send to Kitchen & Finalize Bill" : "🧾 Finalize Bill"}
+        </h2>
 
         {couponsEnabled && (
           <div className="mb-3 rounded-lg border border-border p-3">
@@ -379,7 +401,11 @@ export function BillingModal({ order, initialPaymentMethod, onClose, onFinalized
             disabled={!preview || !balanced || finalizeMutation.isPending}
             className="rounded-lg bg-accent px-4 py-2 text-sm font-bold text-accent-foreground disabled:opacity-40"
           >
-            {finalizeMutation.isPending ? "Finalizing…" : "Confirm & Bill"}
+            {finalizeMutation.isPending
+              ? "Finalizing…"
+              : mode === "kot-and-bill"
+                ? "Confirm — KOT + Bill"
+                : "Confirm & Bill"}
           </button>
         </div>
       </div>

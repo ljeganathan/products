@@ -1,14 +1,29 @@
 import csv
 import io
+import re
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Image as PdfImage
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 EXPORT_FORMATS = ("csv", "excel", "pdf")
+
+# Tamil (U+0B80-U+0BFF) — used to spot which export cells need Tamil-specific handling
+# below (e.g. Item List's Name (Tamil) column): openpyxl's default Calibri has no Tamil
+# glyphs at all, and reportlab has neither Tamil glyphs nor any complex-script shaping
+# engine, so an unpatched cell would render as tofu boxes, or worse, real-but-wrongly-
+# ordered glyphs (see `_tamil_cell_image`'s docstring).
+_TAMIL_RANGE = re.compile("[஀-௿]")
+
+# Ships with Windows 8+/Office 2013+ and covers every major Indic script including
+# Tamil (unlike Calibri, the workbook's default) — set explicitly on any cell containing
+# Tamil text so a reader without the app's own font-substitution logic still sees real
+# glyphs rather than tofu boxes.
+_EXCEL_TAMIL_FONT = "Nirmala UI"
 
 _MEDIA_TYPES = {
     "csv": "text/csv",
@@ -38,6 +53,10 @@ def _to_excel(title: str, headers: list[str], grid: list[list[object]]) -> bytes
         cell.font = Font(bold=True)
     for row in grid:
         ws.append(row)
+        row_cells = ws[ws.max_row]
+        for cell in row_cells:
+            if cell.value is not None and _TAMIL_RANGE.search(str(cell.value)):
+                cell.font = Font(name=_EXCEL_TAMIL_FONT)
 
     for column_cells in ws.columns:
         length = max((len(str(cell.value)) for cell in column_cells if cell.value is not None), default=10)
@@ -46,6 +65,32 @@ def _to_excel(title: str, headers: list[str], grid: list[list[object]]) -> bytes
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
+
+
+def _tamil_cell_image(text: str, max_height_pt: float = 9.0, max_width_pt: float = 140.0) -> PdfImage:
+    """Embeds Tamil text as a small raster image instead of letting reportlab draw it as
+    vector text — confirmed necessary, not just a precaution: reportlab has no complex-
+    script shaping engine at all (no GSUB/GPOS ligatures, no pre-base-matra reordering),
+    so even with a Tamil-capable font registered, its own text layout renders Tamil
+    glyphs in the wrong visual order/spacing. Reuses `printing/tamil_raster.py`'s RAQM-
+    shaped renderer — the same code path already proven correct for thermal KOT/bill
+    printing — rather than re-solving Tamil shaping a second way here.
+
+    Rendered at a fixed high pixel size for crisp downscaling, then fit to
+    `max_height_pt`; if that would still overflow `max_width_pt` (a long Tamil name),
+    it's shrunk further by width instead so a single cell can never blow out the table's
+    column layout.
+    """
+    from app.printing.tamil_raster import render_tamil_text_image
+
+    img = render_tamil_text_image(text, font_size=40)
+    scale = max_height_pt / img.height
+    if img.width * scale > max_width_pt:
+        scale = max_width_pt / img.width
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+    return PdfImage(buffer, width=img.width * scale, height=img.height * scale)
 
 
 def _to_pdf(title: str, headers: list[str], grid: list[list[object]]) -> bytes:
@@ -58,20 +103,22 @@ def _to_pdf(title: str, headers: list[str], grid: list[list[object]]) -> bytes:
     styles = getSampleStyleSheet()
     elements = [Paragraph(title, styles["Title"]), Spacer(1, 12)]
 
-    table_data = [headers] + [[str(v) for v in row] for row in grid]
+    def cell_value(v: object) -> str | PdfImage:
+        text = "" if v is None else str(v)
+        return _tamil_cell_image(text) if _TAMIL_RANGE.search(text) else text
+
+    table_data: list[list[object]] = [list(headers)] + [[cell_value(v) for v in row] for row in grid]
+    style_commands = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f6f4e")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f2f2")]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]
     table = Table(table_data, repeatRows=1)
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f6f4e")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f2f2")]),
-            ]
-        )
-    )
+    table.setStyle(TableStyle(style_commands))
     elements.append(table)
     doc.build(elements)
     return buffer.getvalue()

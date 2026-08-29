@@ -32,10 +32,15 @@ def _tamil_font_path() -> str:
     )
 
 
-def render_tamil_text_to_escpos(text: str, font_size: int = 24, max_width_px: int = 384) -> bytes:
-    """Rasterizes `text` (Tamil item/category names) as a small ESC/POS raster image.
-    `max_width_px` defaults to 384 dots (58mm/203dpi's safely-printable width) but the
-    thermal adapter passes a width scaled to the printer's actual `paper_width_mm`.
+def render_tamil_text_image(text: str, font_size: int = 24, max_width_px: int | None = None) -> Image.Image:
+    """Rasterizes `text` (Tamil item/category names) as a small grayscale PIL image with
+    correct complex-script shaping — shared by the ESC/POS thermal path below and
+    export_service's PDF export, which embeds this same image into a table cell instead
+    of drawing Tamil as vector text: reportlab has no complex-script shaping engine at
+    all (no GSUB/GPOS, no pre-base-matra reordering), so letting it lay out Tamil
+    characters itself produces visibly wrong glyph order/spacing even with a Tamil font
+    registered — confirmed by comparing reportlab's own output against this RAQM-shaped
+    render, which is measurably narrower (ligated) for the same string.
 
     `layout_engine=RAQM` is required, not optional, for Tamil: Pillow's default "basic"
     layout draws one glyph per Unicode codepoint with no reordering or ligature rules,
@@ -47,13 +52,24 @@ def render_tamil_text_to_escpos(text: str, font_size: int = 24, max_width_px: in
     """
     font = ImageFont.truetype(_tamil_font_path(), font_size, layout_engine=ImageFont.Layout.RAQM)
     measured = ImageDraw.Draw(Image.new("L", (1, 1))).textbbox((0, 0), text, font=font)
-    text_width = min(measured[2] - measured[0], max_width_px)
+    text_width = measured[2] - measured[0]
+    if max_width_px is not None:
+        text_width = min(text_width, max_width_px)
     text_height = measured[3] - measured[1]
 
-    # Minimal 1px padding — this renders inline between two ordinary ESC/POS text
-    # lines (CLAUDE.md §9's bilingual item lines), so it should read as "one compact
-    # line," not leave a visible gap the way the un-tuned first pass did in testing.
+    # Minimal 1px padding — this renders inline between two ordinary text lines
+    # (CLAUDE.md §9's bilingual item lines), so it should read as "one compact line,"
+    # not leave a visible gap the way the un-tuned first pass did in testing.
     image = Image.new("L", (text_width + 2, text_height + 2), color=255)
     draw = ImageDraw.Draw(image)
     draw.text((1, 1 - measured[1]), text, font=font, fill=0)
+    return image
+
+
+def render_tamil_text_to_escpos(text: str, font_size: int = 24, max_width_px: int = 384) -> bytes:
+    """Rasterizes `text` as a small ESC/POS raster image. `max_width_px` defaults to 384
+    dots (58mm/203dpi's safely-printable width) but the thermal adapter passes a width
+    scaled to the printer's actual `paper_width_mm`.
+    """
+    image = render_tamil_text_image(text, font_size, max_width_px)
     return image_to_escpos_raster(image, dither=False)

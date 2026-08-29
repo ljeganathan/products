@@ -14,6 +14,7 @@ from app.schemas.reports import (
     CashierSalesResponse,
     CategoryWiseSalesResponse,
     CategoryWiseSalesRow,
+    ItemListRow,
     ItemWiseSalesResponse,
     ItemWiseSalesRow,
     PaymentMethodTotal,
@@ -49,6 +50,7 @@ REPORT_TITLES = {
     "pos-operator-wise": "POS Operator Wise Sales",
     "pos-operator-incentive": "POS Operator Incentive",
     "z-report": "Z Report",
+    "item-list": "Item List",
 }
 
 # Order the user asked for — Cash, then UPI, then Card — not the UPI-first order the
@@ -231,6 +233,54 @@ def _incentive_grid_body(
     return ReportBody(kind="grid", headers=headers, rows=rows)
 
 
+def item_list_print_body(rows_data: list[ItemListRow]) -> ReportBody:
+    """Item List's print copy is a condensed price list — English name and base price
+    only, grouped by category with a bold header row per category, same grouping idiom
+    as `_item_wise_body` — regardless of the tenant's `report_tamil_names_enabled`
+    toggle and of any per-section price override. A physical list taped up at a counter
+    has no room for either: staff read the base price off it, not a per-section table.
+
+    This is why item-list is the one report_type whose print body isn't built via the
+    shared `build_report_body` below — see `item_list_export_grid` for the CSV/Excel/PDF
+    export shape, which deliberately shows both languages and every override instead.
+    """
+    headers = ["Code", "Name", "Price"]
+    rows: list[list[str]] = []
+    bold_rows: set[int] = set()
+    current_category_id = None
+    for r in rows_data:
+        if r.category_id != current_category_id:
+            current_category_id = r.category_id
+            header_idx = len(rows)
+            rows.append(["", r.category_name_en, ""])
+            bold_rows.add(header_idx)
+        rows.append([r.item_code or "", r.name_en, _amount(r.base_price)])
+    return ReportBody(kind="grid", headers=headers, rows=rows, bold_rows=bold_rows)
+
+
+def item_list_export_grid(rows_data: list[ItemListRow]) -> tuple[list[str], list[list[str]]]:
+    """CSV/Excel/PDF export (and the on-screen Reports table) show full item-master
+    detail unlike the condensed print copy above: both English and Tamil names, and every
+    active per-section price override (comma-separated "Section: Price" pairs) alongside
+    the base price — this is back-office reference data, not a counter price list.
+    """
+    headers = ["Item Code", "Name (English)", "Name (Tamil)", "Category", "Base Price", "Price Overrides"]
+    grid: list[list[str]] = []
+    for r in rows_data:
+        overrides = "; ".join(f"{o.section_name_en}: {_amount(o.price)}" for o in r.price_overrides)
+        grid.append(
+            [
+                r.item_code or "",
+                r.name_en,
+                r.name_ta or "",
+                r.category_name_en,
+                _amount(r.base_price),
+                overrides,
+            ]
+        )
+    return headers, grid
+
+
 def build_report_body(report_type: str, result: object, tamil_names_enabled: bool = False) -> ReportBody:
     """Builds the printer-shaped `ReportBody` (renamed/no-"Rs." grid columns, row-wise
     key-value summaries) from an already-fetched `report_service` result — the single
@@ -374,6 +424,13 @@ async def render_report_print_bytes(
             f"Shift Close Time: {result.report_date.strftime('%d-%b-%Y')} {shift_time}",
             await _closed_by_label(session, current_user_id),
         ]
+        body = build_report_body(req.report_type, result, tenant.report_tamil_names_enabled)
+    elif req.report_type == "item-list":
+        # No date range or location scope — a snapshot of the current item catalog, not
+        # a sales figure (report_service.item_list). Its print body is deliberately not
+        # built via build_report_body — see item_list_print_body's own docstring.
+        item_list_result = await report_service.item_list(session, tenant.id)
+        body = item_list_print_body(item_list_result.rows)
     else:
         if req.date_from is None or req.date_to is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "date_from and date_to are required")
@@ -402,7 +459,7 @@ async def render_report_print_bytes(
         else:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown report_type: {req.report_type}")
 
-    body = build_report_body(req.report_type, result, tenant.report_tamil_names_enabled)
+        body = build_report_body(req.report_type, result, tenant.report_tamil_names_enabled)
 
     data = ReportRenderData(
         title=title,

@@ -167,6 +167,8 @@ async def me(
             default_payment_method="cash",
             report_printing_enabled=False,
             report_tamil_names_enabled=False,
+            pos_layout="default",
+            waiter_mandatory_enabled=True,
         )
 
     # `/me` serves every tenant-scoped role, not just one — set the RLS session var
@@ -193,6 +195,8 @@ async def me(
         default_payment_method=tenant.default_payment_method,
         report_printing_enabled=is_report_printing_enabled(tenant, plan.features if plan else None),
         report_tamil_names_enabled=tenant.report_tamil_names_enabled,
+        pos_layout=tenant.pos_layout,
+        waiter_mandatory_enabled=tenant.waiter_mandatory_enabled,
     )
 
 

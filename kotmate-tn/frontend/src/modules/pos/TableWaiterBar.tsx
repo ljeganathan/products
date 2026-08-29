@@ -147,7 +147,7 @@ function TablePickerModal({
   );
 }
 
-function WaiterPickerModal({
+export function WaiterPickerModal({
   waiters,
   onSelect,
   onClose,

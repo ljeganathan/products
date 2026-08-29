@@ -161,6 +161,38 @@ class PosOperatorIncentiveResponse(BaseModel):
     total_incentive_amount: float
 
 
+class ItemListPriceOverride(BaseModel):
+    """One per-section override on an item (`item_section_prices`, CLAUDE.md §11
+    Seating-section-aware pricing, Pro+) — absence of a row for a section means that
+    section falls back to the item's own base price, so only real overrides appear here.
+    """
+
+    section_id: uuid.UUID
+    section_name_en: str
+    price: float
+
+
+class ItemListRow(BaseModel):
+    item_id: uuid.UUID
+    item_code: str | None
+    name_en: str
+    name_ta: str | None
+    category_id: uuid.UUID
+    category_name_en: str
+    category_name_ta: str | None
+    base_price: float
+    price_overrides: list[ItemListPriceOverride]
+
+
+class ItemListResponse(BaseModel):
+    """Unlike every other report here, this isn't a sales figure for a date range — it's
+    a snapshot of the current item catalog (CLAUDE.md §8 `items`), grouped by category.
+    """
+
+    rows: list[ItemListRow]
+    total_items: int
+
+
 class ZReportResponse(BaseModel):
     """Daily shift-close summary for a single business day (CLAUDE.md §11)."""
 

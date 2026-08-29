@@ -106,6 +106,14 @@ class BillResponse(BillTotals):
     # lib/printDispatch.ts's frontend-side failures use the same plain-message contract).
     print_error: str | None = None
     created_at: datetime
+    # Populated only when this bill was created via Guided POS's combined
+    # `POST /orders/{id}/kot-and-bill` route (non-seating orders) — an ordinary bill
+    # (POST /bills) leaves these at their defaults. Carries the *kitchen* ticket's own
+    # print outcome, separate from `print_job`/`print_error` above (the bill printer's).
+    kot_ticket_number: str | None = None
+    kot_printed: bool = False
+    kot_print_job: PrintJobPayload | None = None
+    kot_print_error: str | None = None
 
 
 class BillSearchParams(BaseModel):

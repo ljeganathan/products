@@ -16,6 +16,7 @@ from app.schemas.reports import (
     CashierIncentiveResponse,
     CashierSalesResponse,
     CategoryWiseSalesResponse,
+    ItemListResponse,
     ItemWiseSalesResponse,
     PosOperatorIncentiveResponse,
     PosOperatorSalesResponse,
@@ -32,6 +33,7 @@ from app.services.report_print_service import (
     REPORT_TITLES,
     build_report_body,
     is_report_printing_enabled,
+    item_list_export_grid,
     render_report_print_bytes,
     report_body_to_grid,
 )
@@ -272,6 +274,28 @@ async def get_z_report(
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
         return _export_response("z-report", result, export)
+    return result
+
+
+@router.get("/item-list", response_model=ItemListResponse)
+async def get_item_list(
+    export: str | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ItemListResponse | Response:
+    """Item master data, not a sales report — no date range or location filter (items
+    aren't location-scoped, CLAUDE.md §8). Export shows both languages and every
+    per-section price override (`item_list_export_grid`), unlike the print copy's
+    English-only, base-price-only condensed list (`item_list_print_body`, only reachable
+    via `POST /reports/print`) — the one report_type whose print/export column shapes
+    deliberately differ, see those functions' own docstrings.
+    """
+    result = await report_service.item_list(db, current_user.tenant_id)
+    if export:
+        await _require_export_format(db, current_user.tenant_id, export)
+        headers, grid = item_list_export_grid(result.rows)
+        content, media_type, filename = export_grid(REPORT_TITLES["item-list"], headers, grid, export)
+        return _file_response(content, media_type, filename)
     return result
 
 

@@ -17,13 +17,15 @@ REPORT_PRINT_TYPES = [
     "pos-operator-wise",
     "pos-operator-incentive",
     "z-report",
+    "item-list",
 ]
 
 
 class ReportPrintRequest(BaseModel):
     report_type: str
-    # date_from/date_to for every report_type except z-report, which uses report_date
-    # alone (same split as the existing GET endpoints/ReportsPage.tsx).
+    # date_from/date_to for every report_type except z-report (report_date alone) and
+    # item-list (neither — it's a snapshot of the current item catalog, not a sales
+    # figure for a date range, see report_service.item_list).
     date_from: date | None = None
     date_to: date | None = None
     report_date: date | None = None

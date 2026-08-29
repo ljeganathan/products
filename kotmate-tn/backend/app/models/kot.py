@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,6 +16,13 @@ class KotTicket(UUIDPKMixin, TimestampMixin, Base):
     order_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
     ticket_number: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="new")
+    # Set only by Guided POS's combined "KOT + Bill" route for non-seating orders
+    # (order_service is never involved — see kot_and_bill_service.py). Lets
+    # list_active_tickets keep this ticket visible past the moment its order flips to
+    # "billed", which every other ticket's visibility already keys off — a takeaway
+    # order is billed the instant it's fired to the kitchen, but the kitchen still needs
+    # to see the ticket until it's actually ready.
+    order_billed_via_kot: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         tenant_composite_index("kot_tickets"),
