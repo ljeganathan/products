@@ -18,6 +18,7 @@ from app.schemas.reports import (
     CategoryWiseSalesResponse,
     ItemListResponse,
     ItemWiseSalesResponse,
+    OrderTypeSalesResponse,
     PosOperatorIncentiveResponse,
     PosOperatorSalesResponse,
     ReportQueryParams,
@@ -132,6 +133,24 @@ async def get_category_wise_sales(
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
         return _export_response("category-wise", result, export)
+    return result
+
+
+@router.get("/order-type-wise", response_model=OrderTypeSalesResponse)
+async def get_order_type_wise_sales(
+    date_from: date,
+    date_to: date,
+    location_id: uuid.UUID | None = None,
+    export: str | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> OrderTypeSalesResponse | Response:
+    result = await report_service.order_type_wise_sales(
+        db, current_user.tenant_id, _params(date_from, date_to, location_id)
+    )
+    if export:
+        await _require_export_format(db, current_user.tenant_id, export)
+        return _export_response("order-type-wise", result, export)
     return result
 
 

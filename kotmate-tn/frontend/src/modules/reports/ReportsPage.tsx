@@ -14,6 +14,7 @@ import {
   getCategoryWiseSales,
   getItemList,
   getItemWiseSales,
+  getOrderTypeWiseSales,
   getPosOperatorIncentive,
   getPosOperatorWiseSales,
   getSalesSummary,
@@ -32,6 +33,7 @@ const inputClass =
 // built) so ReportKey stays a plain union type.
 const REPORTS = [
   { key: "sales-summary", label: "Sales Summary" },
+  { key: "order-type-wise", label: "Order Type Wise Sales" },
   { key: "item-list", label: "Item List" },
   { key: "item-wise", label: "Item-wise Sales" },
   { key: "category-wise", label: "Category-wise Sales" },
@@ -100,6 +102,8 @@ export function ReportsPage() {
           return getZReport(dateFrom, locationId || undefined);
         case "item-list":
           return getItemList();
+        case "order-type-wise":
+          return getOrderTypeWiseSales(params);
       }
     },
   });
@@ -275,6 +279,28 @@ function ReportTable({ reportKey, data }: { reportKey: ReportKey; data: any }) {
               <Row label="Round Off" value={formatINR(data.round_off_amount)} />
               <Row label="Grand Total" value={formatINR(data.grand_total)} bold />
               <Row label="Average Bill Value" value={formatINR(data.average_bill_value)} />
+            </tbody>
+          </table>
+        </div>
+      );
+
+    case "order-type-wise":
+      // Row-wise, not a Name/Bill Count/Sales grid like waiter-wise/cashier-wise below —
+      // a POS printer's narrow paper can't fit that grid once section names get long
+      // (e.g. "Online Delivery"), so this prints (and, for consistency, screens/exports)
+      // as one "<Section> - Bills"/"<Section> - Sales" pair per line instead.
+      return (
+        <div className={tableWrapClass}>
+          <table className={tableClass}>
+            <tbody>
+              {data.rows.map((r: { section_id: string; label: string; bill_count: number; net_sale_value: number }) => (
+                <Fragment key={r.section_id}>
+                  <Row label={`${r.label} - Bills`} value={r.bill_count} />
+                  <Row label={`${r.label} - Sales`} value={formatINR(r.net_sale_value)} />
+                </Fragment>
+              ))}
+              <Row label="TOTAL - Bills" value={data.total_bill_count} />
+              <Row label="TOTAL - Sales" value={formatINR(data.total_net_sale_value)} bold />
             </tbody>
           </table>
         </div>

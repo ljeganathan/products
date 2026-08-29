@@ -262,13 +262,17 @@ def render_report(data: ReportRenderData) -> bytes:
                 out += _text(line)
     else:
         widths = report_print.column_widths(body.headers, body.rows, line_width)
-        out += _BOLD_ON + _text(report_print.format_row(body.headers, widths)) + _BOLD_OFF
+        out += (
+            _BOLD_ON
+            + _text(report_print.format_row(body.headers, widths, body.left_align_columns))
+            + _BOLD_OFF
+        )
         out += sep
         for i, row in enumerate(body.rows):
             if i in body.tamil_names:
                 out += _tamil_line(body.tamil_names[i], max_width_px)
                 row = ["", *row[1:]]
-            line = report_print.format_row(row, widths)
+            line = report_print.format_row(row, widths, body.left_align_columns)
             is_bold = i in body.bold_rows
             is_big = i in body.big_rows
             out += (_BOLD_ON if is_bold else b"") + (_SIZE_DOUBLE_HEIGHT if is_big else b"")

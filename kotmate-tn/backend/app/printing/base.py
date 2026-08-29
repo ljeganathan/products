@@ -352,7 +352,11 @@ class ReportBody:
       own line in place of that row's English name cell (thermal + the tenant's
       `report_tamil_names_enabled` toggle only — a raster image can't share a text line
       with the Qty/Sales columns, so that row prints as two lines instead of one; a row
-      not present here always prints its name as plain text).
+      not present here always prints its name as plain text). `left_align_columns`
+      defaults to just column 0 (every existing grid report has exactly one leading
+      text column followed by right-aligned numeric ones) — Item List's print body is
+      the one exception, with two leading text columns (Code, Name), so it sets this
+      to `{0, 1}` instead of leaving Name to fall under the numeric-column default.
     """
 
     kind: Literal["grid", "keyvalue"]
@@ -362,6 +366,7 @@ class ReportBody:
     big_rows: set[int] = field(default_factory=set)
     tamil_names: dict[int, str] = field(default_factory=dict)
     pairs: list[tuple[str, str]] = field(default_factory=list)
+    left_align_columns: set[int] = field(default_factory=lambda: {0})
 
 
 @dataclass

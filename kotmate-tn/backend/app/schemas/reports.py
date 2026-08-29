@@ -161,6 +161,24 @@ class PosOperatorIncentiveResponse(BaseModel):
     total_incentive_amount: float
 
 
+class OrderTypeSalesRow(BaseModel):
+    """One row per `seating_sections` row (AC/Non-AC/Rooftop/Takeaway/Online Delivery/
+    ...) — not collapsed into a single "Dine In" bucket, so a tenant can see e.g. AC vs
+    Rooftop sales separately, not just dine-in vs parcel vs online as one lump figure.
+    """
+
+    section_id: uuid.UUID
+    label: str
+    bill_count: int
+    net_sale_value: float
+
+
+class OrderTypeSalesResponse(BaseModel):
+    rows: list[OrderTypeSalesRow]
+    total_bill_count: int
+    total_net_sale_value: float
+
+
 class ItemListPriceOverride(BaseModel):
     """One per-section override on an item (`item_section_prices`, CLAUDE.md §11
     Seating-section-aware pricing, Pro+) — absence of a row for a section means that

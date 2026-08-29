@@ -52,6 +52,18 @@ export interface CategoryWiseSales {
   total_revenue: number;
 }
 
+export interface OrderTypeSalesRow {
+  section_id: string;
+  label: string;
+  bill_count: number;
+  net_sale_value: number;
+}
+export interface OrderTypeSales {
+  rows: OrderTypeSalesRow[];
+  total_bill_count: number;
+  total_net_sale_value: number;
+}
+
 export interface TaxSummary {
   taxable_value: number;
   cgst_amount: number;
@@ -175,6 +187,8 @@ export const getItemWiseSales = (params: ReportFilterParams) => getReport<ItemWi
 export const getCategoryWiseSales = (params: ReportFilterParams) =>
   getReport<CategoryWiseSales>("category-wise", params);
 export const getTaxSummary = (params: ReportFilterParams) => getReport<TaxSummary>("tax-summary", params);
+export const getOrderTypeWiseSales = (params: ReportFilterParams) =>
+  getReport<OrderTypeSales>("order-type-wise", params);
 export const getWaiterWiseSales = (params: ReportFilterParams) => getReport<WaiterSales>("waiter-wise", params);
 export const getCashierWiseSales = (params: ReportFilterParams) => getReport<CashierSales>("cashier-wise", params);
 export const getWaiterIncentive = (params: ReportFilterParams) =>

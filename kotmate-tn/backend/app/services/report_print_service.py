@@ -17,6 +17,7 @@ from app.schemas.reports import (
     ItemListRow,
     ItemWiseSalesResponse,
     ItemWiseSalesRow,
+    OrderTypeSalesResponse,
     PaymentMethodTotal,
     PosOperatorIncentiveResponse,
     PosOperatorSalesResponse,
@@ -51,6 +52,7 @@ REPORT_TITLES = {
     "pos-operator-incentive": "POS Operator Incentive",
     "z-report": "Z Report",
     "item-list": "Item List",
+    "order-type-wise": "Order Type Wise Sales",
 }
 
 # Order the user asked for — Cash, then UPI, then Card — not the UPI-first order the
@@ -216,6 +218,21 @@ def _sales_grid_body(
     return ReportBody(kind="grid", headers=headers, rows=rows)
 
 
+def _order_type_pairs(result: OrderTypeSalesResponse) -> list[tuple[str, str]]:
+    """Row-wise, not the grid every other -wise-sales report uses (production feedback:
+    a POS printer's paper is too narrow for a 3-column Name/Bill Count/Sales grid once
+    section names get long, e.g. "Online Delivery") — same "Field - Bills"/"Field -
+    Sales" pair-per-line shape as Z-Report's own payment breakdown (`_payment_pairs`).
+    """
+    pairs: list[tuple[str, str]] = []
+    for r in result.rows:
+        pairs.append((f"{r.label} - Bills", str(r.bill_count)))
+        pairs.append((f"{r.label} - Sales", _amount(r.net_sale_value)))
+    pairs.append(("TOTAL - Bills", str(result.total_bill_count)))
+    pairs.append(("TOTAL - Sales", _amount(result.total_net_sale_value)))
+    return pairs
+
+
 def _incentive_grid_body(
     headers: list[str],
     names_and_amounts: list[tuple[str, float, float]],
@@ -255,7 +272,11 @@ def item_list_print_body(rows_data: list[ItemListRow]) -> ReportBody:
             rows.append(["", r.category_name_en, ""])
             bold_rows.add(header_idx)
         rows.append([r.item_code or "", r.name_en, _amount(r.base_price)])
-    return ReportBody(kind="grid", headers=headers, rows=rows, bold_rows=bold_rows)
+    # Two leading text columns (Code, Name) — ReportBody's left_align_columns defaults
+    # to just {0}, which would right-justify Name against the Price column (bug fix:
+    # Name was printing flush-right instead of left-aligned once Code pushed it to
+    # column 1).
+    return ReportBody(kind="grid", headers=headers, rows=rows, bold_rows=bold_rows, left_align_columns={0, 1})
 
 
 def item_list_export_grid(rows_data: list[ItemListRow]) -> tuple[list[str], list[list[str]]]:
@@ -307,6 +328,9 @@ def build_report_body(report_type: str, result: object, tamil_names_enabled: boo
     if report_type == "category-wise":
         result = cast(CategoryWiseSalesResponse, result)
         return _category_wise_body(result.rows, tamil_names_enabled, result.total_revenue)
+    if report_type == "order-type-wise":
+        result = cast(OrderTypeSalesResponse, result)
+        return ReportBody(kind="keyvalue", pairs=_order_type_pairs(result))
     if report_type == "tax-summary":
         result = cast(TaxSummaryResponse, result)
         return ReportBody(
@@ -442,6 +466,8 @@ async def render_report_print_bytes(
             result = await report_service.item_wise_sales(session, tenant.id, params)
         elif req.report_type == "category-wise":
             result = await report_service.category_wise_sales(session, tenant.id, params)
+        elif req.report_type == "order-type-wise":
+            result = await report_service.order_type_wise_sales(session, tenant.id, params)
         elif req.report_type == "tax-summary":
             result = await report_service.tax_summary(session, tenant.id, params)
         elif req.report_type == "waiter-wise":

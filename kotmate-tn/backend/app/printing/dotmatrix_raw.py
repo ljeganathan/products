@@ -75,10 +75,10 @@ def render_report(data: ReportRenderData) -> str:
             lines.extend(two_column_lines(label, value, line_width))
     else:
         widths = report_print.column_widths(body.headers, body.rows, line_width)
-        lines.append(report_print.format_row(body.headers, widths))
+        lines.append(report_print.format_row(body.headers, widths, body.left_align_columns))
         lines.append(sep)
         for row in body.rows:
-            lines.append(report_print.format_row(row, widths))
+            lines.append(report_print.format_row(row, widths, body.left_align_columns))
 
     lines.append(sep)
     return "\n".join(lines) + "\n" + _FORM_FEED

@@ -28,6 +28,8 @@ from app.schemas.reports import (
     ItemListRow,
     ItemWiseSalesResponse,
     ItemWiseSalesRow,
+    OrderTypeSalesResponse,
+    OrderTypeSalesRow,
     PaymentMethodTotal,
     PosOperatorIncentiveResponse,
     PosOperatorIncentiveRow,
@@ -236,6 +238,42 @@ async def category_wise_sales(
     ]
     return CategoryWiseSalesResponse(
         rows=result_rows, total_revenue=round(sum(r.revenue for r in result_rows), 2)
+    )
+
+
+async def order_type_wise_sales(
+    session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
+) -> OrderTypeSalesResponse:
+    """Sales split by order mode — one row per `seating_sections` row (AC/Non-AC/
+    Rooftop/Family/Takeaway/Online Delivery/...), not collapsed into a single "Dine In"
+    bucket, so a tenant can see e.g. AC vs Rooftop sales separately, not just dine-in vs
+    parcel vs online as one lump figure. `bills.section_id` is a live join, same "live
+    reference data" treatment `category_wise_sales` already gives categories — sections
+    aren't versioned anywhere in this schema either.
+    """
+    rows = (
+        await session.execute(
+            select(
+                SeatingSection.id,
+                SeatingSection.name_en,
+                func.count(Bill.id),
+                func.sum(Bill.subtotal - Bill.discount_amount),
+            )
+            .select_from(Bill)
+            .join(SeatingSection, SeatingSection.id == Bill.section_id)
+            .where(*_bill_filters(tenant_id, params))
+            .group_by(SeatingSection.id, SeatingSection.name_en)
+            .order_by(func.sum(Bill.subtotal - Bill.discount_amount).desc())
+        )
+    ).all()
+    result_rows = [
+        OrderTypeSalesRow(section_id=sid, label=name, bill_count=count, net_sale_value=float(net))
+        for sid, name, count, net in rows
+    ]
+    return OrderTypeSalesResponse(
+        rows=result_rows,
+        total_bill_count=sum(r.bill_count for r in result_rows),
+        total_net_sale_value=round(sum(r.net_sale_value for r in result_rows), 2),
     )
 
 

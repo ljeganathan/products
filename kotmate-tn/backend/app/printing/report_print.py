@@ -71,12 +71,19 @@ def column_widths(headers: list[str], rows: list[list[str]], width: int) -> list
     return [*lead_widths, last_w]
 
 
-def format_row(cells: list[str], widths: list[int]) -> str:
+def format_row(cells: list[str], widths: list[int], left_align_columns: set[int] | None = None) -> str:
+    """`left_align_columns` defaults to `{0}` — every grid report has exactly one
+    leading text column followed by right-aligned numeric ones, except Item List's
+    print body (Code, Name both text), which passes `{0, 1}` explicitly instead of
+    letting its Name column fall under the numeric-column default.
+    """
+    if left_align_columns is None:
+        left_align_columns = {0}
     parts: list[str] = []
     for i, cell in enumerate(cells):
         w = widths[i]
         text = cell[:w]
-        parts.append(text.ljust(w) if i == 0 else text.rjust(w))
+        parts.append(text.ljust(w) if i in left_align_columns else text.rjust(w))
     return " ".join(parts)
 
 

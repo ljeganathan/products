@@ -18,6 +18,7 @@ REPORT_PRINT_TYPES = [
     "pos-operator-incentive",
     "z-report",
     "item-list",
+    "order-type-wise",
 ]
 
 
