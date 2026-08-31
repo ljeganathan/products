@@ -74,10 +74,15 @@ on the VPS and in GitHub Actions secrets (§6).
 
 Point `app.kotmatetn.in` at the VPS's public IP (Hostinger hPanel → Domains
 → `kotmatetn.in` → DNS/Nameservers → add an **A record**, host `app`, value
-`187.127.129.35`). No `www` record is needed since this is a subdomain, not
-the apex — the apex domain stays free for a future marketing/landing page.
+`187.127.129.35`).
 
-Verify it resolved: `dig +short app.kotmatetn.in` should print the VPS IP.
+The apex domain (`kotmatetn.in`) is no longer free — it now hosts the
+marketing/landing site (`landing/`, see docs/LANDING_PAGE.md). Add two more
+**A records**: host `@` (apex) and host `www`, both value `187.127.129.35`.
+
+Verify all three resolved: `dig +short app.kotmatetn.in`,
+`dig +short kotmatetn.in`, `dig +short www.kotmatetn.in` should each print
+the VPS IP.
 
 ## 3. Find the existing Traefik network + certresolver
 
@@ -103,18 +108,23 @@ you find.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-  -f docker-compose.traefik.yml up -d --build postgres backend nginx
+  -f docker-compose.traefik.yml up -d --build postgres backend nginx landing
 ```
 
-Naming `postgres backend nginx` explicitly matters: it means Compose never
-creates any service that binds host ports 80/443, so there's no collision
-with n8n's Traefik. `nginx` here is KOTMate TN's own frontend container
-(built from `frontend/Dockerfile`'s `prod` target) — it serves the built
-static bundle and proxies `/api`, `/uploads`, `/ws` to `backend` itself
-(`frontend/nginx.conf`), so it's the single origin Traefik needs to route
-to; the existing Traefik discovers it via the Docker-label provider
-(`docker-compose.traefik.yml`) and requests+attaches the TLS cert on the
-first real request — give it a few seconds before testing.
+Naming `postgres backend nginx landing` explicitly matters: it means
+Compose never creates any service that binds host ports 80/443, so there's
+no collision with n8n's Traefik. `nginx` here is KOTMate TN's own frontend
+container (built from `frontend/Dockerfile`'s `prod` target) — it serves the
+built static bundle and proxies `/api`, `/uploads`, `/ws` to `backend`
+itself (`frontend/nginx.conf`), so it's the single origin Traefik needs to
+route to for `app.kotmatetn.in`. `landing` (built from `landing/Dockerfile`)
+is a completely separate static container serving the marketing site at
+`kotmatetn.in`/`www.kotmatetn.in` — see docs/LANDING_PAGE.md — with no
+dependency on postgres/backend at all. The existing Traefik discovers both
+via the Docker-label provider (`docker-compose.traefik.yml`, two separate
+routers: `kotmate` and `kotmate-landing`) and requests+attaches a TLS cert
+for each domain on its first real request — give it a few seconds before
+testing.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
@@ -130,7 +140,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml \
 ```
 
 Visit `https://app.kotmatetn.in` — you should see the KOTMate TN login
-screen over a valid TLS connection.
+screen over a valid TLS connection. Visit `https://kotmatetn.in` — you
+should see the marketing/landing site over its own valid TLS connection.
 
 ## 5. Redeploying (`scripts/deploy.sh`)
 
@@ -240,6 +251,13 @@ $COMPOSE start backend
       Protocols` response).
 - [ ] Item image upload round-trips (`/uploads/...` served correctly through
       the proxy).
+- [ ] `https://kotmatetn.in` and `https://www.kotmatetn.in` both load the
+      landing site over a valid TLS connection (separate cert from
+      `app.kotmatetn.in` — see docs/LANDING_PAGE.md).
+- [ ] On the landing site: "Login" opens `https://app.kotmatetn.in`, "Start
+      Free Trial"/"Book a Free Demo"/the floating WhatsApp button open a
+      WhatsApp chat to the configured number, pricing toggle and FAQ
+      accordion work, and no console errors on load.
 - [ ] Confirm storemate-tn's own domain still loads correctly after
       kotmate-tn's deploy — the shared Traefik/n8n stack shouldn't have been
       touched, but this is the cheap way to prove it.

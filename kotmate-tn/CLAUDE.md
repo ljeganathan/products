@@ -98,7 +98,13 @@ kotmate-tn/
 │   ├── subscription-tiers.md
 │   ├── eta-roadmap.md
 │   ├── db-schema.md
-│   └── api-contract.md
+│   ├── api-contract.md
+│   ├── DEPLOYMENT.md
+│   └── LANDING_PAGE.md
+├── landing/            # static marketing site for the apex domain kotmatetn.in
+│                        # (separate from app.kotmatetn.in above) — plain
+│                        # HTML/CSS/JS, own Dockerfile/nginx.conf, own Traefik
+│                        # router in docker-compose.traefik.yml. See docs/LANDING_PAGE.md.
 ├── docker-compose.yml
 └── .gitignore
 ```

@@ -2,7 +2,7 @@
 # docker-compose.traefik.yml (this VPS already runs n8n's own Traefik
 # instance, which storemate-tn also deploys behind — see docs/DEPLOYMENT.md):
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-#     -f docker-compose.traefik.yml up -d --build postgres backend nginx
+#     -f docker-compose.traefik.yml up -d --build postgres backend nginx landing
 #
 # Reads real secrets/domain from a root-level .env (see .env.example,
 # gitignored) via Compose's automatic ${VAR} substitution — this file must
@@ -63,6 +63,13 @@ services:
     build:
       args:
         VITE_API_URL: ${VITE_API_URL:-}
+    restart: always
+    ports: !override []
+
+  # Static marketing site (kotmatetn.in) — no build args, no dependency on
+  # the rest of the stack; only the dev-only host port needs dropping since
+  # Traefik reaches it over the internal Docker network instead.
+  landing:
     restart: always
     ports: !override []
 

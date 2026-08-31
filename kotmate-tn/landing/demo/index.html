@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Live Interactive Demo | KOTMate</title>
+<meta name="description" content="Try KOTMate's Guided POS with sample data — no signup required. This is a live, fully interactive product tour; nothing here is saved or billed for real." />
+<meta name="robots" content="noindex" />
+<link rel="icon" href="../assets/favicon.png" type="image/png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="demo.css" />
+</head>
+<body>
+
+<div class="demo-banner">
+  <span><strong>Live Demo</strong> — sample data only, nothing here is saved or billed for real.</span>
+  <div class="demo-banner__actions">
+    <a href="../index.html" class="demo-banner__link">← Back to kotmatetn.in</a>
+    <a href="https://wa.me/919916652135?text=Hi%20KOTMate%2C%20I%20just%20tried%20the%20live%20demo%20and%20I%27d%20like%20to%20start%20a%20free%20trial." class="demo-banner__cta" data-track="start_trial_click">Talk to Us — Start Real Trial</a>
+  </div>
+</div>
+
+<div class="app" id="app">
+  <nav class="rail" id="rail" aria-label="Demo POS navigation"></nav>
+  <main class="area" id="area-billing" data-area="billing"></main>
+  <main class="area" id="area-kot" data-area="kot" hidden></main>
+  <main class="area" id="area-fast" data-area="fast" hidden></main>
+</div>
+
+<div class="modal-backdrop" id="bill-modal-backdrop" hidden>
+  <div class="bill-modal" id="bill-modal" role="dialog" aria-modal="true" aria-label="Bill preview"></div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<template id="tpl-reset-fab">
+  <button class="reset-fab" id="reset-fab" title="Reset demo data">↺ Reset Demo</button>
+</template>
+
+<script src="demo-data.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>

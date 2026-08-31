@@ -5,13 +5,15 @@
 # too — no separate certbot/webroot dance needed.
 #
 # Combine with the base file and docker-compose.prod.yml, starting only
-# postgres/backend/nginx explicitly — naming them means Compose never
-# creates any port-80/443-binding service, so there's no collision with
-# Traefik:
+# postgres/backend/nginx/landing explicitly — naming them means Compose
+# never creates any port-80/443-binding service, so there's no collision
+# with Traefik:
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-#     -f docker-compose.traefik.yml up -d --build postgres backend nginx
+#     -f docker-compose.traefik.yml up -d --build postgres backend nginx landing
 #
-# Requires in .env: DOMAIN (e.g. app.kotmatetn.in), TRAEFIK_NETWORK (the
+# Requires in .env: DOMAIN (e.g. app.kotmatetn.in) for the app itself,
+# LANDING_DOMAIN (e.g. kotmatetn.in — the bare apex, routed together with
+# its www subdomain) for the marketing site below, TRAEFIK_NETWORK (the
 # existing Traefik stack's Docker network, e.g. n8n_default — the same
 # network storemate-tn's own frontend container is already attached to,
 # fastest way to find the right value is `cat` storemate-tn's own .env on
@@ -29,6 +31,23 @@ services:
       - traefik.http.routers.kotmate.entrypoints=web,websecure
       - traefik.http.routers.kotmate.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
       - traefik.http.services.kotmate.loadbalancer.server.port=80
+      - traefik.docker.network=${TRAEFIK_NETWORK}
+
+  # Marketing site (kotmatetn.in + www.kotmatetn.in) — a separate container
+  # (see docker-compose.yml's `landing` service) with its own Traefik router
+  # so it never shares a hostname/route with the app's own `kotmate` router
+  # above. Zero effect on the app itself either way.
+  landing:
+    networks:
+      - default
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.kotmate-landing.rule=Host(`${LANDING_DOMAIN}`) || Host(`www.${LANDING_DOMAIN}`)
+      - traefik.http.routers.kotmate-landing.tls=true
+      - traefik.http.routers.kotmate-landing.entrypoints=web,websecure
+      - traefik.http.routers.kotmate-landing.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
+      - traefik.http.services.kotmate-landing.loadbalancer.server.port=80
       - traefik.docker.network=${TRAEFIK_NETWORK}
 
 networks:
