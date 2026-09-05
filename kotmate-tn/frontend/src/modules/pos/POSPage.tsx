@@ -43,6 +43,7 @@ export function POSPage() {
     syncError,
     readyToOrder,
     waiterMandatory,
+    waiterMandatoryNonSeating,
     missingSelectionMessage,
     actionNotice,
     setActionNotice,
@@ -694,6 +695,7 @@ export function POSPage() {
           sections={sections}
           waiterLocked={isWaiterRole}
           waiterMandatory={waiterMandatory}
+          waiterMandatoryNonSeating={waiterMandatoryNonSeating}
           onSelectTable={handleSelectTable}
           onSelectWaiter={handleSelectWaiter}
           onAddItemByCode={resolveAndAddItemByCode}

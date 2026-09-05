@@ -96,6 +96,24 @@ def test_wrap_line_hard_splits_a_single_word_longer_than_width():
     assert "".join(lines) == "Supercalifragilisticexpialidocious"
 
 
+def test_column_widths_default_expands_column_zero():
+    # Every existing report leaves expand_column/max_widths at their defaults — surplus
+    # width still goes to column 0, unchanged behavior.
+    widths = report_print.column_widths(["Name", "Qty", "Sales"], [["Filter Coffee", "2", "50"]], 40)
+    assert widths[0] > len("Filter Coffee")
+
+
+def test_column_widths_expand_column_and_max_widths_cap_code_not_name():
+    # Item List's ["Code", "Name", "Price"] shape: Code capped to 4 regardless of a
+    # longer header/content, and any leftover width goes to Name (column 1), not Code
+    # (column 0) — the bug this fixes (Code was silently absorbing all the surplus).
+    headers = ["Code", "Name", "Price"]
+    rows = [["101", "Filter Coffee", "50.00"]]
+    widths = report_print.column_widths(headers, rows, 40, expand_column=1, max_widths={0: 4})
+    assert widths[0] == 4
+    assert widths[1] > len("Filter Coffee")
+
+
 # ---------------------------------------------------------------------------
 # Pure renderer tests
 # ---------------------------------------------------------------------------

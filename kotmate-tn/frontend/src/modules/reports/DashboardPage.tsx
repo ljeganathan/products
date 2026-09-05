@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -15,6 +15,7 @@ import { listLocations } from "@/modules/admin/locationsApi";
 import { me } from "@/modules/auth/authApi";
 import {
   getDashboardSummary,
+  getHourlyItemBreakdown,
   getLowStockItems,
   getMultiLocationComparison,
   getSalesTrend,
@@ -41,10 +42,23 @@ export function DashboardPage() {
   const canSeeSalesFigures = meData?.role !== "pos_user";
 
   const [locationId, setLocationId] = useState<string>("");
+  // Which Hourly Sales Trend bar is currently drilled into — cleared whenever the
+  // location filter changes, since a hand-picked hour from one location's data isn't
+  // meaningful once the underlying chart's bars have changed under it.
+  const [selectedHour, setSelectedHour] = useState<number | null>(null);
+  useEffect(() => {
+    setSelectedHour(null);
+  }, [locationId]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard-summary", locationId],
     queryFn: () => getDashboardSummary({ location_id: locationId || undefined }),
+  });
+
+  const { data: hourlyItems, isLoading: hourlyItemsLoading } = useQuery({
+    queryKey: ["dashboard-hourly-items", locationId, selectedHour],
+    queryFn: () => getHourlyItemBreakdown({ hour: selectedHour!, location_id: locationId || undefined }),
+    enabled: selectedHour !== null,
   });
 
   return (
@@ -113,26 +127,77 @@ export function DashboardPage() {
 
           {canSeeSalesFigures &&
             (hasCharts ? (
-              <div className="mb-6 rounded-lg border border-border bg-surface p-4">
-                <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-foreground/60">
-                  Hourly Sales Trend
-                </h2>
-                <div className="h-64 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={data.hourly_trend}>
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                      <XAxis dataKey="hour" tickFormatter={(h: number) => `${h}:00`} fontSize={11} />
-                      <YAxis fontSize={11} tickFormatter={(v: number) => `₹${v}`} />
-                      <Tooltip
-                        // recharts' Formatter type covers array-valued series too, which
-                        // this single-series bar chart never produces — narrow loosely
-                        // rather than fight its generic signature for a tooltip label.
-                        formatter={((v: unknown) => formatINR(Number(v))) as never}
-                        labelFormatter={(h: ReactNode) => `${String(h)}:00`}
-                      />
-                      <Bar dataKey="sales" fill="hsl(var(--accent))" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
+              <div className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="rounded-lg border border-border bg-surface p-4">
+                  <h2 className="mb-1 text-sm font-bold uppercase tracking-wide text-foreground/60">
+                    Hourly Sales Trend
+                  </h2>
+                  <p className="mb-2 text-xs text-foreground/50">Tap a bar to see what sold that hour.</p>
+                  <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={data.hourly_trend}
+                        onClick={(state) => {
+                          // Recharts v3 dropped `activePayload` from the click callback's
+                          // event data (only `activeLabel`/`activeIndex`/`activeCoordinate`
+                          // remain) — `activeLabel` is the XAxis's own "hour" dataKey value
+                          // for whichever bar was clicked, coerced since it can come back
+                          // as a string even though the underlying data is numeric.
+                          const hour = Number(state?.activeLabel);
+                          if (Number.isFinite(hour)) setSelectedHour(hour);
+                        }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                        <XAxis dataKey="hour" tickFormatter={(h: number) => `${h}:00`} fontSize={11} />
+                        <YAxis fontSize={11} tickFormatter={(v: number) => `₹${v}`} />
+                        <Tooltip
+                          // recharts' Formatter type covers array-valued series too, which
+                          // this single-series bar chart never produces — narrow loosely
+                          // rather than fight its generic signature for a tooltip label.
+                          formatter={((v: unknown) => formatINR(Number(v))) as never}
+                          labelFormatter={(h: ReactNode) => `${String(h)}:00`}
+                        />
+                        <Bar
+                          dataKey="sales"
+                          fill="hsl(var(--accent))"
+                          radius={[4, 4, 0, 0]}
+                          cursor="pointer"
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-border bg-surface p-4">
+                  <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-foreground/60">
+                    Item Sold Trend{selectedHour !== null && ` — ${selectedHour}:00`}
+                  </h2>
+                  {selectedHour === null ? (
+                    <p className="text-sm text-foreground/60">
+                      Tap an hour bar on the left to see items sold that hour.
+                    </p>
+                  ) : hourlyItemsLoading ? (
+                    <p className="text-sm text-foreground/60">Loading…</p>
+                  ) : hourlyItems && hourlyItems.rows.length > 0 ? (
+                    <ul className="flex max-h-64 flex-col gap-1.5 overflow-y-auto">
+                      {hourlyItems.rows.map((row) => (
+                        <li
+                          key={row.item_id}
+                          className="flex items-center justify-between gap-2 text-sm"
+                        >
+                          <span className="min-w-0 flex-1 truncate">{row.name_en}</span>
+                          <span className="shrink-0 tabular-nums text-foreground/60">
+                            {row.quantity_sold} sold
+                          </span>
+                          <span className="w-20 shrink-0 text-right tabular-nums font-semibold">
+                            {formatINR(row.sales)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-foreground/60">No items sold in that hour.</p>
+                  )}
                 </div>
               </div>
             ) : (

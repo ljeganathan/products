@@ -98,6 +98,23 @@ async def test_waiter_mandatory_setting_updates(client: AsyncClient, tenant_admi
     assert me["waiter_mandatory_enabled"] is False
 
 
+async def test_waiter_mandatory_non_seating_setting_defaults_and_updates(
+    client: AsyncClient, tenant_admin: dict
+):
+    headers = tenant_admin["headers"]
+    me = (await client.get("/api/v1/auth/me", headers=headers)).json()
+    assert me["waiter_mandatory_non_seating_enabled"] is False
+
+    resp = await client.patch(
+        "/api/v1/settings/waiter-mandatory-non-seating", json={"enabled": True}, headers=headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is True
+
+    me = (await client.get("/api/v1/auth/me", headers=headers)).json()
+    assert me["waiter_mandatory_non_seating_enabled"] is True
+
+
 # --- Combined "KOT + Bill" route -----------------------------------------------------
 
 

@@ -66,6 +66,9 @@ export interface MeResponse {
   // "Require waiter selection" toggle, common to both POS layouts. Never applies to
   // non-seating orders (Takeaway/Online Delivery) on either layout.
   waiter_mandatory_enabled: boolean;
+  // Separate, narrower "Require waiter selection" toggle scoped to non-seating orders
+  // (Takeaway/Online Delivery) only — independent of waiter_mandatory_enabled above.
+  waiter_mandatory_non_seating_enabled: boolean;
 }
 
 export async function me(): Promise<MeResponse> {

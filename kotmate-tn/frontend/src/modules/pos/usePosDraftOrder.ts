@@ -143,12 +143,17 @@ export function usePosDraftOrder() {
 
   // "Require waiter selection" is a single tenant-wide setting common to both POS
   // layouts (production feedback — previously hardcoded always-mandatory on Default
-  // and a Guided-POS-only toggle). Non-seating orders (Takeaway/Online Delivery) never
-  // require a waiter on either layout, regardless of this setting. Defaults true while
+  // and a Guided-POS-only toggle), applying to dine-in tables. Defaults true while
   // /auth/me is still loading, matching the pre-existing always-mandatory behavior.
   const waiterMandatory = meData?.waiter_mandatory_enabled !== false;
+  // Separate, narrower toggle for non-seating orders (Takeaway/Online Delivery) only —
+  // defaults false while /auth/me is loading, matching non-seating's pre-existing
+  // never-mandatory behavior.
+  const waiterMandatoryNonSeating = meData?.waiter_mandatory_non_seating_enabled === true;
+  const isNonSeating = tableId === null;
+  const effectiveWaiterMandatory = isNonSeating ? waiterMandatoryNonSeating : waiterMandatory;
   const readyToOrder =
-    Boolean(sectionId) && (isWaiterRole || tableId === null || !waiterMandatory || Boolean(waiterId));
+    Boolean(sectionId) && (isWaiterRole || !effectiveWaiterMandatory || Boolean(waiterId));
   const missingSelectionMessage = !sectionId
     ? "Select a table or Takeaway first"
     : !readyToOrder
@@ -433,6 +438,7 @@ export function usePosDraftOrder() {
     syncError,
     readyToOrder,
     waiterMandatory,
+    waiterMandatoryNonSeating,
     missingSelectionMessage,
     actionNotice,
     setActionNotice,

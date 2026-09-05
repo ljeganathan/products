@@ -24,3 +24,11 @@ class WaiterMandatorySettingsRequest(BaseModel):
 
 class WaiterMandatorySettingsResponse(BaseModel):
     enabled: bool
+
+
+class WaiterMandatoryNonSeatingSettingsRequest(BaseModel):
+    enabled: bool
+
+
+class WaiterMandatoryNonSeatingSettingsResponse(BaseModel):
+    enabled: bool

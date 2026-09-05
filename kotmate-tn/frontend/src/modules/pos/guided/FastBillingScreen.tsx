@@ -15,6 +15,7 @@ interface FastBillingScreenProps {
   sections: PosSection[];
   waiterLocked: boolean;
   waiterMandatory: boolean;
+  waiterMandatoryNonSeating: boolean;
   allItems: PosItem[];
   onSelectTable: (selection: TableSelection) => void | Promise<void>;
   onSelectWaiter: (waiterId: string) => void | Promise<void>;
@@ -33,6 +34,7 @@ export function FastBillingScreen({
   sections,
   waiterLocked,
   waiterMandatory,
+  waiterMandatoryNonSeating,
   allItems,
   onSelectTable,
   onSelectWaiter,
@@ -70,6 +72,7 @@ export function FastBillingScreen({
             sections={sections}
             waiterLocked={waiterLocked}
             waiterMandatory={waiterMandatory}
+            waiterMandatoryNonSeating={waiterMandatoryNonSeating}
             onSelectTable={onSelectTable}
             onSelectWaiter={onSelectWaiter}
             onAddItemByCode={onAddItemByCode}

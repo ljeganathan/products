@@ -71,6 +71,14 @@ class Tenant(UUIDPKMixin, TimestampMixin, Base):
     # any layout, regardless of this toggle. Defaults true to match the pre-existing
     # always-mandatory behavior, so no tenant's POS experience changes on deploy.
     waiter_mandatory_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Separate, narrower "Require waiter selection" toggle scoped to non-seating orders
+    # only (Takeaway/Online Delivery) — admin-settings-only, never exposed on the POS
+    # screen, common to both POS layouts like waiter_mandatory_enabled above. Independent
+    # of that toggle: a tenant can require a waiter for dine-in but not takeaway, or vice
+    # versa. Defaults False to match today's actual behavior (non-seating never requires
+    # a waiter on either layout, regardless of waiter_mandatory_enabled), so no tenant's
+    # POS experience changes on deploy.
+    waiter_mandatory_non_seating_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         CheckConstraint(_STATE_CHECK_SQL, name="ck_tenants_state_valid"),

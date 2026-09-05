@@ -357,6 +357,10 @@ class ReportBody:
       text column followed by right-aligned numeric ones) — Item List's print body is
       the one exception, with two leading text columns (Code, Name), so it sets this
       to `{0, 1}` instead of leaving Name to fall under the numeric-column default.
+      `expand_column`/`column_max_widths` feed `report_print.column_widths` directly
+      (see its docstring) — every report leaves both at their defaults (surplus width
+      goes to column 0, no cap) except Item List, which hands surplus to Name (column
+      1) instead and caps Code (column 0) to 4 characters.
     """
 
     kind: Literal["grid", "keyvalue"]
@@ -367,6 +371,8 @@ class ReportBody:
     tamil_names: dict[int, str] = field(default_factory=dict)
     pairs: list[tuple[str, str]] = field(default_factory=list)
     left_align_columns: set[int] = field(default_factory=lambda: {0})
+    expand_column: int = 0
+    column_max_widths: dict[int, int] = field(default_factory=dict)
 
 
 @dataclass

@@ -12,6 +12,7 @@ interface FastBillingModalProps {
   sections: PosSection[];
   waiterLocked: boolean;
   waiterMandatory: boolean;
+  waiterMandatoryNonSeating: boolean;
   onSelectTable: (selection: TableSelection) => void | Promise<void>;
   onSelectWaiter: (waiterId: string) => void | Promise<void>;
   onAddItemByCode: (code: string) => Promise<ItemCodeResult>;
@@ -28,6 +29,7 @@ export function FastBillingModal({
   sections,
   waiterLocked,
   waiterMandatory,
+  waiterMandatoryNonSeating,
   onSelectTable,
   onSelectWaiter,
   onAddItemByCode,
@@ -42,6 +44,7 @@ export function FastBillingModal({
           sections={sections}
           waiterLocked={waiterLocked}
           waiterMandatory={waiterMandatory}
+          waiterMandatoryNonSeating={waiterMandatoryNonSeating}
           onSelectTable={onSelectTable}
           onSelectWaiter={onSelectWaiter}
           onAddItemByCode={onAddItemByCode}

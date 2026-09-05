@@ -53,6 +53,26 @@ export async function getDashboardSummary(params?: {
   return (await api.get<DashboardSummary>("/api/v1/dashboard/summary", { params })).data;
 }
 
+export interface HourlyItemRow {
+  item_id: string;
+  name_en: string;
+  sales: number;
+  quantity_sold: number;
+}
+
+export interface HourlyItemBreakdown {
+  hour: number;
+  rows: HourlyItemRow[];
+}
+
+export async function getHourlyItemBreakdown(params: {
+  hour: number;
+  report_date?: string;
+  location_id?: string;
+}): Promise<HourlyItemBreakdown> {
+  return (await api.get<HourlyItemBreakdown>("/api/v1/dashboard/hourly-items", { params })).data;
+}
+
 export async function getMultiLocationComparison(params: {
   date_from: string;
   date_to: string;

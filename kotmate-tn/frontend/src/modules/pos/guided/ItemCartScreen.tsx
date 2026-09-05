@@ -135,7 +135,11 @@ export function ItemCartScreen({ draft, onBack, onSelectCustomer, onOpenBilling 
             onSelect={onSelectCustomer}
           />
         )}
-        {!isNonSeating && (
+        {/* Shown for every dine-in order, and for a non-seating order only once a
+            waiter has actually been assigned (the "Require waiter selection for Non
+            seating" toggle, when on, assigns one before this screen is ever reached —
+            when off, non-seating orders have no waiter concept to surface here). */}
+        {(!isNonSeating || waiterId) && (
           <span className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-gold bg-gold-soft px-3 text-sm font-bold text-gold">
             🧑‍🍳 {currentWaiter ? currentWaiter.name : "Unassigned"}
           </span>

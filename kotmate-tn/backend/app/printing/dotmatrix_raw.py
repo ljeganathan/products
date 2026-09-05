@@ -74,7 +74,9 @@ def render_report(data: ReportRenderData) -> str:
         for label, value in body.pairs:
             lines.extend(two_column_lines(label, value, line_width))
     else:
-        widths = report_print.column_widths(body.headers, body.rows, line_width)
+        widths = report_print.column_widths(
+            body.headers, body.rows, line_width, body.expand_column, body.column_max_widths
+        )
         lines.append(report_print.format_row(body.headers, widths, body.left_align_columns))
         lines.append(sep)
         for row in body.rows:

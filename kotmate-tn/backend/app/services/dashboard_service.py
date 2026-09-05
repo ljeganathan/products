@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Bill, BillItem, TenantLocation
 from app.schemas.dashboard import (
     DashboardSummaryResponse,
+    HourlyItemBreakdownResponse,
+    HourlyItemRow,
     HourlySalesPoint,
     LocationComparisonRow,
     LowStockItemRow,
@@ -83,6 +85,45 @@ async def dashboard_summary(
         average_bill_value=average_bill_value,
         top_items=top_items,
         hourly_trend=hourly_trend,
+    )
+
+
+async def hourly_item_breakdown(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    report_date: date,
+    location_id: uuid.UUID | None,
+    hour: int,
+) -> HourlyItemBreakdownResponse:
+    """Item-level drilldown for one bar of the Hourly Sales Trend chart — same day/
+    location scope as `dashboard_summary`'s own `hourly_trend`, filtered down to the
+    single IST hour tapped, broken out per item instead of summed. Ordered by sales
+    value descending (production feedback), not quantity — a manager taps a rush-hour
+    bar to see what actually drove that hour's revenue, not just what moved the most
+    units (a ₹10 item selling 20x shouldn't outrank a ₹500 item selling twice).
+    """
+    filters = _day_filters(tenant_id, report_date, location_id)
+    hour_expr = func.extract("hour", func.timezone(_IST, Bill.created_at))
+    rows = (
+        await session.execute(
+            select(
+                BillItem.item_id,
+                BillItem.name_en_snapshot,
+                func.sum(BillItem.line_total),
+                func.sum(BillItem.quantity),
+            )
+            .join(Bill, Bill.id == BillItem.bill_id)
+            .where(*filters, hour_expr == hour)
+            .group_by(BillItem.item_id, BillItem.name_en_snapshot)
+            .order_by(func.sum(BillItem.line_total).desc())
+        )
+    ).all()
+    return HourlyItemBreakdownResponse(
+        hour=hour,
+        rows=[
+            HourlyItemRow(item_id=item_id, name_en=name_en, sales=float(sales), quantity_sold=int(qty))
+            for item_id, name_en, sales, qty in rows
+        ],
     )
 
 

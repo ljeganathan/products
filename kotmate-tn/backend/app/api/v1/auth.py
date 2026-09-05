@@ -169,6 +169,7 @@ async def me(
             report_tamil_names_enabled=False,
             pos_layout="default",
             waiter_mandatory_enabled=True,
+            waiter_mandatory_non_seating_enabled=False,
         )
 
     # `/me` serves every tenant-scoped role, not just one — set the RLS session var
@@ -197,6 +198,7 @@ async def me(
         report_tamil_names_enabled=tenant.report_tamil_names_enabled,
         pos_layout=tenant.pos_layout,
         waiter_mandatory_enabled=tenant.waiter_mandatory_enabled,
+        waiter_mandatory_non_seating_enabled=tenant.waiter_mandatory_non_seating_enabled,
     )
 
 

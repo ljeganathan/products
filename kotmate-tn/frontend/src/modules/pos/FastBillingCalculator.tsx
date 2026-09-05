@@ -28,10 +28,12 @@ export interface FastBillingCalculatorProps {
   // code that has only one possible answer.
   waiterLocked: boolean;
   // Tenant-wide "Require waiter selection" setting, common to both POS layouts — when
-  // false, the Waiter slot is skippable even for a real table (matches Default/Guided
-  // POS's main billing screens no longer hard-requiring one either). Non-seating
-  // selections always skip the Waiter slot regardless of this value.
+  // false, the Waiter slot is skippable for a real table (matches Default/Guided POS's
+  // main billing screens no longer hard-requiring one either).
   waiterMandatory: boolean;
+  // Separate, narrower toggle scoped to non-seating selections (Takeaway/Online
+  // Delivery) only — independent of waiterMandatory above.
+  waiterMandatoryNonSeating: boolean;
   onSelectTable: (selection: TableSelection) => void | Promise<void>;
   onSelectWaiter: (waiterId: string) => void | Promise<void>;
   onAddItemByCode: (code: string) => Promise<ItemCodeResult>;
@@ -83,6 +85,7 @@ export const FastBillingCalculator = forwardRef<FastBillingCalculatorHandle, Fas
       sections,
       waiterLocked,
       waiterMandatory,
+      waiterMandatoryNonSeating,
       onSelectTable,
       onSelectWaiter,
       onAddItemByCode,
@@ -91,12 +94,12 @@ export const FastBillingCalculator = forwardRef<FastBillingCalculatorHandle, Fas
     ref,
   ) {
   const nonSeatingSections = sections.filter((s) => !s.is_seating);
-  // Non-seating never needs a waiter, on any layout — set once the Table slot
-  // resolves to a non-seating section (selectNonSeating below) and never toggled back
-  // by anything else, matching how a real table pick's own resolution is permanent
-  // for this component's lifetime too.
+  // Set once the Table slot resolves to a non-seating section (selectNonSeating below)
+  // and never toggled back by anything else, matching how a real table pick's own
+  // resolution is permanent for this component's lifetime too.
   const [pickedNonSeating, setPickedNonSeating] = useState(false);
-  const skipWaiterSlot = waiterLocked || pickedNonSeating || !waiterMandatory;
+  const skipWaiterSlot =
+    waiterLocked || (pickedNonSeating ? !waiterMandatoryNonSeating : !waiterMandatory);
   const slots: Slot[] = skipWaiterSlot ? ["table", "item"] : ["table", "waiter", "item"];
   const [active, setActive] = useState<Slot>("table");
   const [tableCode, setTableCode] = useState("");
@@ -282,6 +285,7 @@ export const FastBillingCalculator = forwardRef<FastBillingCalculatorHandle, Fas
     resolvedWaiter,
     waiterLocked,
     waiterMandatory,
+    waiterMandatoryNonSeating,
     pickedNonSeating,
   ]);
 

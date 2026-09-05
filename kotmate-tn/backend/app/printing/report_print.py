@@ -13,10 +13,24 @@ from app.printing.base import line_chars_for_paper_width
 _MIN_COLUMN_WIDTH = 6
 
 
-def column_widths(headers: list[str], rows: list[list[str]], width: int) -> list[int]:
+def column_widths(
+    headers: list[str],
+    rows: list[list[str]],
+    width: int,
+    expand_column: int = 0,
+    max_widths: dict[int, int] | None = None,
+) -> list[int]:
     """Returns each column's own character width — `format_row` below joins them with a
     single delimiter space, so the total printed width is `sum(widths) + (n - 1)`, not
     `width` itself; every width computed here already accounts for that.
+
+    `expand_column` picks which column absorbs leftover width when everything already
+    fits (defaults to 0 — the label column, for every existing report). Item List's
+    print body is the one exception: its column 0 is "Code", not the label, so it
+    passes `expand_column=1` to hand any surplus to "Name" instead. `max_widths` caps
+    a column's natural width regardless of its own content (Item List again — item
+    codes are 4-digit by convention, so an outlier longer code shouldn't blow up the
+    Code column or steal width the Name column actually needs).
     """
     n = len(headers)
     if n == 0:
@@ -38,13 +52,16 @@ def column_widths(headers: list[str], rows: list[list[str]], width: int) -> list
         for i, cell in enumerate(row):
             if len(cell) > natural[i]:
                 natural[i] = len(cell)
+    for i, cap in (max_widths or {}).items():
+        natural[i] = min(natural[i], cap)
     total_natural = sum(natural)
 
     if total_natural <= usable:
-        # Room to spare — hand it to the first (label) column for readability, same
-        # convention a real till-roll Z-report/summary uses (wide label, tight numbers).
+        # Room to spare — hand it to the expand column (the label, for every report
+        # except Item List) for readability, same convention a real till-roll
+        # Z-report/summary uses (wide label, tight numbers).
         widths = list(natural)
-        widths[0] += usable - total_natural
+        widths[expand_column] += usable - total_natural
         return widths
 
     # Doesn't fit. The last column is almost always the primary money figure (revenue,

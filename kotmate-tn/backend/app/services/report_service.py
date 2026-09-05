@@ -513,16 +513,18 @@ async def pos_operator_incentive_report(
 
 async def item_list(session: AsyncSession, tenant_id: uuid.UUID) -> ItemListResponse:
     """Item master data, not a sales figure — every active item, grouped by category
-    (category display_order, then item name alphabetically within it) with its base
-    price and any active per-section price overrides. There's no date range or
-    `_bill_filters` scope here at all, unlike every other report in this module.
+    (category display_order, then item code within it, since that's the order a
+    laminated counter list/price list is actually read in — falling back to name for
+    any item with no code, which sort last) with its base price and any active
+    per-section price overrides. There's no date range or `_bill_filters` scope here at
+    all, unlike every other report in this module.
     """
     rows = (
         await session.execute(
             select(Item, Category)
             .join(Category, Category.id == Item.category_id)
             .where(Item.tenant_id == tenant_id, Item.is_active.is_(True))
-            .order_by(Category.display_order, Category.name_en, Item.name_en)
+            .order_by(Category.display_order, Category.name_en, Item.item_code, Item.name_en)
         )
     ).all()
 

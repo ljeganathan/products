@@ -261,7 +261,9 @@ def render_report(data: ReportRenderData) -> bytes:
             for line in two_column_lines(label, value, line_width):
                 out += _text(line)
     else:
-        widths = report_print.column_widths(body.headers, body.rows, line_width)
+        widths = report_print.column_widths(
+            body.headers, body.rows, line_width, body.expand_column, body.column_max_widths
+        )
         out += (
             _BOLD_ON
             + _text(report_print.format_row(body.headers, widths, body.left_align_columns))

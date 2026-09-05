@@ -15,6 +15,18 @@ class HourlySalesPoint(BaseModel):
     sales: float
 
 
+class HourlyItemRow(BaseModel):
+    item_id: uuid.UUID
+    name_en: str
+    sales: float
+    quantity_sold: int
+
+
+class HourlyItemBreakdownResponse(BaseModel):
+    hour: int
+    rows: list[HourlyItemRow]
+
+
 class DashboardSummaryResponse(BaseModel):
     """Basic KPIs available at every plan tier (CLAUDE.md §6 — Lite gets "basic KPIs").
     `hourly_trend` is always returned (cheap to compute alongside everything else); the

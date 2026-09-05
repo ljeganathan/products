@@ -44,6 +44,7 @@ export function GuidedPOSPage() {
     order,
     waiterId,
     waiterMandatory,
+    waiterMandatoryNonSeating,
     actionNotice,
     setActionNotice,
     pendingSectionChange,
@@ -104,9 +105,18 @@ export function GuidedPOSPage() {
     }
   }
 
-  function handleSelectNonSeating(section: PosSection) {
-    void handleSelectTable({ kind: "direct", sectionId: section.id, tableId: null });
-    setScreen("item-cart");
+  async function handleSelectNonSeating(section: PosSection) {
+    const selection: TableSelection = { kind: "direct", sectionId: section.id, tableId: null };
+    await handleSelectTable(selection);
+    // The tenant's "Require waiter selection for Non seating" toggle — separate from
+    // and independent of the dine-in waiter-mandatory toggle above. A waiter already
+    // assigned (e.g. carried over from switching order type mid-session) still skips
+    // the popup, same as the dine-in flow.
+    if (!isWaiterRole && waiterMandatoryNonSeating && !waiterId) {
+      setPendingWaiterFor(selection);
+    } else {
+      setScreen("item-cart");
+    }
   }
 
   async function handleWaiterPicked(waiterId: string) {
@@ -217,7 +227,7 @@ export function GuidedPOSPage() {
                 tables={tables}
                 openOrders={openOrders}
                 onSelectTable={(table) => void selectCustomerSlot(table, "Customer-1")}
-                onSelectNonSeating={handleSelectNonSeating}
+                onSelectNonSeating={(section) => void handleSelectNonSeating(section)}
               />
             ) : (
               <ItemCartScreen
@@ -246,6 +256,7 @@ export function GuidedPOSPage() {
               sections={sections}
               waiterLocked={isWaiterRole}
               waiterMandatory={waiterMandatory}
+              waiterMandatoryNonSeating={waiterMandatoryNonSeating}
               allItems={draft.allItems}
               onSelectTable={handleSelectTable}
               onSelectWaiter={handleSelectWaiter}

@@ -24,7 +24,11 @@ import {
 } from "@/modules/admin/locationsApi";
 import { updateCategoryDisplaySetting } from "@/modules/admin/categoryDisplaySettingsApi";
 import { updateDefaultPaymentMethod } from "@/modules/admin/paymentPreferencesApi";
-import { updatePosLayoutSetting, updateWaiterMandatorySetting } from "@/modules/admin/posLayoutSettingsApi";
+import {
+  updatePosLayoutSetting,
+  updateWaiterMandatoryNonSeatingSetting,
+  updateWaiterMandatorySetting,
+} from "@/modules/admin/posLayoutSettingsApi";
 import { PrinterFormModal } from "@/modules/admin/PrintersPage";
 import { type Printer, listPrinters } from "@/modules/admin/printersApi";
 import {
@@ -174,6 +178,10 @@ function PreferencesTab({
     mutationFn: (next: boolean) => updateWaiterMandatorySetting(next),
     onSuccess: invalidateMe,
   });
+  const waiterMandatoryNonSeatingMutation = useMutation({
+    mutationFn: (next: boolean) => updateWaiterMandatoryNonSeatingSetting(next),
+    onSuccess: invalidateMe,
+  });
 
   const posLayout = meData?.pos_layout ?? "default";
 
@@ -207,6 +215,16 @@ function PreferencesTab({
           onChange={(next) => waiterMandatoryMutation.mutate(next)}
           label="Require waiter selection"
           description="When off, billing a dine-in order no longer requires a waiter to be assigned first, on either POS layout — the bill just shows Unassigned. Takeaway/Online Delivery orders never require a waiter regardless of this setting."
+        />
+      </div>
+
+      <div className="rounded-lg border border-border bg-surface p-4">
+        <Switch
+          checked={meData?.waiter_mandatory_non_seating_enabled === true}
+          disabled={waiterMandatoryNonSeatingMutation.isPending}
+          onChange={(next) => waiterMandatoryNonSeatingMutation.mutate(next)}
+          label="Require waiter selection for Non seating (Takeaway/Online)"
+          description="When on, a waiter must also be assigned before billing a Takeaway/Online Delivery order, on either POS layout. Independent of the dine-in toggle above — off by default, since Takeaway/Online Delivery never required a waiter before."
         />
       </div>
 

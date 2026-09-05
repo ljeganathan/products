@@ -10,12 +10,14 @@ from app.db.session import get_db
 from app.models import Tenant
 from app.schemas.dashboard import (
     DashboardSummaryResponse,
+    HourlyItemBreakdownResponse,
     LowStockItemsResponse,
     MultiLocationComparisonResponse,
     SalesTrendResponse,
 )
 from app.services.dashboard_service import (
     dashboard_summary,
+    hourly_item_breakdown,
     low_stock_items,
     multi_location_comparison,
     sales_trend,
@@ -42,6 +44,26 @@ async def get_dashboard_summary(
     frontend decides whether to render `hourly_trend` as a chart based on the plan.
     """
     return await dashboard_summary(db, current_user.tenant_id, report_date or date.today(), location_id)
+
+
+@router.get("/hourly-items", response_model=HourlyItemBreakdownResponse)
+async def get_hourly_item_breakdown(
+    hour: int,
+    report_date: date | None = None,
+    location_id: uuid.UUID | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> HourlyItemBreakdownResponse:
+    """Item-level drilldown for a single bar of the Hourly Sales Trend chart — same
+    no-extra-gating convention as `/summary` (basic KPIs, every plan tier); the
+    frontend only renders the chart (and so only ever calls this) once it's already
+    decided the tenant's plan has charts.
+    """
+    if not 0 <= hour <= 23:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "hour must be between 0 and 23")
+    return await hourly_item_breakdown(
+        db, current_user.tenant_id, report_date or date.today(), location_id, hour
+    )
 
 
 @router.get("/low-stock-items", response_model=LowStockItemsResponse)

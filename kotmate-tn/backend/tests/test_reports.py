@@ -457,6 +457,40 @@ async def test_z_report_matches_sales_summary(client: AsyncClient, tenant_admin:
     assert body["payments"] == [{"method": "cash", "amount": 420.0}]
 
 
+async def test_item_list_grouped_by_category_ordered_by_item_code(
+    client: AsyncClient, tenant_admin: dict
+):
+    headers = tenant_admin["headers"]
+    # Category B before Category A alphabetically but created second — display_order
+    # (creation order here) still drives category grouping, unaffected by this change.
+    cat_a = await _create_category(client, headers, name_en="Beverages")
+    cat_b = await _create_category(client, headers, name_en="Starters")
+
+    # Within each category, items are added out of code order — the report must sort
+    # them back into ascending item_code, not name_en (the old behavior).
+    await _create_item(client, headers, cat_a["id"], name_en="Filter Coffee", item_code="205")
+    await _create_item(client, headers, cat_a["id"], name_en="Tea", item_code="102")
+    # No code at all — sorts after every coded item in its category.
+    await _create_item(client, headers, cat_a["id"], name_en="Buttermilk")
+
+    await _create_item(client, headers, cat_b["id"], name_en="Veg Manchurian", item_code="310")
+    await _create_item(client, headers, cat_b["id"], name_en="Gobi 65", item_code="301")
+
+    resp = await client.get("/api/v1/reports/item-list", headers=headers)
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+
+    beverages = [r["name_en"] for r in rows if r["category_name_en"] == "Beverages"]
+    starters = [r["name_en"] for r in rows if r["category_name_en"] == "Starters"]
+    assert beverages == ["Tea", "Filter Coffee", "Buttermilk"]
+    assert starters == ["Gobi 65", "Veg Manchurian"]
+    # Category grouping preserved (by creation/display_order — Beverages before
+    # Starters) — every Beverages row appears contiguously before every Starters row,
+    # not interleaved.
+    category_sequence = [r["category_name_en"] for r in rows]
+    assert category_sequence == ["Beverages"] * 3 + ["Starters"] * 2
+
+
 async def test_waiter_role_blocked_from_all_reports(client: AsyncClient, tenant_admin: dict):
     headers = tenant_admin["headers"]
     waiter_user = (

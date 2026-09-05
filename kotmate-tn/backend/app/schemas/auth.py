@@ -61,3 +61,8 @@ class MeResponse(BaseModel):
     # value. Never applies to non-seating orders on either layout. True for
     # product_owner, matching the pre-existing always-mandatory default.
     waiter_mandatory_enabled: bool
+    # Separate, narrower "Require waiter selection" toggle scoped to non-seating orders
+    # (Takeaway/Online Delivery) only — raw tenant value, independent of
+    # waiter_mandatory_enabled above. False for product_owner, matching the pre-existing
+    # "non-seating never requires a waiter" default.
+    waiter_mandatory_non_seating_enabled: bool

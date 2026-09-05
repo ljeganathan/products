@@ -9,3 +9,11 @@ export async function updatePosLayoutSetting(layout: "default" | "guided"): Prom
 export async function updateWaiterMandatorySetting(enabled: boolean): Promise<{ enabled: boolean }> {
   return (await api.patch<{ enabled: boolean }>("/api/v1/settings/waiter-mandatory", { enabled })).data;
 }
+
+export async function updateWaiterMandatoryNonSeatingSetting(
+  enabled: boolean,
+): Promise<{ enabled: boolean }> {
+  return (
+    await api.patch<{ enabled: boolean }>("/api/v1/settings/waiter-mandatory-non-seating", { enabled })
+  ).data;
+}

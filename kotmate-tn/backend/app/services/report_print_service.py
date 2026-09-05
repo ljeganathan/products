@@ -275,8 +275,20 @@ def item_list_print_body(rows_data: list[ItemListRow]) -> ReportBody:
     # Two leading text columns (Code, Name) — ReportBody's left_align_columns defaults
     # to just {0}, which would right-justify Name against the Price column (bug fix:
     # Name was printing flush-right instead of left-aligned once Code pushed it to
-    # column 1).
-    return ReportBody(kind="grid", headers=headers, rows=rows, bold_rows=bold_rows, left_align_columns={0, 1})
+    # column 1). Code is capped to 4 characters (item codes are 4-digit by convention)
+    # and any leftover width goes to Name instead of Code — column_widths' own default
+    # of "surplus to column 0" assumes column 0 is the label, which isn't true here
+    # (production feedback: the Code column was printing far wider than a 4-digit code
+    # ever needs, at Name's expense).
+    return ReportBody(
+        kind="grid",
+        headers=headers,
+        rows=rows,
+        bold_rows=bold_rows,
+        left_align_columns={0, 1},
+        expand_column=1,
+        column_max_widths={0: 4},
+    )
 
 
 def item_list_export_grid(rows_data: list[ItemListRow]) -> tuple[list[str], list[list[str]]]:

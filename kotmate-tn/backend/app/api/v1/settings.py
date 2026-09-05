@@ -12,6 +12,8 @@ from app.schemas.hotel_master import HotelMasterResponse, HotelMasterUpdateReque
 from app.schemas.pos_layout import (
     PosLayoutSettingsRequest,
     PosLayoutSettingsResponse,
+    WaiterMandatoryNonSeatingSettingsRequest,
+    WaiterMandatoryNonSeatingSettingsResponse,
     WaiterMandatorySettingsRequest,
     WaiterMandatorySettingsResponse,
 )
@@ -216,6 +218,26 @@ async def update_waiter_mandatory_setting(
     tenant.waiter_mandatory_enabled = payload.enabled
     await db.commit()
     return WaiterMandatorySettingsResponse(enabled=tenant.waiter_mandatory_enabled)
+
+
+@router.patch(
+    "/waiter-mandatory-non-seating",
+    response_model=WaiterMandatoryNonSeatingSettingsResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def update_waiter_mandatory_non_seating_setting(
+    payload: WaiterMandatoryNonSeatingSettingsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> WaiterMandatoryNonSeatingSettingsResponse:
+    """Separate, narrower toggle scoped to non-seating orders (Takeaway/Online
+    Delivery) only — common to both POS layouts, independent of /waiter-mandatory
+    above. Defaults False (non-seating never required a waiter until this was added).
+    """
+    tenant = await _get_tenant(db, current_user)
+    tenant.waiter_mandatory_non_seating_enabled = payload.enabled
+    await db.commit()
+    return WaiterMandatoryNonSeatingSettingsResponse(enabled=tenant.waiter_mandatory_non_seating_enabled)
 
 
 @router.post(

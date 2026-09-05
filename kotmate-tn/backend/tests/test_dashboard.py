@@ -76,6 +76,69 @@ async def test_dashboard_summary_reconciles_with_bills(client: AsyncClient, tena
     assert sum(h["sales"] for h in body["hourly_trend"]) == body["today_sales"]
 
 
+async def test_hourly_item_breakdown_reconciles_and_sorts_by_sales_desc(
+    client: AsyncClient, tenant_admin: dict
+):
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    category = await _create_category(client, headers)
+    # Cheaper item sold twice (qty 2 x 50 = 100) still ranks below the pricier item
+    # sold once (200) — confirms the ordering is by sales value, not quantity.
+    cheap_item = await _create_item(client, headers, category["id"], name_en="Tea", price=50)
+    pricey_item = await _create_item(client, headers, category["id"], name_en="Meals", price=200)
+
+    order = (
+        await client.post(
+            "/api/v1/orders",
+            json={
+                "location_id": location_id,
+                "section_id": section_id,
+                "items": [
+                    {"item_id": cheap_item["id"], "quantity": 2},
+                    {"item_id": pricey_item["id"], "quantity": 1},
+                ],
+            },
+            headers=headers,
+        )
+    ).json()
+    bill = await client.post(
+        "/api/v1/bills",
+        json={"order_id": order["id"], "payments": [{"method": "upi", "amount": 300.0}]},
+        headers=headers,
+    )
+    assert bill.status_code == 201, bill.text
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    current_hour = datetime.now(ZoneInfo("Asia/Kolkata")).hour
+
+    resp = await client.get(
+        "/api/v1/dashboard/hourly-items", params={"hour": current_hour}, headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["hour"] == current_hour
+    rows = body["rows"]
+    assert [r["item_id"] for r in rows] == [pricey_item["id"], cheap_item["id"]]
+    assert rows[0]["sales"] == 200.0
+    assert rows[1]["sales"] == 100.0
+    assert rows[1]["quantity_sold"] == 2
+
+    other_hour = (current_hour + 12) % 24
+    empty_resp = await client.get(
+        "/api/v1/dashboard/hourly-items", params={"hour": other_hour}, headers=headers
+    )
+    assert empty_resp.status_code == 200
+    assert empty_resp.json()["rows"] == []
+
+    bad_resp = await client.get(
+        "/api/v1/dashboard/hourly-items", params={"hour": 24}, headers=headers
+    )
+    assert bad_resp.status_code == 400
+
+
 async def test_dashboard_summary_available_on_lite(client: AsyncClient, tenant_admin: dict):
     resp = await client.get("/api/v1/dashboard/summary", headers=tenant_admin["headers"])
     assert resp.status_code == 200
