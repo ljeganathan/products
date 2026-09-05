@@ -1,7 +1,7 @@
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import Integer, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -518,13 +518,32 @@ async def item_list(session: AsyncSession, tenant_id: uuid.UUID) -> ItemListResp
     any item with no code, which sort last) with its base price and any active
     per-section price overrides. There's no date range or `_bill_filters` scope here at
     all, unlike every other report in this module.
+
+    `item_code` is a free-text `String` column (CLAUDE.md §8), so a plain
+    `ORDER BY item_code` sorts lexically — "10"/"11" land right after "1" and before
+    "2" (production feedback: a real code list with codes 1-11 printed 1, 10, 11, 2,
+    3, ...). All-digit codes are cast to an integer for ordering instead; a code that
+    isn't purely numeric (or missing) falls back to sorting lexically after every
+    numeric-coded item in the same category, rather than raising or silently
+    mis-sorting against them.
     """
+    numeric_code = case(
+        (Item.item_code.op("~")(r"^\d+$"), cast(Item.item_code, Integer)),
+        else_=None,
+    )
     rows = (
         await session.execute(
             select(Item, Category)
             .join(Category, Category.id == Item.category_id)
             .where(Item.tenant_id == tenant_id, Item.is_active.is_(True))
-            .order_by(Category.display_order, Category.name_en, Item.item_code, Item.name_en)
+            .order_by(
+                Category.display_order,
+                Category.name_en,
+                numeric_code.is_(None),
+                numeric_code,
+                Item.item_code,
+                Item.name_en,
+            )
         )
     ).all()
 

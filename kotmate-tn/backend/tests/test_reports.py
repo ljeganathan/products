@@ -467,10 +467,18 @@ async def test_item_list_grouped_by_category_ordered_by_item_code(
     cat_b = await _create_category(client, headers, name_en="Starters")
 
     # Within each category, items are added out of code order — the report must sort
-    # them back into ascending item_code, not name_en (the old behavior).
-    await _create_item(client, headers, cat_a["id"], name_en="Filter Coffee", item_code="205")
-    await _create_item(client, headers, cat_a["id"], name_en="Tea", item_code="102")
-    # No code at all — sorts after every coded item in its category.
+    # them back into ascending item_code, not name_en (the old behavior). Codes 1, 2,
+    # 10, 11 are the actual reported bug: a plain string ORDER BY puts "10"/"11" right
+    # after "1" and before "2" (lexical: "1" < "10" < "11" < "2") — this must instead
+    # come out numerically (1, 2, 10, 11).
+    await _create_item(client, headers, cat_a["id"], name_en="Parcel Tea", item_code="10")
+    await _create_item(client, headers, cat_a["id"], name_en="Country Sugar Tea", item_code="11")
+    await _create_item(client, headers, cat_a["id"], name_en="Tea", item_code="1")
+    await _create_item(client, headers, cat_a["id"], name_en="Coffee", item_code="2")
+    # Non-numeric code — sorts after every numeric-coded item in its category, not
+    # interleaved by lexical accident.
+    await _create_item(client, headers, cat_a["id"], name_en="Special Combo", item_code="A1")
+    # No code at all — sorts after every coded item (numeric or not) in its category.
     await _create_item(client, headers, cat_a["id"], name_en="Buttermilk")
 
     await _create_item(client, headers, cat_b["id"], name_en="Veg Manchurian", item_code="310")
@@ -482,13 +490,13 @@ async def test_item_list_grouped_by_category_ordered_by_item_code(
 
     beverages = [r["name_en"] for r in rows if r["category_name_en"] == "Beverages"]
     starters = [r["name_en"] for r in rows if r["category_name_en"] == "Starters"]
-    assert beverages == ["Tea", "Filter Coffee", "Buttermilk"]
+    assert beverages == ["Tea", "Coffee", "Parcel Tea", "Country Sugar Tea", "Special Combo", "Buttermilk"]
     assert starters == ["Gobi 65", "Veg Manchurian"]
     # Category grouping preserved (by creation/display_order — Beverages before
     # Starters) — every Beverages row appears contiguously before every Starters row,
     # not interleaved.
     category_sequence = [r["category_name_en"] for r in rows]
-    assert category_sequence == ["Beverages"] * 3 + ["Starters"] * 2
+    assert category_sequence == ["Beverages"] * 6 + ["Starters"] * 2
 
 
 async def test_waiter_role_blocked_from_all_reports(client: AsyncClient, tenant_admin: dict):
