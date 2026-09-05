@@ -24,33 +24,44 @@ Decisions locked for this phase (revisit later, don't relitigate here):
 - "I've Paid" only **notifies staff to confirm and finalize at the counter** — it
   never auto-creates a `bills` row. A self-reported UPI payment is not proof of
   payment; a real payment-gateway webhook is a future phase.
-- One shared cart per table-party (reuses the existing `party_label` seat-splitting
-  model, CLAUDE.md §11) — a second phone scanning the same table's QR joins the same
-  live order rather than starting a competing one, matching how a table already works
-  for staff-placed orders.
+- **One physical QR per seat, not per table.** Each printed QR encodes a fixed
+  `(tenant, location, table, customer number)` tuple — reusing the existing
+  `party_label` seat-splitting model (CLAUDE.md §11) directly rather than reinventing
+  it. Nobody, staff or guest, ever picks a location or a customer number by hand
+  anywhere in this flow: a table belongs to exactly one location and a QR belongs to
+  exactly one seat slot, so both are fully determined the moment a QR is scanned. A
+  table with `seating_capacity=4` gets 4 printed QR codes ("Table 5 — Guest 1" … "Guest
+  4"); a party of 2 just uses 2 of them and ignores the rest, same as today's
+  CustomerSelectorBar chips leaving unused slots alone.
 
 ## Scope
 
 ### 1. Data model (additive-only — see CLAUDE.md's DB-safety rule)
 
-- `table_qr_codes` (`UUIDPKMixin`, `TimestampMixin`, `tenant_id_column()`): `location_id`,
-  `table_id` (FK `tables.id`, unique), `qr_token` (opaque random string, unique,
-  never rotates — a torn/reprinted QR is the reset path), `is_active`. One row per
-  physical table, created lazily the first time a `tenant_admin` prints that table's
-  QR from Settings.
+- `table_qr_codes` (`UUIDPKMixin`, `TimestampMixin`, `tenant_id_column()`):
+  `location_id`, `table_id` (FK `tables.id`), `customer_number` (int, 1-based),
+  `qr_token` (opaque random string, unique, never rotates — a torn/reprinted QR is the
+  reset path), `is_active`. Unique on `(table_id, customer_number)` — **one row per
+  seat slot, not per table**. `location_id` is stored directly (not just derivable via
+  `table_id`) for the same reason `orders.location_id` already is: no location-level
+  RLS exists, every query filters explicitly (CLAUDE.md §4). Resolving a `qr_token`
+  is therefore a single lookup that hands back tenant/location/table/customer-number
+  together, with nothing left for the app to infer or a human to choose. Rows for a
+  table are generated together — `min(table.seating_capacity, 4)` of them, same
+  capacity-and-fallback rule the existing `CustomerSelectorBar` chips already use
+  (CLAUDE.md §11) — created lazily the first time a `tenant_admin` prints that table's
+  QR set from Settings.
 - `guest_sessions` (`UUIDPKMixin`, `TimestampMixin`, `tenant_composite_index`):
-  `location_id`, `table_id`, `party_label` (same "Customer-1"/"Customer-2" values
-  Phase 19 already uses), `customer_name`/`customer_phone` (both nullable), `order_id`
+  `location_id`, `table_id`, `party_label` (derived as `f"Customer-{customer_number}"`
+  from the scanned `table_qr_codes` row at session-creation time — never chosen by the
+  guest or assigned by "who scanned first," so it's identical every time that same
+  physical QR is scanned), `customer_name`/`customer_phone` (both nullable), `order_id`
   (nullable until the first item is added), `status` ∈
-  `active`/`payment_claimed`/`closed`, `expires_at`. `location_id` is stored directly
-  rather than left derivable through `table_id` — every location-scoped staff query in
-  this codebase (`orders.location_id` itself included) does the same, since there's no
-  location-level RLS, only explicit app-level filtering (CLAUDE.md §4), and a future
-  staff-facing "active guest sessions" list needs to filter by the currently-selected
-  location the same way `pos-open-orders`/`pos-tables` already do. A partial unique
-  index on `(tenant_id, table_id, party_label) WHERE status='active'` — same guard
-  shape as `orders`' own party-label index — so a second phone resolves to the
-  existing session instead of forking a duplicate cart.
+  `active`/`payment_claimed`/`closed`, `expires_at`. A partial unique index on
+  `(tenant_id, table_id, party_label) WHERE status='active'` — the same index
+  `orders` already has for its own party-label guard — now falls out naturally: since
+  `party_label` is fixed per QR, re-scanning the same physical QR always resolves to
+  its one active session rather than ever forking a duplicate.
 - `orders.source` (`String`, default `'staff'`, values `staff`/`guest`) — additive
   column, every existing row backfills to `'staff'`, zero behavior change for the
   current app. Drives the small "📱 Self-order" badge on the KOT Tickets
@@ -79,31 +90,33 @@ Decisions locked for this phase (revisit later, don't relitigate here):
 ### 2. Guest auth — a second, narrow token type
 
 - `app/core/security.py`: `create_guest_token(guest_session_id, tenant_id, location_id,
-  table_id, expires_delta)` — `type: "guest"` claim (not `"access"`), carries **only**
-  `guest_session_id`/`tenant_id`/`location_id`/`table_id`, no `role`/`user_id`. The
-  `location_id` claim is required, not optional: the guest frontend has no other way
-  to know which location it's ordering at, and it needs that value verbatim to open
-  `/ws/location/{location_id}` for live KOT status (Phase 08's websocket takes
-  `location_id` as a URL path segment the caller must supply, the same way the staff
-  POS screen already does). Also returned directly in the session-creation response
-  body (not just buried in the JWT) so the frontend never has to decode the token
-  just to get a value it needs immediately for its first websocket connect. Reuses
-  the existing `JWT_SECRET`/`_create_token` helper.
+  table_id, customer_number, expires_delta)` — `type: "guest"` claim (not `"access"`),
+  carries **only** `guest_session_id`/`tenant_id`/`location_id`/`table_id`/
+  `customer_number`, no `role`/`user_id`. `location_id` is required, not optional: the
+  guest frontend has no other way to know which location it's ordering at, and it
+  needs that value verbatim to open `/ws/location/{location_id}` for live KOT status
+  (Phase 08's websocket takes `location_id` as a URL path segment the caller must
+  supply, the same way the staff POS screen already does). All of it is also returned
+  directly in the session-creation response body (not just buried in the JWT) so the
+  frontend never has to decode the token just to get values it needs immediately.
+  Reuses the existing `JWT_SECRET`/`_create_token` helper.
 - `app/core/deps.py`: new `CurrentGuest` dataclass (`guest_session_id`, `tenant_id`,
-  `location_id`, `table_id`) + `get_current_guest(credentials)` dependency, parallel
-  to `CurrentUser`/`get_current_user` but rejecting any token
+  `location_id`, `table_id`, `customer_number`) + `get_current_guest(credentials)`
+  dependency, parallel to `CurrentUser`/`get_current_user` but rejecting any token
   whose `type != "guest"`. Guest routes depend on this, never on `get_current_user` —
   the two auth worlds don't mix, so a leaked/expired staff token can never be replayed
   against a guest route or vice versa.
-- `POST /api/v1/guest/sessions/{qr_token}` (no auth — this *is* the login): resolves
-  `qr_token → table_qr_codes → table`, upserts the `active` `guest_sessions` row for
-  `party_label="Customer-1"` (first scan) or the table's current active session
-  (subsequent scans of the same table), returns the guest JWT. Optional
-  `PATCH /api/v1/guest/sessions/me` to set name/phone after the fact — never a
-  precondition to ordering.
+- `POST /api/v1/guest/sessions/{qr_token}` (no auth — this *is* the login): one lookup
+  — `qr_token → table_qr_codes` — hands back `tenant_id`/`location_id`/`table_id`/
+  `customer_number` together, no branching on "is this the first scan of this table."
+  Upserts the `active` `guest_sessions` row for that exact `(table_id, customer_number)`
+  — creating it on a fresh scan, resuming it unchanged on a repeat scan (e.g. the
+  guest closed their browser and rescans the same table tent QR to check order
+  status) — and returns the guest JWT. Optional `PATCH /api/v1/guest/sessions/me` to
+  set name/phone after the fact — never a precondition to ordering.
 - Every other `/api/v1/guest/*` route depends on `get_current_guest` and re-derives
-  `tenant_id`/`table_id` from the token, exactly the way staff routes never trust a
-  client-supplied tenant id.
+  `tenant_id`/`location_id`/`table_id`/`customer_number` from the token, exactly the
+  way staff routes never trust a client-supplied tenant id.
 
 ### 3. Guest ordering — thin wrapper over Phase 07/08, not a parallel implementation
 
@@ -115,8 +128,12 @@ Decisions locked for this phase (revisit later, don't relitigate here):
 - `POST /api/v1/guest/cart` — thin wrapper calling the existing
   `order_service.create_order`/`compute_updated_lines`/`apply_line_changes`, with the
   guest session's `order_id` created against the synthetic system user
-  (`pos_user_id`) and `waiter_id=None` (no waiter involved). Sets
-  `guest_sessions.order_id` on first call.
+  (`pos_user_id`), `waiter_id=None` (no waiter involved), and `party_label` set to the
+  same `f"Customer-{customer_number}"` value already resolved onto the
+  `guest_sessions` row — so the table shows the identical "Customer-2" badge/chip on
+  the staff side (CustomerSelectorBar, cart summary, KOT ticket) whether that customer
+  was seated by a waiter or self-seated via QR. Sets `guest_sessions.order_id` on
+  first call.
 - `POST /api/v1/guest/send-kot` — calls `kot_service.send_kot(session, tenant,
   order_id)` directly (it already takes no `current_user`, CLAUDE.md's existing
   repeat-KOT/stock-deduction logic applies unchanged). A guest can call this
@@ -159,14 +176,16 @@ Decisions locked for this phase (revisit later, don't relitigate here):
 
 - New Settings tab/section (`tenant_admin`, visible only when
   `meData.features?.qr_self_order === true`, same visibility pattern as Phase 22's
-  Stock tab), scoped by the same location switcher Phase 10's Settings page already
-  has for multi-location tenants — a Pro Max tenant with several branches manages and
-  prints each location's own tables' QR codes separately, never a single flat list
-  spanning locations. Within the selected location: a per-table "Generate QR" action
-  (creates the `table_qr_codes` row, stamped with that table's own `location_id`, if
-  missing; shows a printable QR + the table number) and a tenant-wide on/off switch
+  Stock tab): a table list (reusing Table Master's own listing, which already shows
+  each table's location/section) with a **per-table** "Generate QR Codes" action —
+  no location dropdown or "select a location first" step anywhere in this screen,
+  since a table already belongs to exactly one location and that's all the QR
+  generation needs. Tapping it creates `min(table.seating_capacity, 4)` `table_qr_codes`
+  rows in one go (all stamped with that table's own `location_id`), and shows one
+  printable QR per seat, each clearly labeled "Table {number} — Guest {n}" so the
+  restaurant can print/laminate one per seating position. A tenant-wide on/off switch
   (`tenants.qr_self_order_enabled`, default `false` — same additive-toggle shape as
-  `waiter_mandatory_enabled` from Phase 24) so a Pro Max tenant can have the feature
+  `waiter_mandatory_enabled` from Phase 24) lets a Pro Max tenant have the feature
   available but not yet turned on for the floor.
 - `/auth/me` gains `qr_self_order_enabled` (effective flag: plan feature AND tenant
   toggle, same computed-flag convention as `stock_tracking_enabled`).
@@ -193,10 +212,14 @@ Decisions locked for this phase (revisit later, don't relitigate here):
 
 ## Acceptance Criteria
 
-- Scanning a table's QR with no existing active session creates one and lands on the
-  menu with no login/signup screen of any kind; name/phone are always skippable.
-- A second phone scanning the same table's QR while a session is already active joins
-  that same cart (verified by both seeing the same items), not a second competing one.
+- Scanning a table's per-seat QR with no existing active session for that exact seat
+  creates one and lands on the menu with no login/signup screen of any kind; name/phone
+  are always skippable; neither the guest nor staff ever has to pick a location or a
+  customer number anywhere in the flow — both come from which physical QR was scanned.
+- Rescanning that same physical QR later (browser closed, phone locked, etc.) resumes
+  the exact same session/cart rather than forking a new one; a *different* seat's QR
+  at the same table always starts its own independent session, verified by each
+  seeing only its own cart.
 - Adding an out-of-stock (`available_qty=0`, `track_inventory=true`) item is
   impossible from the guest menu, identical to the staff POS grid's own gating.
 - Each "Send to Kitchen" tap fires a real KOT ticket, decrements stock exactly like a
