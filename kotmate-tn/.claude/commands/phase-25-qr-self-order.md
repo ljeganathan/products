@@ -39,12 +39,18 @@ Decisions locked for this phase (revisit later, don't relitigate here):
   physical table, created lazily the first time a `tenant_admin` prints that table's
   QR from Settings.
 - `guest_sessions` (`UUIDPKMixin`, `TimestampMixin`, `tenant_composite_index`):
-  `table_id`, `party_label` (same "Customer-1"/"Customer-2" values Phase 19 already
-  uses), `customer_name`/`customer_phone` (both nullable), `order_id` (nullable until
-  the first item is added), `status` ∈ `active`/`payment_claimed`/`closed`,
-  `expires_at`. A partial unique index on `(tenant_id, table_id, party_label) WHERE
-  status='active'` — same guard shape as `orders`' own party-label index — so a second
-  phone resolves to the existing session instead of forking a duplicate cart.
+  `location_id`, `table_id`, `party_label` (same "Customer-1"/"Customer-2" values
+  Phase 19 already uses), `customer_name`/`customer_phone` (both nullable), `order_id`
+  (nullable until the first item is added), `status` ∈
+  `active`/`payment_claimed`/`closed`, `expires_at`. `location_id` is stored directly
+  rather than left derivable through `table_id` — every location-scoped staff query in
+  this codebase (`orders.location_id` itself included) does the same, since there's no
+  location-level RLS, only explicit app-level filtering (CLAUDE.md §4), and a future
+  staff-facing "active guest sessions" list needs to filter by the currently-selected
+  location the same way `pos-open-orders`/`pos-tables` already do. A partial unique
+  index on `(tenant_id, table_id, party_label) WHERE status='active'` — same guard
+  shape as `orders`' own party-label index — so a second phone resolves to the
+  existing session instead of forking a duplicate cart.
 - `orders.source` (`String`, default `'staff'`, values `staff`/`guest`) — additive
   column, every existing row backfills to `'staff'`, zero behavior change for the
   current app. Drives the small "📱 Self-order" badge on the KOT Tickets
@@ -72,12 +78,20 @@ Decisions locked for this phase (revisit later, don't relitigate here):
 
 ### 2. Guest auth — a second, narrow token type
 
-- `app/core/security.py`: `create_guest_token(guest_session_id, tenant_id, table_id,
-  expires_delta)` — `type: "guest"` claim (not `"access"`), carries **only**
-  `guest_session_id`/`tenant_id`/`table_id`, no `role`/`user_id`/`location_ids`. Reuses
+- `app/core/security.py`: `create_guest_token(guest_session_id, tenant_id, location_id,
+  table_id, expires_delta)` — `type: "guest"` claim (not `"access"`), carries **only**
+  `guest_session_id`/`tenant_id`/`location_id`/`table_id`, no `role`/`user_id`. The
+  `location_id` claim is required, not optional: the guest frontend has no other way
+  to know which location it's ordering at, and it needs that value verbatim to open
+  `/ws/location/{location_id}` for live KOT status (Phase 08's websocket takes
+  `location_id` as a URL path segment the caller must supply, the same way the staff
+  POS screen already does). Also returned directly in the session-creation response
+  body (not just buried in the JWT) so the frontend never has to decode the token
+  just to get a value it needs immediately for its first websocket connect. Reuses
   the existing `JWT_SECRET`/`_create_token` helper.
-- `app/core/deps.py`: new `CurrentGuest` dataclass + `get_current_guest(credentials)`
-  dependency, parallel to `CurrentUser`/`get_current_user` but rejecting any token
+- `app/core/deps.py`: new `CurrentGuest` dataclass (`guest_session_id`, `tenant_id`,
+  `location_id`, `table_id`) + `get_current_guest(credentials)` dependency, parallel
+  to `CurrentUser`/`get_current_user` but rejecting any token
   whose `type != "guest"`. Guest routes depend on this, never on `get_current_user` —
   the two auth worlds don't mix, so a leaked/expired staff token can never be replayed
   against a guest route or vice versa.
@@ -145,8 +159,12 @@ Decisions locked for this phase (revisit later, don't relitigate here):
 
 - New Settings tab/section (`tenant_admin`, visible only when
   `meData.features?.qr_self_order === true`, same visibility pattern as Phase 22's
-  Stock tab): a per-table "Generate QR" action (creates the `table_qr_codes` row if
-  missing, shows a printable QR + the table number) and a tenant-wide on/off switch
+  Stock tab), scoped by the same location switcher Phase 10's Settings page already
+  has for multi-location tenants — a Pro Max tenant with several branches manages and
+  prints each location's own tables' QR codes separately, never a single flat list
+  spanning locations. Within the selected location: a per-table "Generate QR" action
+  (creates the `table_qr_codes` row, stamped with that table's own `location_id`, if
+  missing; shows a printable QR + the table number) and a tenant-wide on/off switch
   (`tenants.qr_self_order_enabled`, default `false` — same additive-toggle shape as
   `waiter_mandatory_enabled` from Phase 24) so a Pro Max tenant can have the feature
   available but not yet turned on for the floor.
@@ -188,6 +206,12 @@ Decisions locked for this phase (revisit later, don't relitigate here):
   behavior (CLAUDE.md §11), never merging into the already-sent line.
 - Guest order-status view reflects a ticket's New → Preparing → Ready transitions
   live, sourced from the same data the Kitchen Display uses.
+- For a tenant with multiple locations: a guest's JWT/session carries the correct
+  `location_id` for the table they actually scanned, their websocket connects to that
+  location's own `/ws/location/{location_id}` channel, and their order/KOT ticket
+  never appears on a different location's Kitchen Display or KOT Tickets popup — a
+  QR code printed for a Branch Two table must never resolve to or affect Main branch
+  data.
 - "Request Bill" never creates a `bills` row and never lets the guest set the order to
   `billed` — only staff calling the existing `POST /bills` does that; a guest token
   calling `POST /bills` directly gets 403 (it isn't even a valid token type for that
