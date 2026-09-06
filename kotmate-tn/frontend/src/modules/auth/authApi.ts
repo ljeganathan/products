@@ -69,6 +69,9 @@ export interface MeResponse {
   // Separate, narrower "Require waiter selection" toggle scoped to non-seating orders
   // (Takeaway/Online Delivery) only — independent of waiter_mandatory_enabled above.
   waiter_mandatory_non_seating_enabled: boolean;
+  // Effective QR self-order state (Phase 25) — plan feature (Pro Max) AND tenant
+  // toggle, same computed-flag convention as stock_tracking_enabled.
+  qr_self_order_enabled: boolean;
 }
 
 export async function me(): Promise<MeResponse> {

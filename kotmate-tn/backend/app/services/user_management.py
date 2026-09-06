@@ -121,7 +121,11 @@ async def list_users(session: AsyncSession, tenant: Tenant) -> list[UserResponse
         await session.execute(
             select(User, Role.code)
             .join(Role, Role.id == User.role_id)
-            .where(User.tenant_id == tenant.id)
+            # Excludes the synthetic QR self-order system account (Phase 25) — it's
+            # already `is_active=False` so it wouldn't be actionable here anyway, but
+            # this filter is explicit so it never appears even if that convention ever
+            # changes.
+            .where(User.tenant_id == tenant.id, User.is_system_account.is_(False))
             .order_by(User.created_at)
         )
     ).all()

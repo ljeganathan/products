@@ -15,6 +15,7 @@ from app.models import (
     AuditLog,
     Bill,
     BillItem,
+    GuestSession,
     HotelMaster,
     Item,
     Order,
@@ -620,6 +621,21 @@ async def finalize_bill(
     # "billed" is set here and only here — every other order-mutating path
     # (schemas/orders.py's EDITABLE_ORDER_STATUSES) explicitly excludes it.
     order.status = "billed"
+
+    # A guest self-order (Phase 25) leaves its `guest_sessions` row live until the
+    # order is actually billed — closing it here, in the same transaction as every
+    # other finalize side effect, means the table's QR is a clean slate for the next
+    # guest the instant staff finalizes, with no separate cleanup job needed. A no-op
+    # for every ordinary staff-placed order (no matching row exists).
+    guest_session = (
+        await session.execute(
+            select(GuestSession).where(
+                GuestSession.order_id == order.id, GuestSession.status != "closed"
+            )
+        )
+    ).scalar_one_or_none()
+    if guest_session is not None:
+        guest_session.status = "closed"
 
     if totals.discount_amount > _AUDIT_DISCOUNT_THRESHOLD:
         session.add(

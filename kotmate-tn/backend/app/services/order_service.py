@@ -234,6 +234,7 @@ async def _build_response(
         waiter_incentive_amount=_incentive_amount(waiter.incentive_rate if waiter else None, subtotal),
         cashier_incentive_amount=_incentive_amount(pos_user.incentive_rate, subtotal),
         created_at=order.created_at,
+        source=order.source,
     )
 
 
@@ -269,8 +270,17 @@ async def _load_lines(session: AsyncSession, order: Order) -> list[_LineData]:
 
 
 async def create_order(
-    session: AsyncSession, tenant_id: uuid.UUID, current_user: CurrentUser, req: OrderCreateRequest
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    current_user: CurrentUser,
+    req: OrderCreateRequest,
+    source: str = "staff",
 ) -> OrderResponse:
+    """`source` defaults to `"staff"` for every existing call site (the staff POS
+    router) — Phase 25's guest ordering is the only caller that passes `"guest"`, to
+    drive the "📱 Self-order" badge on KOT Tickets/Kitchen Display. Purely a display
+    concern; every other code path treats the two identically.
+    """
     await _validate_location(session, tenant_id, req.location_id)
     await _get_section_or_400(session, tenant_id, req.section_id)
     await _validate_table_matches_section(session, tenant_id, req.table_id, req.section_id)
@@ -286,6 +296,7 @@ async def create_order(
         status="open",
         hold_label=req.hold_label,
         party_label=req.party_label,
+        source=source,
     )
     session.add(order)
     await session.flush()
@@ -525,6 +536,7 @@ async def preview_order_update(
         status=data.get("status", order.status),
         hold_label=data.get("hold_label", order.hold_label),
         party_label=data.get("party_label", order.party_label),
+        source=order.source,
     )
     shell.created_at = order.created_at
 

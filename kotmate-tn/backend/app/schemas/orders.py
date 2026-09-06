@@ -93,6 +93,8 @@ class OrderResponse(BaseModel):
     waiter_incentive_amount: float | None
     cashier_incentive_amount: float | None
     created_at: datetime
+    # "staff" or "guest" (Phase 25 QR self-order) — drives the "📱 Self-order" badge.
+    source: str
 
 
 class OrderPreviewResponse(BaseModel):

@@ -25,6 +25,12 @@ interface GroupedTicket {
   // ticket" action is replaced by a plain status pill.
   billedViaKot: boolean;
   billNumber: string | null;
+  // "guest" once any ticket in the group came from a QR self-order (Phase 25) — every
+  // ticket in one order shares the same source, so the first one seen is authoritative.
+  source: "staff" | "guest";
+  // True once the guest has tapped "Request Bill" on their own phone — every ticket in
+  // the order shares the same guest_sessions row, so the first one seen is authoritative.
+  paymentClaimed: boolean;
 }
 
 // A single table+customer can have multiple KOT tickets (repeat-KOT — add-on items sent
@@ -46,6 +52,8 @@ function groupTicketsByOrder(tickets: ActiveKotTicket[]): GroupedTicket[] {
         tickets: [],
         billedViaKot: false,
         billNumber: null,
+        source: ticket.source,
+        paymentClaimed: ticket.guest_payment_claimed,
       };
       byOrder.set(ticket.order_id, group);
     }
@@ -54,6 +62,7 @@ function groupTicketsByOrder(tickets: ActiveKotTicket[]): GroupedTicket[] {
       group.billedViaKot = true;
       group.billNumber = ticket.bill_number ?? group.billNumber;
     }
+    if (ticket.guest_payment_claimed) group.paymentClaimed = true;
     group.tickets.push(ticket);
   }
   return Array.from(byOrder.values());
@@ -95,11 +104,16 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
       {grouped && grouped.length > 0 && (
         <ul className="flex flex-col gap-2">
           {grouped.map((group) => (
-            <li key={group.orderId} className="overflow-hidden rounded-lg border border-border bg-surface-2">
+            <li
+              key={group.orderId}
+              className={`overflow-hidden rounded-lg border bg-surface-2 ${
+                group.paymentClaimed ? "border-gold" : "border-border"
+              }`}
+            >
               <details>
                 <summary className="flex cursor-pointer list-none flex-col gap-1 px-3.5 py-2.5 marker:content-none">
                   <div className="flex items-center justify-between">
-                    <span className="flex items-center">
+                    <span className="flex flex-wrap items-center gap-y-1">
                       <span className="text-lg font-black">{group.tableNumber ?? "—"}</span>
                       {group.partyLabel && (
                         <span className="ml-1.5 rounded-full bg-gold-soft px-1.5 py-0.5 text-[10px] font-extrabold text-gold">
@@ -109,6 +123,22 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
                       <span className="ml-1.5 rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-extrabold text-accent">
                         {group.sectionNameEn}
                       </span>
+                      {group.source === "guest" && (
+                        <span
+                          className="ml-1.5 rounded-full bg-surface-3 px-2 py-0.5 text-[10px] font-extrabold text-ink-soft"
+                          title="Placed by the customer via QR self-order"
+                        >
+                          📱 Self-order
+                        </span>
+                      )}
+                      {group.paymentClaimed && (
+                        <span
+                          className="ml-1.5 rounded-full bg-gold-soft px-2 py-0.5 text-[10px] font-extrabold text-gold"
+                          title="The customer tapped Request Bill on their own phone"
+                        >
+                          💳 Customer marked as paid
+                        </span>
+                      )}
                     </span>
                     <span className="text-xs font-semibold capitalize text-ink-faint">
                       {group.statuses.join(", ")}
@@ -164,7 +194,7 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
                       onClick={() => onSelectOrder(group.orderId)}
                       className="w-full rounded-md border border-accent bg-accent-soft py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-accent-foreground"
                     >
-                      Bill this ticket
+                      {group.paymentClaimed ? "💳 Bill this ticket — customer already paid" : "Bill this ticket"}
                     </button>
                   )}
                 </div>

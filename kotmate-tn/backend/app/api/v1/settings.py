@@ -8,6 +8,7 @@ from app.core.deps import CurrentUser, get_current_user, require_role, require_t
 from app.db.session import get_db
 from app.models import Tenant
 from app.schemas.category_display import CategoryDisplaySettingsRequest, CategoryDisplaySettingsResponse
+from app.schemas.guest import QrSelfOrderSettingsRequest, QrSelfOrderSettingsResponse
 from app.schemas.hotel_master import HotelMasterResponse, HotelMasterUpdateRequest
 from app.schemas.pos_layout import (
     PosLayoutSettingsRequest,
@@ -153,6 +154,33 @@ async def update_report_printing_setting(
     tenant.report_printing_enabled = payload.enabled
     await db.commit()
     return ReportPrintingSettingsResponse(enabled=tenant.report_printing_enabled)
+
+
+@router.patch(
+    "/qr-self-order",
+    response_model=QrSelfOrderSettingsResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def update_qr_self_order_setting(
+    payload: QrSelfOrderSettingsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> QrSelfOrderSettingsResponse:
+    """Pro Max only (Phase 25) — same tenant-level kill-switch shape as report-printing
+    above. Turning this off never deletes `table_qr_codes` rows; a guest mid-order when
+    it flips off gets a clear "ordering is currently unavailable" 403 on their next
+    request rather than something silently breaking.
+    """
+    plan = await get_active_plan(db, current_user.tenant_id)
+    if not plan or not plan.features.get("qr_self_order"):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "QR self-order isn't available on your current plan. Upgrade to Pro Max to use it.",
+        )
+    tenant = await _get_tenant(db, current_user)
+    tenant.qr_self_order_enabled = payload.enabled
+    await db.commit()
+    return QrSelfOrderSettingsResponse(enabled=tenant.qr_self_order_enabled)
 
 
 @router.patch(

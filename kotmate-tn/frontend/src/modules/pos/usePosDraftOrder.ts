@@ -127,7 +127,15 @@ export function usePosDraftOrder() {
     enabled: !!location,
   });
 
-  const stockOverrides = usePosWebSocket(location?.id);
+  // A guest's "I've Paid" tap (Phase 25) broadcasts here so a cashier is actively
+  // notified rather than needing to notice `guest_sessions.status` changed on its own —
+  // shares the POS grid's one existing websocket connection rather than opening a
+  // second one just for this.
+  const stockOverrides = usePosWebSocket(location?.id, (msg) => {
+    if (msg.type !== "payment_claimed") return;
+    const tableNumber = tables.find((t) => t.id === msg.table_id)?.table_number;
+    setActionNotice(`💳 ${tableNumber ? `Table ${tableNumber}` : "A customer"} requested the bill`);
+  });
 
   useEffect(() => {
     if (role === "waiter") {

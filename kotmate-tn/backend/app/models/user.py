@@ -42,6 +42,15 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     # % rate on net sale value (post-discount, pre-tax); only meaningful when role=pos_user (cashier).
     incentive_rate: Mapped[float | None] = mapped_column(Numeric(5, 2))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Marks the one synthetic, un-loginable (`is_active=False`) per-tenant account used
+    # as the `pos_user_id`/cashier-of-record on QR self-orders (Phase 25) — a real
+    # constraint dodge, not a feature flag: `orders.pos_user_id`/`bills.pos_user_id` are
+    # NOT NULL and joined unconditionally in several places, so a guest order still
+    # needs *some* user row. Excluded from `GET /api/v1/users` explicitly (not just by
+    # `is_active`, in case that filter is ever relaxed there) and from the plan seat cap
+    # (already excluded — the seat-cap count filters `is_active=True`). Intentionally
+    # still appears in Cashier-wise Sales/Incentive reports as its own row.
+    is_system_account: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         tenant_composite_index("users"),

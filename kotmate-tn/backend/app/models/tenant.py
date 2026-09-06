@@ -79,6 +79,12 @@ class Tenant(UUIDPKMixin, TimestampMixin, Base):
     # a waiter on either layout, regardless of waiter_mandatory_enabled), so no tenant's
     # POS experience changes on deploy.
     waiter_mandatory_non_seating_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Tenant-wide on/off switch for QR self-order (Phase 25, Pro Max only — gated
+    # separately via plans.features.qr_self_order). Defaults False: a Pro Max tenant
+    # can generate table QR codes in Settings without immediately putting them live on
+    # the floor. Soft-disable only — turning this off never deletes `table_qr_codes`
+    # rows, same convention as every other tenant preference toggle here.
+    qr_self_order_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         CheckConstraint(_STATE_CHECK_SQL, name="ck_tenants_state_valid"),

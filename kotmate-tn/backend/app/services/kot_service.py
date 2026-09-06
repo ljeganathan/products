@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     Bill,
+    GuestSession,
     HotelMaster,
     Item,
     KotTicket,
@@ -278,6 +279,14 @@ async def build_active_ticket_response(
         bill_number = (
             await session.execute(select(Bill.bill_number).where(Bill.order_id == order.id))
         ).scalar_one_or_none()
+    guest_payment_claimed = False
+    if order.source == "guest":
+        guest_status = (
+            await session.execute(
+                select(GuestSession.status).where(GuestSession.order_id == order.id)
+            )
+        ).scalar_one_or_none()
+        guest_payment_claimed = guest_status == "payment_claimed"
     return ActiveKotTicketResponse(
         id=ticket.id,
         ticket_number=ticket.ticket_number,
@@ -290,6 +299,8 @@ async def build_active_ticket_response(
         items=items,
         order_billed_via_kot=ticket.order_billed_via_kot,
         bill_number=bill_number,
+        source=order.source,
+        guest_payment_claimed=guest_payment_claimed,
     )
 
 

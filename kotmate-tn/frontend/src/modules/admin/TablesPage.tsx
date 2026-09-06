@@ -3,6 +3,7 @@ import axios from "axios";
 import { type FormEvent, useState } from "react";
 
 import { listLocations } from "@/modules/admin/locationsApi";
+import { generateTableQrCode, getTableQrCode } from "@/modules/admin/qrCodesApi";
 import { listSections, type Section } from "@/modules/admin/sectionsApi";
 import {
   type Table,
@@ -11,6 +12,7 @@ import {
   listTables,
   updateTable,
 } from "@/modules/admin/tablesApi";
+import { me } from "@/modules/auth/authApi";
 
 const inputClass =
   "min-h-10 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-accent";
@@ -183,12 +185,126 @@ function TableFormModal({
   );
 }
 
+function TableQrCodeModal({ table, onClose }: { table: Table; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const { data: code, isLoading } = useQuery({
+    queryKey: ["table-qr-code", table.id],
+    queryFn: () => getTableQrCode(table.id),
+  });
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+
+  const generateMutation = useMutation({
+    mutationFn: () => generateTableQrCode(table.id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["table-qr-code", table.id] }),
+  });
+
+  function scanUrl(qrToken: string): string {
+    return `${window.location.origin}/order/${qrToken}`;
+  }
+
+  // navigator.clipboard only exists in a "secure context" (HTTPS, or localhost) — it's
+  // undefined on a plain-http LAN address like http://192.168.0.125:5173, which this
+  // admin page is routinely opened over on a counter machine. Fall back to the
+  // execCommand('copy') textarea trick there instead of silently throwing.
+  function legacyCopy(text: string): boolean {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    document.body.removeChild(textarea);
+    return ok;
+  }
+
+  async function handleCopy(qrToken: string) {
+    const url = scanUrl(qrToken);
+    setCopyError(null);
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else if (!legacyCopy(url)) {
+        throw new Error("copy unsupported");
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopyError("Couldn't copy automatically — select and copy the link above manually.");
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg rounded-lg bg-background p-6 shadow-xl">
+        <h2 className="mb-1 text-lg font-bold">QR Code — Table {table.table_number}</h2>
+        <p className="mb-4 text-xs text-foreground/60">
+          One QR code per table — print/laminate it once and leave it on the table. Anyone who
+          scans it orders into the same shared cart for that table.
+        </p>
+
+        {isLoading && <p className="text-sm text-foreground/60">Loading…</p>}
+
+        {!isLoading && !code && (
+          <p className="mb-4 text-sm text-foreground/60">No QR code generated yet for this table.</p>
+        )}
+
+        {code && (
+          <div className="mb-4">
+            <div className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
+              <p className="min-w-0 select-all truncate font-mono text-xs">{scanUrl(code.qr_token)}</p>
+              <button
+                type="button"
+                onClick={() => void handleCopy(code.qr_token)}
+                className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-semibold hover:bg-accent/10"
+              >
+                {copied ? "Copied!" : "Copy link"}
+              </button>
+            </div>
+            {copyError && <p className="mt-1 text-xs text-chili">{copyError}</p>}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-border px-4 py-2 text-sm font-semibold hover:bg-accent/10"
+          >
+            Close
+          </button>
+          {!code && (
+            <button
+              type="button"
+              onClick={() => generateMutation.mutate()}
+              disabled={generateMutation.isPending}
+              className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground disabled:opacity-60"
+            >
+              {generateMutation.isPending ? "Generating…" : "Generate QR Code"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function TablesPage() {
   const queryClient = useQueryClient();
   const { data: tables, isLoading, isError } = useQuery({ queryKey: ["tables"], queryFn: () => listTables() });
   const { data: locations = [] } = useQuery({ queryKey: ["tenant-locations"], queryFn: listLocations });
   const { data: sections = [] } = useQuery({ queryKey: ["sections"], queryFn: listSections });
+  const { data: meData } = useQuery({ queryKey: ["me"], queryFn: me });
   const [formTable, setFormTable] = useState<Table | null | "new">(null);
+  const [qrTable, setQrTable] = useState<Table | null>(null);
+  const qrFeatureEnabled = meData?.features?.qr_self_order === true;
 
   const seatingSections = sections.filter((s) => s.is_seating && s.is_active);
   const locationNameById = new Map(locations.map((l) => [l.id, l.name]));
@@ -282,6 +398,15 @@ export function TablesPage() {
                       >
                         {table.is_active ? "Deactivate" : "Reactivate"}
                       </button>
+                      {qrFeatureEnabled && (
+                        <button
+                          type="button"
+                          onClick={() => setQrTable(table)}
+                          className="text-accent hover:underline"
+                        >
+                          QR Code
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -299,6 +424,8 @@ export function TablesPage() {
           onClose={() => setFormTable(null)}
         />
       )}
+
+      {qrTable && <TableQrCodeModal table={qrTable} onClose={() => setQrTable(null)} />}
     </div>
   );
 }

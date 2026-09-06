@@ -66,3 +66,7 @@ class MeResponse(BaseModel):
     # waiter_mandatory_enabled above. False for product_owner, matching the pre-existing
     # "non-seating never requires a waiter" default.
     waiter_mandatory_non_seating_enabled: bool
+    # Effective QR self-order state (Phase 25) — plan feature AND tenant toggle, same
+    # computed-flag convention as stock_tracking_enabled. Always False for
+    # product_owner and for any plan lacking the feature.
+    qr_self_order_enabled: bool

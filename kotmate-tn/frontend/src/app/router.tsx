@@ -15,6 +15,7 @@ import { LoginPage } from "@/modules/auth/LoginPage";
 import { ProtectedRoute } from "@/modules/auth/ProtectedRoute";
 import { roleHomePath, useAuthStore } from "@/modules/auth/authStore";
 import { BillHistoryPage } from "@/modules/billing/BillHistoryPage";
+import { GuestOrderApp } from "@/modules/guest/GuestOrderApp";
 import { KotDisplayPage } from "@/modules/kot/KotDisplayPage";
 import { POSLayoutRouter } from "@/modules/pos/POSLayoutRouter";
 import { InvoicesPage } from "@/modules/product-owner/InvoicesPage";
@@ -49,6 +50,9 @@ function RootRedirect() {
 export const router = createBrowserRouter([
   { path: "/", element: <RootRedirect /> },
   { path: "/login", element: <LoginPage /> },
+  // Guest self-order (Phase 25) — deliberately outside ProtectedRoute/AppShell
+  // entirely: no staff login, no sidebar, its own guest-JWT auth (guestApi.ts).
+  { path: "/order/:qrToken", element: <GuestOrderApp /> },
   {
     element: <ProtectedRoute roles={["tenant_admin", "pos_user", "waiter", "pos_operator"]} />,
     children: [{ path: "/pos", element: <POSLayoutRouter /> }],

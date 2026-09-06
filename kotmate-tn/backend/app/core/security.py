@@ -9,7 +9,11 @@ from jose import JWTError, jwt
 
 from app.core.config import get_settings
 
-TokenType = Literal["access", "refresh"]
+TokenType = Literal["access", "refresh", "guest"]
+
+# 3 hours — long enough for a full dine-in visit, short enough that a QR scanned once
+# and forgotten doesn't leave a permanently-live guest session lying around.
+GUEST_TOKEN_EXPIRE = timedelta(hours=3)
 
 _TEMP_PASSWORD_ALPHABET = string.ascii_letters + string.digits
 
@@ -89,6 +93,37 @@ def create_refresh_token(*, user_id: uuid.UUID) -> str:
     )
 
 
+def create_guest_token(
+    *,
+    guest_session_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    location_id: uuid.UUID,
+    table_id: uuid.UUID,
+    expires_delta: timedelta = GUEST_TOKEN_EXPIRE,
+) -> str:
+    """A second, deliberately narrow token type (Phase 25) — carries only what a guest
+    ordering session needs, no `role`/`user_id`. `location_id` is not optional: the
+    guest frontend has no other way to learn which location it's ordering at, and it
+    needs that value verbatim to open `/ws/location/{location_id}` for live KOT status,
+    the same way the staff POS screen already does. No customer/seat identity is
+    carried at all — one table's QR always means "the table's one shared order," so
+    there's nothing beyond tenant/location/table to resolve. `get_current_guest`
+    (deps.py) rejects any token whose `type` isn't `"guest"`, so this can never be
+    replayed against a staff-only route, and a staff access token can never be
+    replayed here.
+    """
+    return _create_token(
+        subject=guest_session_id,
+        token_type="guest",
+        expires_delta=expires_delta,
+        extra_claims={
+            "tenant_id": str(tenant_id),
+            "location_id": str(location_id),
+            "table_id": str(table_id),
+        },
+    )
+
+
 def decode_token(token: str) -> dict[str, Any]:
     """Raises `jose.JWTError` (including on expiry) — callers translate to 401."""
     settings = get_settings()
@@ -98,6 +133,7 @@ def decode_token(token: str) -> dict[str, Any]:
 __all__ = [
     "JWTError",
     "create_access_token",
+    "create_guest_token",
     "create_refresh_token",
     "decode_token",
     "generate_temp_password",

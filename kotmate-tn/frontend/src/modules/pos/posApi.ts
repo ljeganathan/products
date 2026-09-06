@@ -47,6 +47,8 @@ export interface Order {
   waiter_incentive_amount: number | null;
   cashier_incentive_amount: number | null;
   created_at: string;
+  // "staff" or "guest" (Phase 25 QR self-order) — drives the "📱 Self-order" badge.
+  source: "staff" | "guest";
 }
 
 export interface OrderPreview {

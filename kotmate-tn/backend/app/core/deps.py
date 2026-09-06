@@ -95,3 +95,52 @@ async def require_platform_scope(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This route requires product_owner")
     await db.execute(text("SELECT set_config('app.is_platform_admin', 'true', true)"))
     return current_user
+
+
+@dataclass(frozen=True)
+class CurrentGuest:
+    """A second, deliberately separate identity from `CurrentUser` (Phase 25) — built
+    from a guest JWT's claims, never from the staff `users` table. No `role`: guest
+    routes depend on `get_current_guest`, never on `get_current_user`/`require_role`,
+    so the two auth worlds can't be confused with each other at the dependency level.
+    """
+
+    guest_session_id: uuid.UUID
+    tenant_id: uuid.UUID
+    location_id: uuid.UUID
+    table_id: uuid.UUID
+
+
+def get_current_guest(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+) -> CurrentGuest:
+    try:
+        payload = decode_token(credentials.credentials)
+    except JWTError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired guest session") from exc
+
+    if payload.get("type") != "guest":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not a guest session token")
+
+    return CurrentGuest(
+        guest_session_id=uuid.UUID(payload["sub"]),
+        tenant_id=uuid.UUID(payload["tenant_id"]),
+        location_id=uuid.UUID(payload["location_id"]),
+        table_id=uuid.UUID(payload["table_id"]),
+    )
+
+
+async def require_guest_tenant_scope(
+    guest: CurrentGuest = Depends(get_current_guest),
+    db: AsyncSession = Depends(get_db),
+) -> CurrentGuest:
+    """Every `/api/v1/guest/*` route except session-creation itself depends on this
+    (not `require_tenant_scope`, which requires a `CurrentUser`) — sets the same RLS
+    session var from the guest token's own `tenant_id` claim, so every guest query is
+    tenant-isolated exactly like a staff request is.
+    """
+    await db.execute(
+        text("SELECT set_config('app.current_tenant_id', :tid, true)"),
+        {"tid": str(guest.tenant_id)},
+    )
+    return guest

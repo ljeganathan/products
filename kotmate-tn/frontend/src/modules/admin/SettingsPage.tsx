@@ -30,6 +30,7 @@ import {
   updateWaiterMandatorySetting,
 } from "@/modules/admin/posLayoutSettingsApi";
 import { PrinterFormModal } from "@/modules/admin/PrintersPage";
+import { updateQrSelfOrderSetting } from "@/modules/admin/qrSelfOrderSettingsApi";
 import { type Printer, listPrinters } from "@/modules/admin/printersApi";
 import {
   updateReportPrintingSetting,
@@ -149,6 +150,7 @@ function PreferencesTab({
   // gated on the plan feature specifically, not the effective flag.
   const stockManagementOnPlan = meData?.features?.stock_management === true;
   const reportPrintingOnPlan = meData?.features?.report_printing === true;
+  const qrSelfOrderOnPlan = meData?.features?.qr_self_order === true;
 
   const categoryDisplayMutation = useMutation({
     mutationFn: (next: boolean) => updateCategoryDisplaySetting(next),
@@ -180,6 +182,10 @@ function PreferencesTab({
   });
   const waiterMandatoryNonSeatingMutation = useMutation({
     mutationFn: (next: boolean) => updateWaiterMandatoryNonSeatingSetting(next),
+    onSuccess: invalidateMe,
+  });
+  const qrSelfOrderMutation = useMutation({
+    mutationFn: (next: boolean) => updateQrSelfOrderSetting(next),
     onSuccess: invalidateMe,
   });
 
@@ -304,6 +310,18 @@ function PreferencesTab({
             onChange={(next) => reportTamilNamesMutation.mutate(next)}
             label="Print item/category names in Tamil"
             description="Applies to Item Wise Sales and Category Wise Sales report prints only. Rasterized on a thermal Reports printer; a dot-matrix Reports printer always prints English (no image support)."
+          />
+        </div>
+      )}
+
+      {qrSelfOrderOnPlan && (
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <Switch
+            checked={meData?.qr_self_order_enabled === true}
+            disabled={qrSelfOrderMutation.isPending}
+            onChange={(next) => qrSelfOrderMutation.mutate(next)}
+            label="Enable QR self-order"
+            description="Lets customers scan a table's QR code to browse the menu and order from their own phone — everyone at the table shares one cart, and orders fire straight to the kitchen. Generate each table's QR code from Table Master. Pro Max only."
           />
         </div>
       )}

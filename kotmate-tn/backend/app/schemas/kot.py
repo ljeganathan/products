@@ -61,3 +61,11 @@ class ActiveKotTicketResponse(BaseModel):
     # whenever order_billed_via_kot is true) — shown alongside "Bill already printed" so
     # staff can match the kitchen ticket back to the printed bill.
     bill_number: str | None = None
+    # "staff" or "guest" (Phase 25) — drives the "📱 Self-order" badge on this ticket.
+    source: str = "staff"
+    # True once the guest has tapped "Request Bill" on their own phone
+    # (guest_sessions.status == "payment_claimed") for this order — lets whichever
+    # staff member picks up the ticket to bill/print it see the customer already
+    # claims to have paid, without needing to have caught the transient
+    # `payment_claimed` websocket toast when it first happened.
+    guest_payment_claimed: bool = False

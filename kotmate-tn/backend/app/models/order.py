@@ -39,6 +39,12 @@ class Order(UUIDPKMixin, TimestampMixin, Base):
     # table. `hold_label` above is a free-text note for the Recall search, a different
     # concept from this table-scoped identity.
     party_label: Mapped[str | None] = mapped_column(String(30))
+    # Which client actually created this order — "staff" (the default, every order
+    # before this column existed) or "guest" (Phase 25 QR self-order). Purely a display
+    # concern (the "📱 Self-order" badge on KOT Tickets/Kitchen Display) — a guest order
+    # is otherwise a completely ordinary order, billed/KOT'd through the exact same
+    # paths as a staff-placed one.
+    source: Mapped[str] = mapped_column(String(10), nullable=False, default="staff")
 
     __table_args__ = (
         tenant_composite_index("orders"),
@@ -46,6 +52,7 @@ class Order(UUIDPKMixin, TimestampMixin, Base):
         CheckConstraint(
             f"status IN ({', '.join(repr(s) for s in ORDER_STATUSES)})", name="ck_orders_status_valid"
         ),
+        CheckConstraint("source IN ('staff', 'guest')", name="ck_orders_source_valid"),
         # Two open parties can't claim the same label at the same table; unconstrained
         # once status leaves 'open' (a billed/held order shouldn't block reusing a label)
         # or when table_id/party_label is NULL (non-seating sections, single-party default).

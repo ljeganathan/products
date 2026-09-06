@@ -6,6 +6,7 @@ from app.models.audit import AuditLog
 from app.models.bill import Bill, BillItem, Payment
 from app.models.category import Category
 from app.models.discount import DiscountRule
+from app.models.guest import GuestSession, TableQrCode
 from app.models.hotel import HotelMaster
 from app.models.invoice import Invoice
 from app.models.item import Item
@@ -29,6 +30,8 @@ __all__ = [
     "Payment",
     "Category",
     "DiscountRule",
+    "GuestSession",
+    "TableQrCode",
     "HotelMaster",
     "Invoice",
     "Item",

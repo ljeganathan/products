@@ -44,6 +44,14 @@ export function KotTicketCard({ ticket, canAdvance, advancing, onAdvance }: KotT
           ) : (
             <span className="text-lg font-black leading-none">{ticket.section_name_en}</span>
           )}
+          {ticket.source === "guest" && (
+            <span
+              className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] font-extrabold text-ink-soft"
+              title="Placed by the customer via QR self-order"
+            >
+              📱
+            </span>
+          )}
         </div>
         <span className="text-[11px] font-semibold text-ink-faint">{createdTime}</span>
       </div>

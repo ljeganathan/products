@@ -16,6 +16,7 @@ from app.core.security import (
 from app.db.session import get_db
 from app.models import PlatformSettings, Role, Tenant, User, UserLocationAccess
 from app.schemas.auth import LoginRequest, MeResponse, RefreshRequest, TokenResponse
+from app.services.guest_service import is_qr_self_order_enabled
 from app.services.report_print_service import is_report_printing_enabled
 from app.services.stock_service import is_stock_tracking_enabled
 from app.services.tenant_onboarding import get_active_plan, get_active_subscription
@@ -170,6 +171,7 @@ async def me(
             pos_layout="default",
             waiter_mandatory_enabled=True,
             waiter_mandatory_non_seating_enabled=False,
+            qr_self_order_enabled=False,
         )
 
     # `/me` serves every tenant-scoped role, not just one — set the RLS session var
@@ -199,6 +201,7 @@ async def me(
         pos_layout=tenant.pos_layout,
         waiter_mandatory_enabled=tenant.waiter_mandatory_enabled,
         waiter_mandatory_non_seating_enabled=tenant.waiter_mandatory_non_seating_enabled,
+        qr_self_order_enabled=is_qr_self_order_enabled(tenant, plan.features if plan else None),
     )
 
 

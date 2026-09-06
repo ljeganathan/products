@@ -7,13 +7,13 @@ second, unauthenticated (guest-token) client alongside the staff app, reusing Ph
 
 ## Goal
 
-Let a dine-in customer scan a QR code on their table, browse the menu on their own
-phone (optional name/phone, never mandatory), order items across multiple rounds —
-each round firing a real KOT ticket exactly like a staff-placed order — track ticket
-status live, preview their bill, and pay via any UPI app. Billing itself (the actual
-`bills` row) and payment confirmation stay staff-only actions, per CLAUDE.md §5's
-existing billing RBAC — this phase does not create a self-checkout bypass. Pro Max
-only (`plans.features.qr_self_order`), matching the KDS/`pos_operator_role` gating
+Let a dine-in customer scan their table's QR code, browse the menu on their own phone
+(optional name/phone, never mandatory), order items across multiple rounds — each
+round firing a real KOT ticket exactly like a staff-placed order — track ticket status
+live, preview their bill, and pay via any UPI app. Billing itself (the actual `bills`
+row) and payment confirmation stay staff-only actions, per CLAUDE.md §5's existing
+billing RBAC — this phase does not create a self-checkout bypass. Pro Max only
+(`plans.features.qr_self_order`), matching the KDS/`pos_operator_role` gating
 precedent (CLAUDE.md §6).
 
 Decisions locked for this phase (revisit later, don't relitigate here):
@@ -24,49 +24,41 @@ Decisions locked for this phase (revisit later, don't relitigate here):
 - "I've Paid" only **notifies staff to confirm and finalize at the counter** — it
   never auto-creates a `bills` row. A self-reported UPI payment is not proof of
   payment; a real payment-gateway webhook is a future phase.
-- **One physical QR per seat, not per table.** Each printed QR encodes a fixed
-  `(tenant, location, table, customer number)` tuple — reusing the existing
-  `party_label` seat-splitting model (CLAUDE.md §11) directly rather than reinventing
-  it. Nobody, staff or guest, ever picks a location or a customer number by hand
-  anywhere in this flow: a table belongs to exactly one location and a QR belongs to
-  exactly one seat slot, so both are fully determined the moment a QR is scanned. A
-  table with `seating_capacity=4` gets 4 printed QR codes ("Table 5 — Guest 1" … "Guest
-  4"); a party of 2 just uses 2 of them and ignores the rest, same as today's
-  CustomerSelectorBar chips leaving unused slots alone.
+- **One QR code per table, one shared cart.** A separate physical QR per seat was
+  considered and rejected (production feedback — printing/laminating/replacing a code
+  per seating position isn't something a restaurant can realistically maintain).
+  Instead a table has exactly one printed QR; everyone who scans it orders into that
+  table's single shared order/cart, exactly like a table already works today for
+  staff without seat-splitting (CLAUDE.md §11's `party_label`/`CustomerSelectorBar`
+  seat-splitting is a separate, staff-side-only feature this phase does not touch or
+  reuse — a QR order's `party_label` is always `NULL`). There is nothing to "detect"
+  or assign per customer: the table's QR *is* the identity. If a table's guests want
+  a split bill, staff still handle that the same way they already do today.
 
 ## Scope
 
 ### 1. Data model (additive-only — see CLAUDE.md's DB-safety rule)
 
 - `table_qr_codes` (`UUIDPKMixin`, `TimestampMixin`, `tenant_id_column()`):
-  `location_id`, `table_id` (FK `tables.id`), `customer_number` (int, 1-based),
+  `location_id`, `table_id` (FK `tables.id`, **unique** — one row per table),
   `qr_token` (opaque random string, unique, never rotates — a torn/reprinted QR is the
-  reset path), `is_active`. Unique on `(table_id, customer_number)` — **one row per
-  seat slot, not per table**. `location_id` is stored directly (not just derivable via
+  reset path), `is_active`. `location_id` is stored directly (not just derivable via
   `table_id`) for the same reason `orders.location_id` already is: no location-level
-  RLS exists, every query filters explicitly (CLAUDE.md §4). Resolving a `qr_token`
-  is therefore a single lookup that hands back tenant/location/table/customer-number
-  together, with nothing left for the app to infer or a human to choose. Rows for a
-  table are generated together — `min(table.seating_capacity, 4)` of them, same
-  capacity-and-fallback rule the existing `CustomerSelectorBar` chips already use
-  (CLAUDE.md §11) — created lazily the first time a `tenant_admin` prints that table's
-  QR set from Settings.
+  RLS exists, every query filters explicitly (CLAUDE.md §4). Resolving a `qr_token` is
+  therefore a single lookup that hands back tenant/location/table together. Created
+  lazily the first time a `tenant_admin` generates that table's QR from Table Master.
 - `guest_sessions` (`UUIDPKMixin`, `TimestampMixin`, `tenant_composite_index`):
-  `location_id`, `table_id`, `party_label` (derived as `f"Customer-{customer_number}"`
-  from the scanned `table_qr_codes` row at session-creation time — never chosen by the
-  guest or assigned by "who scanned first," so it's identical every time that same
-  physical QR is scanned), `customer_name`/`customer_phone` (both nullable), `order_id`
-  (nullable until the first item is added), `status` ∈
+  `location_id`, `table_id`, `customer_name`/`customer_phone` (both nullable,
+  tenant-wide optional info about whoever's currently ordering — not a seat
+  identity), `order_id` (nullable until the first item is added), `status` ∈
   `active`/`payment_claimed`/`closed`, `expires_at`. A partial unique index on
-  `(tenant_id, table_id, party_label) WHERE status='active'` — the same index
-  `orders` already has for its own party-label guard — now falls out naturally: since
-  `party_label` is fixed per QR, re-scanning the same physical QR always resolves to
-  its one active session rather than ever forking a duplicate.
+  `(tenant_id, table_id) WHERE status='active'` — **at most one active session per
+  table** — so any scan of that table's one QR resolves to this same row until staff
+  finalizes the bill (which closes it) or it expires.
 - `orders.source` (`String`, default `'staff'`, values `staff`/`guest`) — additive
   column, every existing row backfills to `'staff'`, zero behavior change for the
   current app. Drives the small "📱 Self-order" badge on the KOT Tickets
-  popup/Kitchen Display and the "Self-Order (QR)" label wherever a bill's origin needs
-  to read clearly to staff.
+  popup/Kitchen Display.
 - `users.is_system_account` (`Boolean`, default `false`) — marks the one synthetic,
   `is_active=false`, un-loginable user per tenant (`user_id` composed as
   `{tenant_code}QRORDER`, same composition rule as any tenant-scoped login per
@@ -75,8 +67,8 @@ Decisions locked for this phase (revisit later, don't relitigate here):
   FK target for `orders.pos_user_id`/`bills.pos_user_id` on guest-originated orders —
   deliberately **not** a nullable FK: `bill_service`/`order_service`/`report_service`
   already do unconditional `.scalar_one()` joins against `User` in half a dozen places
-  (Phase 07/09/11), and a nullable column would mean touching every one of those
-  call sites and every Cashier-wise join. A real (if inert) user row is the smallest-
+  (Phase 07/09/11), and a nullable column would mean touching every one of those call
+  sites and every Cashier-wise join. A real (if inert) user row is the smallest-
   blast-radius option. Because it's `is_active=false`, it's automatically excluded
   from Phase 04's seat-cap count and from `GET /api/v1/users`' listing — add an
   explicit `WHERE is_system_account = false` there too so it can never appear in User
@@ -89,34 +81,33 @@ Decisions locked for this phase (revisit later, don't relitigate here):
 
 ### 2. Guest auth — a second, narrow token type
 
-- `app/core/security.py`: `create_guest_token(guest_session_id, tenant_id, location_id,
-  table_id, customer_number, expires_delta)` — `type: "guest"` claim (not `"access"`),
-  carries **only** `guest_session_id`/`tenant_id`/`location_id`/`table_id`/
-  `customer_number`, no `role`/`user_id`. `location_id` is required, not optional: the
-  guest frontend has no other way to know which location it's ordering at, and it
-  needs that value verbatim to open `/ws/location/{location_id}` for live KOT status
-  (Phase 08's websocket takes `location_id` as a URL path segment the caller must
-  supply, the same way the staff POS screen already does). All of it is also returned
-  directly in the session-creation response body (not just buried in the JWT) so the
-  frontend never has to decode the token just to get values it needs immediately.
-  Reuses the existing `JWT_SECRET`/`_create_token` helper.
+- `app/core/security.py`: `create_guest_token(guest_session_id, tenant_id,
+  location_id, table_id, expires_delta)` — `type: "guest"` claim (not `"access"`),
+  carries **only** `guest_session_id`/`tenant_id`/`location_id`/`table_id`, no
+  `role`/`user_id`/customer identity of any kind. `location_id` is required, not
+  optional: the guest frontend has no other way to know which location it's ordering
+  at, and it needs that value verbatim to open `/ws/location/{location_id}` for live
+  KOT status (Phase 08's websocket takes `location_id` as a URL path segment the
+  caller must supply, the same way the staff POS screen already does). All of it is
+  also returned directly in the session-creation response body (not just buried in
+  the JWT) so the frontend never has to decode the token just to get values it needs
+  immediately. Reuses the existing `JWT_SECRET`/`_create_token` helper.
 - `app/core/deps.py`: new `CurrentGuest` dataclass (`guest_session_id`, `tenant_id`,
-  `location_id`, `table_id`, `customer_number`) + `get_current_guest(credentials)`
-  dependency, parallel to `CurrentUser`/`get_current_user` but rejecting any token
-  whose `type != "guest"`. Guest routes depend on this, never on `get_current_user` —
-  the two auth worlds don't mix, so a leaked/expired staff token can never be replayed
-  against a guest route or vice versa.
-- `POST /api/v1/guest/sessions/{qr_token}` (no auth — this *is* the login): one lookup
-  — `qr_token → table_qr_codes` — hands back `tenant_id`/`location_id`/`table_id`/
-  `customer_number` together, no branching on "is this the first scan of this table."
-  Upserts the `active` `guest_sessions` row for that exact `(table_id, customer_number)`
-  — creating it on a fresh scan, resuming it unchanged on a repeat scan (e.g. the
-  guest closed their browser and rescans the same table tent QR to check order
-  status) — and returns the guest JWT. Optional `PATCH /api/v1/guest/sessions/me` to
-  set name/phone after the fact — never a precondition to ordering.
+  `location_id`, `table_id`) + `get_current_guest(credentials)` dependency, parallel
+  to `CurrentUser`/`get_current_user` but rejecting any token whose `type != "guest"`.
+  Guest routes depend on this, never on `get_current_user` — the two auth worlds
+  don't mix, so a leaked/expired staff token can never be replayed against a guest
+  route or vice versa.
+- `POST /api/v1/guest/sessions/{qr_token}` (no auth — this *is* the login): one
+  lookup — `qr_token → table_qr_codes` — hands back `tenant_id`/`location_id`/
+  `table_id`. Upserts the `active` `guest_sessions` row for that table — creating it
+  on a fresh scan, resuming it unchanged on any subsequent scan of the same table's
+  QR by anyone (that's the whole "shared cart" mechanic, not a special case) — and
+  returns the guest JWT. Optional `PATCH /api/v1/guest/sessions/me` to set name/phone
+  after the fact — never a precondition to ordering.
 - Every other `/api/v1/guest/*` route depends on `get_current_guest` and re-derives
-  `tenant_id`/`location_id`/`table_id`/`customer_number` from the token, exactly the
-  way staff routes never trust a client-supplied tenant id.
+  `tenant_id`/`location_id`/`table_id` from the token, exactly the way staff routes
+  never trust a client-supplied tenant id.
 
 ### 3. Guest ordering — thin wrapper over Phase 07/08, not a parallel implementation
 
@@ -125,22 +116,23 @@ Decisions locked for this phase (revisit later, don't relitigate here):
   the same `available_qty`/`track_inventory` fields the staff `ItemCard.tsx` already
   reads, since the guest-facing grid reuses that exact out-of-stock/low-stock gating,
   not a re-derived copy of it.
+- `GET /api/v1/guest/cart` — rehydrates whatever's already in the table's shared
+  order (or `null` if nothing's been added yet), so any phone that joins an
+  in-progress table sees the current cart immediately, and a reload/backgrounded tab
+  never loses sight of it.
 - `POST /api/v1/guest/cart` — thin wrapper calling the existing
-  `order_service.create_order`/`compute_updated_lines`/`apply_line_changes`, with the
-  guest session's `order_id` created against the synthetic system user
-  (`pos_user_id`), `waiter_id=None` (no waiter involved), and `party_label` set to the
-  same `f"Customer-{customer_number}"` value already resolved onto the
-  `guest_sessions` row — so the table shows the identical "Customer-2" badge/chip on
-  the staff side (CustomerSelectorBar, cart summary, KOT ticket) whether that customer
-  was seated by a waiter or self-seated via QR. Sets `guest_sessions.order_id` on
-  first call.
+  `order_service.create_order`/`apply_order_update`, with the guest session's
+  `order_id` created against the synthetic system user (`pos_user_id`),
+  `waiter_id=None`, `party_label=None` (this is deliberately the same "no split"
+  default path a staff-placed order without seat-splitting already uses). Sets
+  `guest_sessions.order_id` on first call.
 - `POST /api/v1/guest/send-kot` — calls `kot_service.send_kot(session, tenant,
   order_id)` directly (it already takes no `current_user`, CLAUDE.md's existing
   repeat-KOT/stock-deduction logic applies unchanged). A guest can call this
   repeatedly across multiple ordering rounds exactly like a cashier tapping "Add to
   KOT" again — no new mechanic.
 - `GET /api/v1/guest/order-status` — polls `kot_service.list_active_tickets` filtered
-  to the guest's own `order_id`, or connects to the existing
+  to the table's own `order_id`, or connects to the existing
   `/ws/location/{location_id}` socket read-only (the guest client only ever reads
   `kot_ticket` messages matching its own `order_id`, never the full location fan-out
   a staff screen relies on — enforce this filter client-side since the manager itself
@@ -153,9 +145,8 @@ Decisions locked for this phase (revisit later, don't relitigate here):
 ### 4. Bill preview + payment handoff (billing RBAC untouched)
 
 - `GET /api/v1/guest/bill-preview` — computes the same subtotal/CGST/SGST/discount/
-  round-off a real `POST /bills` would (reuses whatever pure calculation
-  `bill_service` already factors out for Phase 09's on-screen preview), returns it
-  read-only. No `bills` row is created here.
+  round-off a real `POST /bills` would (reuses `bill_service.preview_bill` directly),
+  returns it read-only. No `bills` row is created here.
 - `POST /api/v1/guest/request-bill` — flips `guest_sessions.status` to
   `payment_claimed` and broadcasts a `payment_claimed` message over the existing
   location websocket (same channel Kitchen Display/POS already listen to) so a
@@ -169,57 +160,58 @@ Decisions locked for this phase (revisit later, don't relitigate here):
   device, so a scannable code here would be asking them to scan their own screen.
   Generic "UPI" framing only (CLAUDE.md §9 — no app-specific branding).
 - `guest_sessions.status='closed'` once staff finalizes the bill for that order (hook
-  into the existing bill-finalize path to also close any `guest_sessions` row pointing
-  at the just-billed order) — the table's QR is then a clean slate for the next guest.
+  into `bill_service.finalize_bill`, right where it sets `order.status = "billed"`,
+  to also close any `guest_sessions` row pointing at that order) — the table's one
+  QR is then a clean slate: the next scan starts a brand-new shared session.
 
 ### 5. Settings + QR provisioning
 
-- New Settings tab/section (`tenant_admin`, visible only when
+- New Settings toggle (`tenant_admin`, visible only when
   `meData.features?.qr_self_order === true`, same visibility pattern as Phase 22's
-  Stock tab): a table list (reusing Table Master's own listing, which already shows
-  each table's location/section) with a **per-table** "Generate QR Codes" action —
-  no location dropdown or "select a location first" step anywhere in this screen,
-  since a table already belongs to exactly one location and that's all the QR
-  generation needs. Tapping it creates `min(table.seating_capacity, 4)` `table_qr_codes`
-  rows in one go (all stamped with that table's own `location_id`), and shows one
-  printable QR per seat, each clearly labeled "Table {number} — Guest {n}" so the
-  restaurant can print/laminate one per seating position. A tenant-wide on/off switch
-  (`tenants.qr_self_order_enabled`, default `false` — same additive-toggle shape as
-  `waiter_mandatory_enabled` from Phase 24) lets a Pro Max tenant have the feature
-  available but not yet turned on for the floor.
+  Stock toggle): `tenants.qr_self_order_enabled` (default `false` — same
+  additive-toggle shape as `waiter_mandatory_enabled` from Phase 24) lets a Pro Max
+  tenant have the feature available but not yet turned on for the floor.
+- Table Master gains a **per-table "QR Code" action** (`tenant_admin`) — no location
+  dropdown or "select a location first" step anywhere in this screen, since a table
+  already belongs to exactly one location and that's all QR generation needs.
+  Generates (idempotently — a table only ever gets one code, calling again just
+  returns the existing one) a single `table_qr_codes` row and shows its scan link for
+  the admin to print/laminate once and leave on the table.
 - `/auth/me` gains `qr_self_order_enabled` (effective flag: plan feature AND tenant
   toggle, same computed-flag convention as `stock_tracking_enabled`).
 
 ### 6. Frontend — a second, separate client, not a mode of the POS app
 
-- New route tree mounted outside the existing authenticated shell entirely — no
-  sidebar, no login page, no `ProtectedRoute`: `/order/:qrToken` (scan landing) →
-  `/order/:qrToken/menu` → `/order/:qrToken/cart` → `/order/:qrToken/status` →
-  `/order/:qrToken/bill`. Guest JWT stored the same way the staff app stores tokens
-  (`localStorage`, via a **separate** key so a guest session on a shared/kiosk device
-  can never collide with or be read as a staff session).
+- New route `/order/:qrToken` mounted outside the existing authenticated shell
+  entirely — no sidebar, no login page, no `ProtectedRoute`. A single component owns
+  simple internal tab state (Menu / Status / Bill) rather than deep-linkable
+  sub-routes, since a guest never needs to bookmark a specific screen mid-order.
+  Guest JWT stored the same way the staff app stores tokens (`localStorage`), via a
+  **separate** key so a guest session on a shared/kiosk device can never collide with
+  or be read as a staff session, and this axios instance's 401 handling never touches
+  the staff auth store or redirects to `/login` (a guest's session expiring must never
+  be able to log a staff member out on a shared device).
 - Reuses `ItemCard.tsx`'s stock-badge/out-of-stock visuals and Indian-number-formatting
   helpers (`formatINR`) as-is; does **not** reuse `CartPanel.tsx`/`TableWaiterBar.tsx`
-  wholesale (those assume a logged-in staff role and hotkeys) — a new, minimal
-  `GuestCart.tsx`/`GuestOrderStatus.tsx`/`GuestBillPreview.tsx` built for one-handed
-  phone use, same network-tolerant "Saving…/Saved" indicator CLAUDE.md §9 already
-  requires for the waiter's mobile flow (guests are on the same patchy restaurant
-  Wi-Fi).
+  wholesale (those assume a logged-in staff role and hotkeys) — a new, minimal cart
+  sheet/status list/bill view built for one-handed phone use, same network-tolerant
+  "Saving…/Saved" indicator CLAUDE.md §9 already requires for the waiter's mobile flow
+  (guests are on the same patchy restaurant Wi-Fi).
 - Staff side: `KotTicketsPopup.tsx`/Kitchen Display gain the "📱 Self-order" badge
-  (§1); POS/Dashboard gain a toast/sound on the existing location websocket's new
-  `payment_claimed` message so a cashier is actively notified rather than needing to
-  notice a status change.
+  (§1); the POS grid's existing websocket connection (already open for stock
+  overrides) also surfaces a toast on `payment_claimed` so a cashier is actively
+  notified rather than needing to notice a status change — one shared connection,
+  not a second websocket just for this.
 
 ## Acceptance Criteria
 
-- Scanning a table's per-seat QR with no existing active session for that exact seat
-  creates one and lands on the menu with no login/signup screen of any kind; name/phone
-  are always skippable; neither the guest nor staff ever has to pick a location or a
-  customer number anywhere in the flow — both come from which physical QR was scanned.
-- Rescanning that same physical QR later (browser closed, phone locked, etc.) resumes
-  the exact same session/cart rather than forking a new one; a *different* seat's QR
-  at the same table always starts its own independent session, verified by each
-  seeing only its own cart.
+- Scanning a table's QR with no existing active session creates one and lands on the
+  menu with no login/signup screen of any kind; name/phone are always skippable;
+  neither the guest nor staff ever has to pick a location or a customer identity
+  anywhere in the flow — everything comes from which table's QR was scanned.
+- A second phone scanning the same table's QR while an order is in progress sees and
+  can add to that exact same shared cart — verified by both phones' `GET
+  /guest/cart` returning the same order id and item list.
 - Adding an out-of-stock (`available_qty=0`, `track_inventory=true`) item is
   impossible from the guest menu, identical to the staff POS grid's own gating.
 - Each "Send to Kitchen" tap fires a real KOT ticket, decrements stock exactly like a
@@ -237,18 +229,21 @@ Decisions locked for this phase (revisit later, don't relitigate here):
   data.
 - "Request Bill" never creates a `bills` row and never lets the guest set the order to
   `billed` — only staff calling the existing `POST /bills` does that; a guest token
-  calling `POST /bills` directly gets 403 (it isn't even a valid token type for that
-  route's dependency).
+  calling `POST /bills` directly is rejected (invalid token type for that route's
+  dependency).
 - Tapping "Pay via UPI" opens the guest's own UPI app pre-filled with the correct
   amount; no QR image is shown to the guest.
 - The synthetic per-tenant system account never appears in `GET /api/v1/users`, never
   counts against the plan's seat cap, and never accrues incentive — but its bills do
   show up as their own row in Cashier-wise Sales/Incentive with ₹0 incentive.
-- Turning the tenant's QR toggle off immediately 401/redirects any in-flight guest
+- Once staff finalizes the bill for a table's QR order, the very next scan of that
+  same table's QR starts a brand-new session with no cart — never resumes the
+  just-billed one.
+- Turning the tenant's QR toggle off immediately rejects any in-flight guest
   session's next request with a clear "ordering is currently unavailable" message,
   without deleting `table_qr_codes` rows (same soft-disable convention as every other
   tenant toggle in this codebase).
-- Lite/Pro tenants: no QR Settings tab, `/auth/me`'s `qr_self_order_enabled` is always
-  `false`, and every `/api/v1/guest/*` route 403s regardless of a valid-looking guest
-  token, since the plan-feature check happens before the token is even trusted for
-  anything beyond identifying the tenant.
+- Lite/Pro tenants: no QR action in Table Master, `/auth/me`'s
+  `qr_self_order_enabled` is always `false`, and every `/api/v1/guest/*` route 403s
+  regardless of a valid-looking guest token, since the plan-feature check happens
+  before the token is even trusted for anything beyond identifying the tenant.
