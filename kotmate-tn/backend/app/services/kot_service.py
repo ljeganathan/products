@@ -3,7 +3,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -280,13 +280,14 @@ async def build_active_ticket_response(
             await session.execute(select(Bill.bill_number).where(Bill.order_id == order.id))
         ).scalar_one_or_none()
     guest_payment_claimed = False
+    pickup_token = None
     if order.source == "guest":
-        guest_status = (
-            await session.execute(
-                select(GuestSession.status).where(GuestSession.order_id == order.id)
-            )
+        guest_session = (
+            await session.execute(select(GuestSession).where(GuestSession.order_id == order.id))
         ).scalar_one_or_none()
-        guest_payment_claimed = guest_status == "payment_claimed"
+        if guest_session is not None:
+            guest_payment_claimed = guest_session.status == "payment_claimed"
+            pickup_token = guest_session.pickup_token
     return ActiveKotTicketResponse(
         id=ticket.id,
         ticket_number=ticket.ticket_number,
@@ -301,6 +302,48 @@ async def build_active_ticket_response(
         bill_number=bill_number,
         source=order.source,
         guest_payment_claimed=guest_payment_claimed,
+        pickup_token=pickup_token,
+    )
+
+
+async def build_pending_takeaway_response(
+    session: AsyncSession, order: Order, guest_session: GuestSession
+) -> ActiveKotTicketResponse:
+    """A Takeaway guest order that has items but no KotTicket yet (Phase 26) —
+    synthesized the same shape as a real ticket so it slots into the existing KOT
+    Tickets screen unchanged, but with no real ticket to point to: `id` is the order's
+    own id, and `status` is the fixed value "pending" (which never matches the Kitchen
+    Display's new/preparing/ready columns, so it never shows up there — deliberately,
+    since nothing has been sent to the kitchen).
+    """
+    section = (
+        await session.execute(select(SeatingSection).where(SeatingSection.id == order.section_id))
+    ).scalar_one()
+    rows = (
+        await session.execute(
+            select(OrderItem, Item)
+            .join(Item, Item.id == OrderItem.item_id)
+            .where(OrderItem.order_id == order.id)
+        )
+    ).all()
+    items = [
+        ActiveKotTicketItem(name_en=item.name_en, name_ta=item.name_ta, quantity=oi.quantity)
+        for oi, item in rows
+    ]
+    return ActiveKotTicketResponse(
+        id=order.id,
+        ticket_number=guest_session.pickup_token or "—",
+        order_id=order.id,
+        table_number=None,
+        party_label=None,
+        section_name_en=section.name_en,
+        status="pending",
+        created_at=order.created_at,
+        items=items,
+        source="guest",
+        guest_payment_claimed=guest_session.status == "payment_claimed",
+        pickup_token=guest_session.pickup_token,
+        is_pending_takeaway=True,
     )
 
 
@@ -319,6 +362,12 @@ async def list_active_tickets(
     point it drops off same as any other fulfilled ticket. Every other ticket/order
     keeps today's exact behavior (the column defaults False, so this OR-branch never
     applies to them).
+
+    Also includes a synthetic row for every open Takeaway guest order that has items
+    but no KotTicket yet (Phase 26) — see `build_pending_takeaway_response`. These
+    never appear on the Kitchen Display (their `status` is "pending", which matches
+    none of its new/preparing/ready columns) but do appear here so staff can confirm
+    or cancel them from the KOT Tickets screen.
     """
     query = (
         select(KotTicket, Order)
@@ -332,7 +381,64 @@ async def list_active_tickets(
     if location_id is not None:
         query = query.where(Order.location_id == location_id)
     rows = (await session.execute(query.order_by(KotTicket.created_at.desc()))).all()
-    return [await build_active_ticket_response(session, ticket, order) for ticket, order in rows]
+    responses = [await build_active_ticket_response(session, ticket, order) for ticket, order in rows]
+
+    pending_query = (
+        select(Order, GuestSession)
+        .join(GuestSession, GuestSession.order_id == Order.id)
+        .where(
+            Order.tenant_id == tenant_id,
+            Order.source == "guest",
+            Order.table_id.is_(None),
+            Order.status == "open",
+        )
+    )
+    if location_id is not None:
+        pending_query = pending_query.where(Order.location_id == location_id)
+    pending_rows = (await session.execute(pending_query.order_by(Order.created_at.desc()))).all()
+    for order, guest_session in pending_rows:
+        responses.append(await build_pending_takeaway_response(session, order, guest_session))
+    return responses
+
+
+async def cancel_pending_takeaway_order(
+    session: AsyncSession, tenant_id: uuid.UUID, order_id: uuid.UUID
+) -> None:
+    """The KOT Tickets screen's "Clear" action for a pending Takeaway order nobody
+    showed up to pay for — narrowly scoped (guest source, no table, still open, never
+    sent to the kitchen) so this can never touch a real staff order or an
+    already-ticketed one; use the ordinary bill/KOT flows for those instead.
+    """
+    order = (
+        await session.execute(select(Order).where(Order.id == order_id, Order.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    if order.source != "guest" or order.table_id is not None or order.status != "open":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Only a pending, unconfirmed Takeaway order can be cleared this way"
+        )
+    has_ticket = (
+        await session.execute(select(KotTicket.id).where(KotTicket.order_id == order.id))
+    ).scalar_one_or_none()
+    if has_ticket is not None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "This order was already sent to the kitchen and can't be cleared here",
+        )
+
+    guest_session = (
+        await session.execute(select(GuestSession).where(GuestSession.order_id == order.id))
+    ).scalar_one_or_none()
+    if guest_session is not None:
+        # Cleared before the order is deleted below — guest_sessions.order_id is a
+        # foreign key into orders, so leaving it pointed at the row we're about to
+        # delete would violate that constraint.
+        guest_session.order_id = None
+        guest_session.status = "closed"
+    await session.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
+    await session.delete(order)
+    await session.flush()
 
 
 def build_kot_ticket_broadcast(result: KotSendResult) -> dict:

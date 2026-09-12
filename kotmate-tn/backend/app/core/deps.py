@@ -108,7 +108,9 @@ class CurrentGuest:
     guest_session_id: uuid.UUID
     tenant_id: uuid.UUID
     location_id: uuid.UUID
-    table_id: uuid.UUID
+    # None for a Takeaway/non-seating QR (Phase 26) — that session is never shared
+    # across scans, so it's resolved by `guest_session_id` alone rather than by table.
+    table_id: uuid.UUID | None
 
 
 def get_current_guest(
@@ -122,11 +124,12 @@ def get_current_guest(
     if payload.get("type") != "guest":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not a guest session token")
 
+    raw_table_id = payload.get("table_id")
     return CurrentGuest(
         guest_session_id=uuid.UUID(payload["sub"]),
         tenant_id=uuid.UUID(payload["tenant_id"]),
         location_id=uuid.UUID(payload["location_id"]),
-        table_id=uuid.UUID(payload["table_id"]),
+        table_id=uuid.UUID(raw_table_id) if raw_table_id else None,
     )
 
 

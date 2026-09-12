@@ -4,12 +4,23 @@ from datetime import UTC, date, datetime
 from urllib.parse import quote
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentGuest, CurrentUser
 from app.core.security import GUEST_TOKEN_EXPIRE, hash_password
-from app.models import GuestSession, HotelMaster, Item, Role, Table, TableQrCode, Tenant, User
+from app.models import (
+    GuestSession,
+    HotelMaster,
+    Item,
+    Role,
+    SeatingSection,
+    SectionQrCode,
+    Table,
+    TableQrCode,
+    Tenant,
+    User,
+)
 from app.schemas.bills import BillPreviewRequest
 from app.schemas.guest import GuestBillPreviewResponse, GuestProfileUpdateRequest, GuestSessionResponse
 from app.schemas.kot import ActiveKotTicketResponse
@@ -27,7 +38,7 @@ from app.services.order_service import (
 )
 from app.services.tenant_onboarding import get_active_plan, get_active_subscription
 
-_UNAVAILABLE_MESSAGE = "Ordering is currently unavailable at this table."
+_UNAVAILABLE_MESSAGE = "Ordering is currently unavailable right now."
 
 
 def is_qr_self_order_enabled(tenant: Tenant, plan_features: dict | None) -> bool:
@@ -88,24 +99,51 @@ async def get_or_create_system_account(session: AsyncSession, tenant: Tenant) ->
     return user
 
 
-async def _resolve_qr_or_404(session: AsyncSession, qr_token: str) -> TableQrCode:
-    qr = (
+async def _resolve_qr_or_404(session: AsyncSession, qr_token: str) -> TableQrCode | SectionQrCode:
+    """`qr_token` is drawn from the same `secrets.token_urlsafe(24)` space for both a
+    table's QR and a non-seating section's Takeaway QR (Phase 26), so a raw token alone
+    doesn't say which kind it is — try both tables in turn.
+    """
+    table_qr = (
         await session.execute(
             select(TableQrCode).where(TableQrCode.qr_token == qr_token, TableQrCode.is_active.is_(True))
         )
     ).scalar_one_or_none()
-    if qr is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "This QR code isn't valid or has been deactivated")
-    return qr
+    if table_qr is not None:
+        return table_qr
+    section_qr = (
+        await session.execute(
+            select(SectionQrCode).where(SectionQrCode.qr_token == qr_token, SectionQrCode.is_active.is_(True))
+        )
+    ).scalar_one_or_none()
+    if section_qr is not None:
+        return section_qr
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "This QR code isn't valid or has been deactivated")
 
 
-def to_session_response(guest_session: GuestSession, table: Table) -> GuestSessionResponse:
+async def to_session_response(session: AsyncSession, guest_session: GuestSession) -> GuestSessionResponse:
+    table_number: str | None = None
+    section_name_en: str | None = None
+    if guest_session.table_id is not None:
+        table = (
+            await session.execute(select(Table).where(Table.id == guest_session.table_id))
+        ).scalar_one()
+        table_number = table.table_number
+    else:
+        section = (
+            await session.execute(
+                select(SeatingSection).where(SeatingSection.id == guest_session.section_id)
+            )
+        ).scalar_one()
+        section_name_en = section.name_en
     return GuestSessionResponse(
         guest_token="",  # filled in by the caller, which alone knows the JWT
         tenant_id=guest_session.tenant_id,
         location_id=guest_session.location_id,
         table_id=guest_session.table_id,
-        table_number=table.table_number,
+        table_number=table_number,
+        pickup_token=guest_session.pickup_token,
+        section_name_en=section_name_en,
         customer_name=guest_session.customer_name,
         customer_phone=guest_session.customer_phone,
         order_id=guest_session.order_id,
@@ -150,27 +188,56 @@ async def _current_guest_session(
     return current
 
 
-async def create_or_resume_session(
-    session: AsyncSession, qr_token: str
-) -> tuple[GuestSession, TableQrCode, Table, Tenant]:
-    """The guest "login" — one table, one QR, one shared order. Every scan of a
-    table's QR resolves to that table's single active `guest_sessions` row (creating
-    one if none exists yet, or the previous one already expired) — there's no
-    customer/seat identity to assign or detect: whoever scans it is ordering into the
-    same cart, exactly like a table already works for staff without seat-splitting
-    (CLAUDE.md §11's party_label feature is a separate, staff-side-only concern).
+async def _next_pickup_token(session: AsyncSession, tenant_id: uuid.UUID) -> str:
+    """A Takeaway session's table-number equivalent (e.g. "TA-14") — per-tenant
+    sequential, same `count + 1` convention as `kot_service._next_ticket_number`.
+    """
+    count = (
+        await session.execute(
+            select(func.count())
+            .select_from(GuestSession)
+            .where(GuestSession.tenant_id == tenant_id, GuestSession.pickup_token.is_not(None))
+        )
+    ).scalar_one()
+    return f"TA-{count + 1}"
+
+
+async def create_or_resume_session(session: AsyncSession, qr_token: str) -> tuple[GuestSession, Tenant]:
+    """The guest "login". A table's QR resolves to that table's single active
+    `guest_sessions` row (creating one if none exists yet, or the previous one already
+    expired) — there's no customer/seat identity to assign or detect: whoever scans it
+    is ordering into the same cart, exactly like a table already works for staff
+    without seat-splitting (CLAUDE.md §11's party_label feature is a separate,
+    staff-side-only concern).
+
+    A non-seating section's Takeaway QR (Phase 26) is the opposite: every scan is a
+    brand-new, independent session — two strangers scanning a counter's one Takeaway
+    code are two unrelated orders, never a shared cart, so there is deliberately no
+    resume-by-section lookup here at all.
     """
     await _bypass_rls_for_guest_login(session)
     qr = await _resolve_qr_or_404(session, qr_token)
     tenant = (await session.execute(select(Tenant).where(Tenant.id == qr.tenant_id))).scalar_one()
     await _reject_if_ordering_unavailable(session, tenant)
-    table = (await session.execute(select(Table).where(Table.id == qr.table_id))).scalar_one()
-
     now = datetime.now(UTC)
+
+    if isinstance(qr, SectionQrCode):
+        guest_session = GuestSession(
+            tenant_id=tenant.id,
+            location_id=qr.location_id,
+            section_id=qr.section_id,
+            pickup_token=await _next_pickup_token(session, tenant.id),
+            status="active",
+            expires_at=now + GUEST_TOKEN_EXPIRE,
+        )
+        session.add(guest_session)
+        await session.flush()
+        return guest_session, tenant
+
     existing = await _current_guest_session(session, tenant.id, qr.table_id)
     if existing is not None:
         if existing.expires_at > now:
-            return existing, qr, table, tenant
+            return existing, tenant
         # Expired but still flagged 'active'/'payment_claimed' — must be closed before
         # inserting the table's next session, or the insert below trips
         # `uq_guest_sessions_active_table` (at most one active row per table).
@@ -186,11 +253,24 @@ async def create_or_resume_session(
     )
     session.add(guest_session)
     await session.flush()
-    return guest_session, qr, table, tenant
+    return guest_session, tenant
 
 
 async def _get_active_session_or_404(session: AsyncSession, guest: CurrentGuest) -> GuestSession:
-    row = await _current_guest_session(session, guest.tenant_id, guest.table_id)
+    if guest.table_id is None:
+        # Takeaway: resolved by the JWT's own session id, never by table/section —
+        # there is nothing to "resume" or share (see create_or_resume_session).
+        row = (
+            await session.execute(
+                select(GuestSession).where(
+                    GuestSession.id == guest.guest_session_id,
+                    GuestSession.tenant_id == guest.tenant_id,
+                    GuestSession.status.in_(("active", "payment_claimed")),
+                )
+            )
+        ).scalar_one_or_none()
+    else:
+        row = await _current_guest_session(session, guest.tenant_id, guest.table_id)
     if row is None or row.expires_at < datetime.now(UTC):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "This ordering session has ended — please rescan")
     return row
@@ -234,13 +314,19 @@ async def update_cart(
     fake_current_user = _system_current_user(system_user, tenant.id)
 
     if guest_session.order_id is None:
-        table = (
-            await session.execute(select(Table).where(Table.id == guest_session.table_id))
-        ).scalar_one()
+        if guest_session.table_id is not None:
+            table = (
+                await session.execute(select(Table).where(Table.id == guest_session.table_id))
+            ).scalar_one()
+            section_id = table.section_id
+            table_id: uuid.UUID | None = table.id
+        else:
+            section_id = guest_session.section_id
+            table_id = None
         req = OrderCreateRequest(
             location_id=guest_session.location_id,
-            section_id=table.section_id,
-            table_id=table.id,
+            section_id=section_id,
+            table_id=table_id,
             waiter_id=None,
             items=items,
             party_label=None,
@@ -269,11 +355,34 @@ async def get_cart(session: AsyncSession, guest: CurrentGuest) -> OrderResponse 
 
 
 async def send_kot_for_guest(session: AsyncSession, guest: CurrentGuest) -> KotSendResult:
+    """Dine-in only — fires a real kitchen ticket immediately, exactly as a staff
+    "Add to KOT" would. Never called for a Takeaway guest (`guest.table_id is None`);
+    see `place_takeaway_order` for that flow's very different timing.
+    """
     tenant = (await session.execute(select(Tenant).where(Tenant.id == guest.tenant_id))).scalar_one()
     guest_session = await _get_active_session_or_404(session, guest)
     if guest_session.order_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add an item before sending to the kitchen")
     return await _send_kot(session, tenant, guest_session.order_id)
+
+
+async def place_takeaway_order(session: AsyncSession, guest: CurrentGuest) -> GuestSession:
+    """A Takeaway guest's equivalent of "Send to Kitchen" — deliberately does almost
+    nothing server-side (production decision): no `KotTicket` is created, no stock is
+    deducted, and nothing is sent to the kitchen printer yet. The items are already
+    live on the order via `update_cart`; this just confirms there's something to place
+    and returns the session so the guest sees their pickup token. The real kitchen
+    send + bill happens together, later, when staff picks this order up from the KOT
+    Tickets screen and uses the existing "KOT + Print Bill" action
+    (`kot_and_bill_service.send_kot_and_finalize_bill`) — until then this order sits
+    visible to staff as a pending, unconfirmed Takeaway order
+    (`kot_service.list_active_tickets`'s pending-Takeaway rows), never visible to the
+    kitchen itself.
+    """
+    guest_session = await _get_active_session_or_404(session, guest)
+    if guest_session.order_id is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add an item before placing your order")
+    return guest_session
 
 
 async def get_order_status(session: AsyncSession, guest: CurrentGuest) -> list[ActiveKotTicketResponse]:
@@ -301,7 +410,7 @@ async def preview_guest_bill(session: AsyncSession, guest: CurrentGuest) -> Gues
         branch = await resolve_branch_header(session, guest.location_id)
         upi_link = (
             f"upi://pay?pa={quote(hotel.upi_id)}&pn={quote(branch.name)}"
-            f"&am={preview.grand_total:.2f}&cu=INR&tn={quote('Table order')}"
+            f"&am={preview.grand_total:.2f}&cu=INR&tn={quote('Order')}"
         )
     return GuestBillPreviewResponse(**preview.model_dump(), upi_link=upi_link)
 
@@ -344,5 +453,48 @@ async def get_qr_code_for_table(
     return (
         await session.execute(
             select(TableQrCode).where(TableQrCode.tenant_id == tenant_id, TableQrCode.table_id == table_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def get_or_create_qr_code_for_section(
+    session: AsyncSession, tenant_id: uuid.UUID, section: SeatingSection, location_id: uuid.UUID
+) -> SectionQrCode:
+    """One QR per (location, section) — idempotent, safe to call again. `location_id`
+    is explicit rather than derived from the section, since `seating_sections` is
+    tenant-wide (a multi-location tenant's one "Takeaway" section is shared by every
+    branch) — each branch still gets its own independent code.
+    """
+    existing = (
+        await session.execute(
+            select(SectionQrCode).where(
+                SectionQrCode.location_id == location_id, SectionQrCode.section_id == section.id
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    qr = SectionQrCode(
+        tenant_id=tenant_id,
+        location_id=location_id,
+        section_id=section.id,
+        qr_token=secrets.token_urlsafe(24),
+    )
+    session.add(qr)
+    await session.flush()
+    return qr
+
+
+async def get_qr_code_for_section(
+    session: AsyncSession, tenant_id: uuid.UUID, section_id: uuid.UUID, location_id: uuid.UUID
+) -> SectionQrCode | None:
+    return (
+        await session.execute(
+            select(SectionQrCode).where(
+                SectionQrCode.tenant_id == tenant_id,
+                SectionQrCode.section_id == section_id,
+                SectionQrCode.location_id == location_id,
+            )
         )
     ).scalar_one_or_none()

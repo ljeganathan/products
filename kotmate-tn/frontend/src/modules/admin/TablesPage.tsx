@@ -3,6 +3,7 @@ import axios from "axios";
 import { type FormEvent, useState } from "react";
 
 import { listLocations } from "@/modules/admin/locationsApi";
+import { QrCodeImage } from "@/modules/admin/QrCodeImage";
 import { generateTableQrCode, getTableQrCode } from "@/modules/admin/qrCodesApi";
 import { listSections, type Section } from "@/modules/admin/sectionsApi";
 import {
@@ -269,6 +270,7 @@ function TableQrCodeModal({ table, onClose }: { table: Table; onClose: () => voi
               </button>
             </div>
             {copyError && <p className="mt-1 text-xs text-chili">{copyError}</p>}
+            <QrCodeImage value={scanUrl(code.qr_token)} downloadName={`table-${table.table_number}-qr`} />
           </div>
         )}
 

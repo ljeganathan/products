@@ -134,7 +134,12 @@ export function usePosDraftOrder() {
   const stockOverrides = usePosWebSocket(location?.id, (msg) => {
     if (msg.type !== "payment_claimed") return;
     const tableNumber = tables.find((t) => t.id === msg.table_id)?.table_number;
-    setActionNotice(`💳 ${tableNumber ? `Table ${tableNumber}` : "A customer"} requested the bill`);
+    const who = tableNumber
+      ? `Table ${tableNumber}`
+      : msg.pickup_token
+        ? `Order ${msg.pickup_token}`
+        : "A customer";
+    setActionNotice(`💳 ${who} requested the bill`);
   });
 
   useEffect(() => {

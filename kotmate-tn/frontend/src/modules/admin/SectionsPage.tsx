@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { type FormEvent, useState } from "react";
 
+import { listLocations } from "@/modules/admin/locationsApi";
+import { QrCodeImage } from "@/modules/admin/QrCodeImage";
+import { generateSectionQrCode, getSectionQrCode } from "@/modules/admin/qrCodesApi";
 import {
   type Section,
   type SectionCreatePayload,
@@ -131,6 +134,150 @@ function SectionFormModal({
   );
 }
 
+// Takeaway/Online Delivery QR (Phase 26) — the non-seating counterpart to Table
+// Master's own QR modal, same copy-link behavior (including the http/LAN clipboard
+// fallback). The one real difference: a section is tenant-wide, not per-location (a
+// multi-location tenant's one "Takeaway" section is shared by every branch), so this
+// modal needs its own location picker rather than inheriting one from a table row.
+function SectionQrCodeModal({ section, onClose }: { section: Section; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const { data: locations = [] } = useQuery({ queryKey: ["tenant-locations"], queryFn: listLocations });
+  const [locationId, setLocationId] = useState<string>("");
+  const activeLocationId = locationId || locations[0]?.id || "";
+
+  const { data: code, isLoading } = useQuery({
+    queryKey: ["section-qr-code", section.id, activeLocationId],
+    queryFn: () => getSectionQrCode(section.id, activeLocationId),
+    enabled: !!activeLocationId,
+  });
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+
+  const generateMutation = useMutation({
+    mutationFn: () => generateSectionQrCode(section.id, activeLocationId),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["section-qr-code", section.id, activeLocationId] }),
+  });
+
+  function scanUrl(qrToken: string): string {
+    return `${window.location.origin}/order/${qrToken}`;
+  }
+
+  function legacyCopy(text: string): boolean {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    document.body.removeChild(textarea);
+    return ok;
+  }
+
+  async function handleCopy(qrToken: string) {
+    const url = scanUrl(qrToken);
+    setCopyError(null);
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else if (!legacyCopy(url)) {
+        throw new Error("copy unsupported");
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopyError("Couldn't copy automatically — select and copy the link above manually.");
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg rounded-lg bg-background p-6 shadow-xl">
+        <h2 className="mb-1 text-lg font-bold">QR Code — {section.name_en}</h2>
+        <p className="mb-4 text-xs text-foreground/60">
+          One QR code per branch — print it at the counter. Every scan starts its own independent
+          order with its own pickup number; unlike a table, it's never shared between customers.
+        </p>
+
+        {locations.length > 1 && (
+          <div className="mb-4 flex flex-col gap-1.5">
+            <label className={labelClass}>Branch</label>
+            <select
+              className={inputClass}
+              value={activeLocationId}
+              onChange={(e) => setLocationId(e.target.value)}
+            >
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {isLoading && <p className="text-sm text-foreground/60">Loading…</p>}
+
+        {!isLoading && !code && (
+          <p className="mb-4 text-sm text-foreground/60">No QR code generated yet for this branch.</p>
+        )}
+
+        {code && (
+          <div className="mb-4">
+            <div className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
+              <p className="min-w-0 select-all truncate font-mono text-xs">{scanUrl(code.qr_token)}</p>
+              <button
+                type="button"
+                onClick={() => void handleCopy(code.qr_token)}
+                className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-semibold hover:bg-accent/10"
+              >
+                {copied ? "Copied!" : "Copy link"}
+              </button>
+            </div>
+            {copyError && <p className="mt-1 text-xs text-chili">{copyError}</p>}
+            <QrCodeImage
+              value={scanUrl(code.qr_token)}
+              downloadName={`${section.name_en}-${
+                locations.find((l) => l.id === activeLocationId)?.name ?? "qr"
+              }`
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-+|-+$/g, "")}
+            />
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-border px-4 py-2 text-sm font-semibold hover:bg-accent/10"
+          >
+            Close
+          </button>
+          {!code && (
+            <button
+              type="button"
+              onClick={() => generateMutation.mutate()}
+              disabled={generateMutation.isPending || !activeLocationId}
+              className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-foreground disabled:opacity-60"
+            >
+              {generateMutation.isPending ? "Generating…" : "Generate QR Code"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function SectionsPage() {
   const queryClient = useQueryClient();
   const { data: sections, isLoading, isError } = useQuery({
@@ -139,6 +286,7 @@ export function SectionsPage() {
   });
 
   const [formSection, setFormSection] = useState<Section | null | "new">(null);
+  const [qrSection, setQrSection] = useState<Section | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
 
   const reorderMutation = useMutation({
@@ -224,13 +372,24 @@ export function SectionsPage() {
                     </span>
                   </td>
                   <td className="px-4 py-2.5">
-                    <button
-                      type="button"
-                      onClick={() => setFormSection(section)}
-                      className="text-xs font-semibold text-accent hover:underline"
-                    >
-                      Edit
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setFormSection(section)}
+                        className="text-xs font-semibold text-accent hover:underline"
+                      >
+                        Edit
+                      </button>
+                      {!section.is_seating && (
+                        <button
+                          type="button"
+                          onClick={() => setQrSection(section)}
+                          className="text-xs font-semibold text-accent hover:underline"
+                        >
+                          QR Code
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -238,6 +397,8 @@ export function SectionsPage() {
           </table>
         </div>
       )}
+
+      {qrSection && <SectionQrCodeModal section={qrSection} onClose={() => setQrSection(null)} />}
 
       {formSection && (
         <SectionFormModal

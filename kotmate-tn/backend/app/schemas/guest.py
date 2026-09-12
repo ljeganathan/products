@@ -13,13 +13,19 @@ class GuestSessionResponse(BaseModel):
     inside the JWT) so the frontend never has to decode a token just to get values it
     needs immediately, e.g. to open the location websocket. No customer/seat identity
     — one table's QR always means "the table's one shared order."
+
+    For a Takeaway/non-seating session (Phase 26), `table_id`/`table_number` are null
+    and `pickup_token`/`section_name_en` are set instead — the guest frontend shows the
+    pickup token where it would otherwise show a table number (CLAUDE.md §9).
     """
 
     guest_token: str
     tenant_id: uuid.UUID
     location_id: uuid.UUID
-    table_id: uuid.UUID
-    table_number: str
+    table_id: uuid.UUID | None
+    table_number: str | None
+    pickup_token: str | None = None
+    section_name_en: str | None = None
     customer_name: str | None
     customer_phone: str | None
     order_id: uuid.UUID | None
@@ -63,6 +69,14 @@ class TableQrCodeResponse(BaseModel):
     id: uuid.UUID
     table_id: uuid.UUID
     table_number: str
+    qr_token: str
+    is_active: bool
+
+
+class SectionQrCodeResponse(BaseModel):
+    id: uuid.UUID
+    section_id: uuid.UUID
+    section_name_en: str
     qr_token: str
     is_active: bool
 

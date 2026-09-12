@@ -42,12 +42,22 @@ export interface GuestSession {
   guest_token: string;
   tenant_id: string;
   location_id: string;
-  table_id: string;
-  table_number: string;
+  // Both null for a Takeaway session (Phase 26) — pickup_token/section_name_en are
+  // set instead, shown where a table number would otherwise appear.
+  table_id: string | null;
+  table_number: string | null;
+  pickup_token: string | null;
+  section_name_en: string | null;
   customer_name: string | null;
   customer_phone: string | null;
   order_id: string | null;
   status: "active" | "payment_claimed" | "closed";
+}
+
+// True for a Takeaway/non-seating session — every scan is its own independent order
+// (never shared, never resumed), and the UI shows a pickup token instead of a table.
+export function isTakeawaySession(session: GuestSession): boolean {
+  return session.table_id === null;
 }
 
 export async function startGuestSession(qrToken: string): Promise<GuestSession> {

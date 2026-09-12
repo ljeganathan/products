@@ -31,6 +31,14 @@ export interface ActiveKotTicket {
   // drives a "💳 Customer marked as paid" badge so whoever bills/prints the ticket
   // sees it even if they missed the transient payment_claimed toast.
   guest_payment_claimed: boolean;
+  // A Takeaway guest session's table-number equivalent (e.g. "TA-14", Phase 26) —
+  // shown in place of a table number for any guest ticket/pending-order with no table.
+  pickup_token: string | null;
+  // True for a synthetic row representing an open Takeaway order that has no real KOT
+  // ticket yet (Phase 26) — `id`/`order_id` both point at the order, not a real
+  // ticket, and `status` is the fixed value "pending". Never appears on the Kitchen
+  // Display; only on the KOT Tickets screen, awaiting staff confirmation or "Clear".
+  is_pending_takeaway: boolean;
 }
 
 export interface KotSendResult {
@@ -65,4 +73,10 @@ export async function updateKotTicketStatus(
 // Dismisses a "bill already printed" ticket from the KOT Tickets screen/popup.
 export async function clearBilledKotTicket(ticketId: string): Promise<ActiveKotTicket> {
   return (await api.post<ActiveKotTicket>(`/api/v1/kot/tickets/${ticketId}/clear`)).data;
+}
+
+// Deletes a pending, unconfirmed Takeaway order (Phase 26) — for when nobody shows up
+// to pay for it. `orderId` here is the *order's* id (a pending row has no real ticket).
+export async function clearPendingTakeawayOrder(orderId: string): Promise<void> {
+  await api.post(`/api/v1/kot/pending-takeaway/${orderId}/clear`);
 }

@@ -11,6 +11,7 @@ from app.schemas.kot import ActiveKotTicketResponse, KotSendRequest, KotSendResp
 from app.services.kot_service import (
     build_active_ticket_response,
     build_kot_ticket_broadcast,
+    cancel_pending_takeaway_order,
     clear_billed_ticket,
     get_ticket_or_404,
     has_kds_feature,
@@ -157,3 +158,24 @@ async def clear_kot_ticket(
         },
     )
     return updated
+
+
+@router.post(
+    "/pending-takeaway/{order_id}/clear",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role("tenant_admin", "pos_user", "pos_operator"))],
+)
+async def clear_pending_takeaway_order(
+    order_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """The KOT Tickets screen's "Clear" action for a pending Takeaway order (Phase 26)
+    nobody showed up to pay for — same billing-role gate as `clear_kot_ticket` above,
+    but this one deletes the order outright rather than flipping a ticket's status,
+    since a pending Takeaway order was never sent to the kitchen or billed in the
+    first place.
+    """
+    await _require_kds_feature(db, current_user.tenant_id)
+    await cancel_pending_takeaway_order(db, current_user.tenant_id, order_id)
+    await db.commit()

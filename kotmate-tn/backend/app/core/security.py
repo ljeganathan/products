@@ -98,7 +98,7 @@ def create_guest_token(
     guest_session_id: uuid.UUID,
     tenant_id: uuid.UUID,
     location_id: uuid.UUID,
-    table_id: uuid.UUID,
+    table_id: uuid.UUID | None = None,
     expires_delta: timedelta = GUEST_TOKEN_EXPIRE,
 ) -> str:
     """A second, deliberately narrow token type (Phase 25) — carries only what a guest
@@ -111,16 +111,20 @@ def create_guest_token(
     (deps.py) rejects any token whose `type` isn't `"guest"`, so this can never be
     replayed against a staff-only route, and a staff access token can never be
     replayed here.
+
+    `table_id` is `None` for a Takeaway/non-seating QR (Phase 26) — that flow never
+    shares a session across scans the way a table does, so every request resolves the
+    session by `guest_session_id` (the JWT subject) alone rather than by table lookup;
+    the claim is simply omitted rather than serialized as the string `"None"`.
     """
+    extra_claims = {"tenant_id": str(tenant_id), "location_id": str(location_id)}
+    if table_id is not None:
+        extra_claims["table_id"] = str(table_id)
     return _create_token(
         subject=guest_session_id,
         token_type="guest",
         expires_delta=expires_delta,
-        extra_claims={
-            "tenant_id": str(tenant_id),
-            "location_id": str(location_id),
-            "table_id": str(table_id),
-        },
+        extra_claims=extra_claims,
     )
 
 

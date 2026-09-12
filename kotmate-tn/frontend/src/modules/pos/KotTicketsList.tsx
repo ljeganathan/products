@@ -6,6 +6,7 @@ import {
   type ActiveKotTicket,
   type ActiveKotTicketItem,
   clearBilledKotTicket,
+  clearPendingTakeawayOrder,
   listActiveKotTickets,
 } from "@/modules/pos/kotApi";
 
@@ -31,6 +32,13 @@ interface GroupedTicket {
   // True once the guest has tapped "Request Bill" on their own phone — every ticket in
   // the order shares the same guest_sessions row, so the first one seen is authoritative.
   paymentClaimed: boolean;
+  // A Takeaway guest session's table-number equivalent (e.g. "TA-14", Phase 26) —
+  // shown in the table-number slot for any guest order with no table.
+  pickupToken: string | null;
+  // True once any "ticket" in the group is really a pending Takeaway order with no
+  // real KOT ticket yet — that pending row is always the only one in its group (a real
+  // ticket can't coexist with it, since sending one is what turns it into a real one).
+  isPendingTakeaway: boolean;
 }
 
 // A single table+customer can have multiple KOT tickets (repeat-KOT — add-on items sent
@@ -54,6 +62,8 @@ function groupTicketsByOrder(tickets: ActiveKotTicket[]): GroupedTicket[] {
         billNumber: null,
         source: ticket.source,
         paymentClaimed: ticket.guest_payment_claimed,
+        pickupToken: ticket.pickup_token,
+        isPendingTakeaway: ticket.is_pending_takeaway,
       };
       byOrder.set(ticket.order_id, group);
     }
@@ -90,6 +100,12 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["kot-tickets-active"] }),
   });
 
+  // Deletes a pending, unconfirmed Takeaway order outright — nobody showed up to pay.
+  const clearPendingMutation = useMutation({
+    mutationFn: (orderId: string) => clearPendingTakeawayOrder(orderId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["kot-tickets-active"] }),
+  });
+
   return (
     <>
       {isLoading && <p className="text-sm text-ink-faint">Loading…</p>}
@@ -114,7 +130,9 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
                 <summary className="flex cursor-pointer list-none flex-col gap-1 px-3.5 py-2.5 marker:content-none">
                   <div className="flex items-center justify-between">
                     <span className="flex flex-wrap items-center gap-y-1">
-                      <span className="text-lg font-black">{group.tableNumber ?? "—"}</span>
+                      <span className="text-lg font-black">
+                        {group.pickupToken ?? group.tableNumber ?? "—"}
+                      </span>
                       {group.partyLabel && (
                         <span className="ml-1.5 rounded-full bg-gold-soft px-1.5 py-0.5 text-[10px] font-extrabold text-gold">
                           {group.partyLabel}
@@ -129,6 +147,14 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
                           title="Placed by the customer via QR self-order"
                         >
                           📱 Self-order
+                        </span>
+                      )}
+                      {group.isPendingTakeaway && (
+                        <span
+                          className="ml-1.5 rounded-full bg-chili-soft px-2 py-0.5 text-[10px] font-extrabold text-chili"
+                          title="Not sent to the kitchen yet — confirm or clear it"
+                        >
+                          ⏳ Awaiting confirmation
                         </span>
                       )}
                       {group.paymentClaimed && (
@@ -174,7 +200,27 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
                       </div>
                     ))}
                   </div>
-                  {group.billedViaKot ? (
+                  {group.isPendingTakeaway ? (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onSelectOrder(group.orderId)}
+                        className="flex-1 rounded-md border border-accent bg-accent-soft py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-accent-foreground"
+                      >
+                        {group.paymentClaimed
+                          ? "💳 Confirm & Send to Kitchen — customer already paid"
+                          : "Confirm & Send to Kitchen"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => clearPendingMutation.mutate(group.orderId)}
+                        disabled={clearPendingMutation.isPending}
+                        className="rounded-md border border-border px-2.5 py-1.5 text-xs font-bold text-ink-soft hover:border-chili hover:text-chili disabled:opacity-40"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  ) : group.billedViaKot ? (
                     <div className="flex items-center gap-1.5">
                       <span className="flex-1 rounded-md bg-accent-soft py-1.5 text-center text-xs font-bold text-accent">
                         ✓ {group.billNumber ? `Bill #${group.billNumber} — ` : ""}Bill already printed

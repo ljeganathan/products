@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import CurrentGuest, require_guest_tenant_scope
 from app.core.security import create_guest_token
 from app.db.session import get_db
-from app.models import Table
+from app.models import SeatingSection
 from app.schemas.categories import CategoryResponse
 from app.schemas.guest import (
     GuestBillPreviewResponse,
@@ -24,6 +24,7 @@ from app.services.guest_service import (
     get_menu,
     get_order_status,
     get_top_sellers,
+    place_takeaway_order,
     preview_guest_bill,
     request_bill,
     send_kot_for_guest,
@@ -46,16 +47,22 @@ router = APIRouter(prefix="/guest", tags=["guest"])
 async def start_or_resume_guest_session(
     qr_token: str, db: AsyncSession = Depends(get_db)
 ) -> GuestSessionResponse:
-    guest_session, qr, table, tenant = await create_or_resume_session(db, qr_token)
+    guest_session, tenant = await create_or_resume_session(db, qr_token)
+    # Built *before* commit, not after: resolving a session's table/section name needs
+    # `require_guest_tenant_scope`'s RLS context, and that's a `SET LOCAL` scoped to
+    # this transaction only — a query issued after `db.commit()` ends that transaction
+    # runs with no tenant context, so RLS would silently match zero rows instead of
+    # this one (a real bug caught here: it surfaced as a 500 that the browser reported
+    # as a bare "Network Error" since the response had no CORS headers on the way out).
+    response = await to_session_response(db, guest_session)
     await db.commit()
 
     token = create_guest_token(
         guest_session_id=guest_session.id,
         tenant_id=tenant.id,
-        location_id=qr.location_id,
-        table_id=qr.table_id,
+        location_id=guest_session.location_id,
+        table_id=guest_session.table_id,
     )
-    response = to_session_response(guest_session, table)
     response.guest_token = token
     return response
 
@@ -71,18 +78,11 @@ async def update_guest_profile(
     db: AsyncSession = Depends(get_db),
 ) -> GuestSessionResponse:
     guest_session = await update_profile(db, guest, payload)
-    # Fetched *before* commit, not after: `require_guest_tenant_scope`'s
-    # `app.current_tenant_id` is a `SET LOCAL`, scoped to this transaction only — a
-    # query issued after `db.commit()` ends that transaction runs with no tenant
-    # context, so RLS on `tables` would silently match zero rows instead of this one
-    # (a real bug caught here: it surfaced as a 500 that the browser reported as a
-    # bare "Network Error" since the response had no CORS headers on the way out).
-    table = (await db.execute(select(Table).where(Table.id == guest.table_id))).scalar_one()
+    response = await to_session_response(db, guest_session)
     await db.commit()
     # No new token issued here — the guest is already holding a valid one; this route
     # only ever changes name/phone, never identity, so `guest_token` is left blank
     # rather than handing back a value that would misleadingly suggest a refresh.
-    response = to_session_response(guest_session, table)
     response.guest_token = ""
     return response
 
@@ -154,6 +154,26 @@ async def update_guest_cart(
 async def guest_send_to_kitchen(
     guest: CurrentGuest = Depends(require_guest_tenant_scope), db: AsyncSession = Depends(get_db)
 ) -> KotSendResponse:
+    if guest.table_id is None:
+        # Takeaway: no real KOT ticket yet, nothing printed, no stock touched — see
+        # `place_takeaway_order`'s own docstring for why. The order is already visible
+        # to staff on the KOT Tickets screen as a pending row the moment it has items,
+        # so there's nothing to broadcast here either.
+        guest_session = await place_takeaway_order(db, guest)
+        section = (
+            await db.execute(select(SeatingSection).where(SeatingSection.id == guest_session.section_id))
+        ).scalar_one()
+        await db.commit()
+        return KotSendResponse(
+            id=guest_session.order_id,
+            ticket_number=guest_session.pickup_token or "",
+            order_id=guest_session.order_id,
+            table_number=None,
+            section_name_en=section.name_en,
+            status="pending",
+            printed=False,
+        )
+
     result = await send_kot_for_guest(db, guest)
     await db.commit()
 
@@ -208,6 +228,10 @@ async def guest_request_bill(
     await db.commit()
     await ws_manager.broadcast(
         guest.location_id,
-        {"type": "payment_claimed", "table_id": str(guest.table_id)},
+        {
+            "type": "payment_claimed",
+            "table_id": str(guest.table_id) if guest.table_id else None,
+            "pickup_token": guest_session.pickup_token,
+        },
     )
     return RequestBillResponse(status=guest_session.status)

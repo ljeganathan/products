@@ -20,6 +20,7 @@ import {
   getGuestMenu,
   getGuestOrderStatus,
   getGuestTopSellers,
+  isTakeawaySession,
   requestGuestBill,
   sendGuestOrderToKitchen,
   startGuestSession,
@@ -53,10 +54,13 @@ function isSessionEndedError(err: unknown): boolean {
 }
 
 // A second, deliberately separate client from the staff app (CLAUDE.md — no sidebar,
-// no login screen, no ProtectedRoute) — a dine-in customer's own phone, reached by
-// scanning their table's one QR code (Phase 25). Everyone who scans it shares this
-// same table's cart; this component never asks the guest (or shows any UI) to pick a
-// location or a customer identity — that's fully determined by which table's QR it is.
+// no login screen, no ProtectedRoute) — a customer's own phone, reached by scanning a
+// QR code. Two kinds of QR, two very different session shapes: a dine-in TABLE's code
+// (Phase 25) is shared — everyone who scans it joins the same cart — while a Takeaway
+// SECTION's code (Phase 26) is never shared; every scan starts its own independent
+// order with its own pickup token, exactly like two strangers queuing at a counter.
+// This component never asks the guest (or shows any UI) to pick a location or a
+// customer identity — that's fully determined by which QR it is.
 export function GuestOrderApp() {
   const { qrToken = "" } = useParams();
   const queryClient = useQueryClient();
@@ -76,10 +80,22 @@ export function GuestOrderApp() {
     setNotice(errorDetail(err) ?? fallback);
   }
 
+  // This is a "log in", not a "get current state" — it must run exactly once per page
+  // load, never again on its own. React Query's defaults (refetchOnWindowFocus,
+  // refetchOnReconnect) would otherwise re-invoke startGuestSession every time the
+  // guest merely switches back to this tab. For a dine-in table QR that's merely
+  // wasteful (create_or_resume_session resumes the same session), but for a Takeaway
+  // QR it's a real bug: every scan mints a brand-new, independent order by design, so
+  // an unwanted refetch would silently abandon whatever order the guest already had
+  // in progress and hand them a fresh, empty one instead.
   const sessionQuery = useQuery({
     queryKey: ["guest-session", qrToken],
     queryFn: () => startGuestSession(qrToken),
     retry: false,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
   });
 
   const menuQuery = useQuery({
@@ -153,9 +169,16 @@ export function GuestOrderApp() {
       setOrder(fresh);
       setCartOpen(false);
       setTab("status");
-      setNotice(`Sent to the kitchen — ticket #${result.ticket_number}`);
+      // Takeaway: nothing has actually reached the kitchen yet (staff confirm it from
+      // their side first, see the backend's own place_takeaway_order docstring) — the
+      // ticket_number here is really the pickup token, so the wording matches that.
+      setNotice(
+        session && isTakeawaySession(session)
+          ? `Order placed! Your pickup number: ${result.ticket_number}`
+          : `Sent to the kitchen — ticket #${result.ticket_number}`,
+      );
     } catch (err) {
-      handleGuestError(err, "Couldn't send to the kitchen — please try again");
+      handleGuestError(err, "Couldn't place your order — please try again");
     } finally {
       setBusy(false);
     }
@@ -176,7 +199,7 @@ export function GuestOrderApp() {
   if (sessionEnded) {
     return (
       <CenteredMessage>
-        <p className="mb-3">This ordering session has ended — please rescan the table's QR code.</p>
+        <p className="mb-3">This ordering session has ended — please rescan the QR code.</p>
         <button
           type="button"
           onClick={() => window.location.reload()}
@@ -189,6 +212,7 @@ export function GuestOrderApp() {
   }
 
   const session = sessionQuery.data as GuestSession;
+  const takeaway = isTakeawaySession(session);
   const unsentCount = order?.items.filter((l) => !l.is_kot_sent).length ?? 0;
 
   return (
@@ -196,8 +220,19 @@ export function GuestOrderApp() {
       <header className="flex flex-none items-center gap-2 border-b border-border bg-surface px-4 py-2.5 shadow-pos">
         <img src={logoMark} alt="" className="h-7 w-7 shrink-0 object-contain" />
         <div className="min-w-0 leading-tight">
-          <p className="text-base font-black leading-none">Table {session.table_number}</p>
-          <p className="text-[11px] font-semibold text-ink-faint">Shared order for this table</p>
+          {takeaway ? (
+            <>
+              <p className="text-base font-black leading-none">{session.pickup_token}</p>
+              <p className="text-[11px] font-semibold text-ink-faint">
+                {session.section_name_en} — your own order
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-base font-black leading-none">Table {session.table_number}</p>
+              <p className="text-[11px] font-semibold text-ink-faint">Shared order for this table</p>
+            </>
+          )}
         </div>
         <button
           type="button"
@@ -257,7 +292,7 @@ export function GuestOrderApp() {
           onClick={() => setCartOpen(true)}
           className="fixed bottom-16 right-4 flex items-center gap-2 rounded-full bg-accent px-4 py-3 text-sm font-extrabold text-accent-foreground shadow-pos"
         >
-          🛒 {unsentCount} item{unsentCount === 1 ? "" : "s"} · Send to kitchen
+          🛒 {unsentCount} item{unsentCount === 1 ? "" : "s"} · {takeaway ? "Place order" : "Send to kitchen"}
         </button>
       )}
 
@@ -265,6 +300,7 @@ export function GuestOrderApp() {
         <CartSheet
           order={order}
           busy={busy}
+          takeaway={takeaway}
           onQuantityChange={(id, qty) => void handleQuantityChange(id, qty)}
           onSend={() => void handleSendToKitchen()}
           onClose={() => setCartOpen(false)}
@@ -367,12 +403,14 @@ function MenuTab({
 function CartSheet({
   order,
   busy,
+  takeaway,
   onQuantityChange,
   onSend,
   onClose,
 }: {
   order: Order | null;
   busy: boolean;
+  takeaway: boolean;
   onQuantityChange: (lineId: string, qty: number) => void;
   onSend: () => void;
   onClose: () => void;
@@ -449,7 +487,7 @@ function CartSheet({
             disabled={unsent.length === 0 || busy}
             className="flex-1 rounded-lg bg-accent py-2.5 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
           >
-            {busy ? "Sending…" : "Send to Kitchen"}
+            {busy ? "Placing…" : takeaway ? "Place Order" : "Send to Kitchen"}
           </button>
         </div>
       </div>

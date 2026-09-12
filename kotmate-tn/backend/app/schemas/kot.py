@@ -69,3 +69,16 @@ class ActiveKotTicketResponse(BaseModel):
     # claims to have paid, without needing to have caught the transient
     # `payment_claimed` websocket toast when it first happened.
     guest_payment_claimed: bool = False
+    # A Takeaway guest session's table-number equivalent (e.g. "TA-14", Phase 26) —
+    # set for every guest ticket/pending-order whose order has no table (table_id is
+    # null), so the frontend can show it where it would otherwise show a table number.
+    # Never set for a dine-in ticket, which already has a real table number.
+    pickup_token: str | None = None
+    # True for a synthetic row representing an open Takeaway order that has never been
+    # sent to the kitchen (no KotTicket exists yet, Phase 26) — `id` is the *order's*
+    # id in this case, not a real ticket id, and `status` is the fixed value "pending"
+    # rather than new/preparing/ready. Staff confirm it (creating the real ticket,
+    # deducting stock, and finalizing the bill all at once via the existing "KOT +
+    # Print Bill" action) or cancel it if nobody shows up to pay — see
+    # `kot_service.list_active_tickets`/`cancel_pending_takeaway_order`.
+    is_pending_takeaway: bool = False
