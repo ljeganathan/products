@@ -11,9 +11,9 @@ import { useAuthStore } from "@/modules/auth/authStore";
 import { UserMenu } from "@/modules/auth/UserMenu";
 import { type ActiveKotTicket, listActiveKotTickets, updateKotTicketStatus } from "@/modules/pos/kotApi";
 import { useLocationSocket } from "@/modules/realtime/useLocationSocket";
+import { StockManagementView } from "@/modules/stock/StockManagementView";
 
 import { KotTicketCard } from "./KotTicketCard";
-import { StockManagementTab } from "./StockManagementTab";
 
 interface StockOverride {
   available_qty: number;
@@ -215,7 +215,7 @@ export function KotDisplayPage() {
       )}
 
       {view === "stock" && stockManagementOnPlan ? (
-        <StockManagementTab />
+        <StockManagementView />
       ) : (
       <main className="flex-1 overflow-y-auto p-4">
         {isLoading && <p className="text-sm text-ink-faint">Loading tickets…</p>}

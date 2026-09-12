@@ -28,6 +28,7 @@ import { TenantDetailPage } from "@/modules/product-owner/TenantDetailPage";
 import { TenantsListPage } from "@/modules/product-owner/TenantsListPage";
 import { DashboardPage } from "@/modules/reports/DashboardPage";
 import { ReportsPage } from "@/modules/reports/ReportsPage";
+import { StockManagementPage } from "@/modules/stock/StockManagementPage";
 
 function RootRedirect() {
   const accessToken = useAuthStore((state) => state.accessToken);
@@ -87,6 +88,18 @@ export const router = createBrowserRouter([
         element: (
           <AppShell>
             <BillHistoryPage />
+          </AppShell>
+        ),
+      },
+      {
+        // Standalone Stock Management (moved out of the Pro-Max-only KOT screen,
+        // production feedback) — Admin + Cashier, same role group as the three routes
+        // above. KOT User keeps its own copy inside /kot (CLAUDE.md §5: that role's
+        // login is confined to /kot alone, so it never reaches this route).
+        path: "/stock",
+        element: (
+          <AppShell>
+            <StockManagementPage />
           </AppShell>
         ),
       },

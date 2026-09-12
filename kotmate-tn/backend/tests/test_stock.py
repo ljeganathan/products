@@ -208,6 +208,104 @@ async def test_stock_management_tab_works_on_pro_max_when_enabled(
     assert rows[0].change_qty == 25
 
 
+async def _create_staff_headers(client: AsyncClient, admin_headers: dict, role: str, handle: str) -> dict:
+    user = (
+        await client.post(
+            "/api/v1/users",
+            json={"local_handle": handle, "name": handle, "role": role, "password": "password123"},
+            headers=admin_headers,
+        )
+    ).json()
+    login = await client.post(
+        "/api/v1/auth/login", json={"user_id": user["user_id"], "password": "password123"}
+    )
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+async def test_cashier_can_use_stock_management_standalone_page(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    """Stock Management moved out from being a KOT-screen-only tab to its own main-nav
+    page reachable by Admin and Cashier (production feedback) — Cashier previously had
+    no access to these endpoints at all (tenant_admin/kitchen only).
+    """
+    admin_headers = pro_max_tenant_admin["headers"]
+    await _enable_stock_management(client, admin_headers, True)
+    category = await _create_category(client, admin_headers)
+    item = await _create_item(client, admin_headers, category["id"], price=50)
+
+    cashier_headers = await _create_staff_headers(client, admin_headers, "pos_user", "cashier01")
+
+    list_resp = await client.get("/api/v1/stock/items", headers=cashier_headers)
+    assert list_resp.status_code == 200, list_resp.text
+    assert any(i["id"] == item["id"] for i in list_resp.json())
+
+    update_resp = await client.patch(
+        f"/api/v1/stock/items/{item['id']}", json={"available_qty": 40}, headers=cashier_headers
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["available_qty"] == 40
+
+
+async def test_calculate_for_me_conversion_is_remembered_for_next_restock(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    """The "Calculate for Me" popup's per-item conversion (e.g. "500 g used per Chicken
+    Biryani") persists on the item so the next restock pre-fills it instead of asking
+    the cashier to re-derive the same number every time — additive, so an item that
+    never uses the calculator (a plain "Type Amount" save) simply never gets these
+    fields touched.
+    """
+    headers = pro_max_tenant_admin["headers"]
+    await _enable_stock_management(client, headers, True)
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=50)
+
+    # Brand-new item has never used the calculator.
+    before = await client.get("/api/v1/stock/items", headers=headers)
+    before_row = next(i for i in before.json() if i["id"] == item["id"])
+    assert before_row["stock_calc_qty"] is None
+    assert before_row["stock_calc_unit"] is None
+
+    # 100 kg bought / 500 g per Chicken Biryani = 200 — the calculator's own PATCH
+    # sends both the computed available_qty and the conversion it was derived from.
+    calc_resp = await client.patch(
+        f"/api/v1/stock/items/{item['id']}",
+        json={"available_qty": 200, "stock_calc_qty": 500, "stock_calc_unit": "g"},
+        headers=headers,
+    )
+    assert calc_resp.status_code == 200, calc_resp.text
+    assert calc_resp.json()["stock_calc_qty"] == 500
+    assert calc_resp.json()["stock_calc_unit"] == "g"
+
+    # A later plain "Type Amount" save (no calc fields sent) must not wipe the
+    # remembered conversion out from under the next "Calculate for Me" open.
+    plain_resp = await client.patch(
+        f"/api/v1/stock/items/{item['id']}", json={"available_qty": 210}, headers=headers
+    )
+    assert plain_resp.status_code == 200, plain_resp.text
+    assert plain_resp.json()["available_qty"] == 210
+    assert plain_resp.json()["stock_calc_qty"] == 500
+    assert plain_resp.json()["stock_calc_unit"] == "g"
+
+    after = await client.get("/api/v1/stock/items", headers=headers)
+    after_row = next(i for i in after.json() if i["id"] == item["id"])
+    assert after_row["stock_calc_qty"] == 500
+    assert after_row["stock_calc_unit"] == "g"
+
+
+async def test_waiter_still_blocked_from_stock_management(client: AsyncClient, pro_max_tenant_admin: dict):
+    """The Cashier carve-out above must not widen to every staff role — a waiter still
+    has no legitimate reason to touch stock counts.
+    """
+    admin_headers = pro_max_tenant_admin["headers"]
+    await _enable_stock_management(client, admin_headers, True)
+    waiter_headers = await _create_staff_headers(client, admin_headers, "waiter", "waiter01")
+
+    resp = await client.get("/api/v1/stock/items", headers=waiter_headers)
+    assert resp.status_code == 403
+
+
 async def test_stock_management_tab_blank_qty_stops_tracking(
     client: AsyncClient, pro_max_tenant_admin: dict
 ):

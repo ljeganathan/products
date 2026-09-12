@@ -17,11 +17,12 @@ from app.services.stock_service import (
 )
 from app.services.tenant_onboarding import get_active_plan
 
-# KOT screen's Stock Management tab (extends Phase 05/08's soft-inventory feature) —
-# tenant_admin and kitchen ("KOT User") both have this screen per CLAUDE.md §5. This
-# tab is a Pro/Pro Max-only surface (unlike the underlying badges/decrement, which
-# stay on for Lite too — see stock_service.is_stock_tracking_enabled's docstring), so
-# the gate here checks the plan feature AND the tenant's own switch, not the
+# Stock Management (extends Phase 05/08's soft-inventory feature) — reachable from a
+# standalone main-nav page (tenant_admin, pos_user/Cashier) and from the KOT screen's
+# own tab (kitchen/"KOT User", whose login is confined to /kot alone, CLAUDE.md §5).
+# This surface is Pro/Pro Max-only (unlike the underlying badges/decrement, which stay
+# on for Lite too — see stock_service.is_stock_tracking_enabled's docstring), so the
+# gate here checks the plan feature AND the tenant's own switch, not the
 # Lite-inclusive effective flag.
 router = APIRouter(prefix="/stock", tags=["stock"], dependencies=[Depends(require_tenant_scope)])
 
@@ -48,7 +49,7 @@ async def _require_stock_management(db: AsyncSession, tenant_id: uuid.UUID) -> T
 @router.get(
     "/items",
     response_model=list[StockItemResponse],
-    dependencies=[Depends(require_role("tenant_admin", "kitchen"))],
+    dependencies=[Depends(require_role("tenant_admin", "kitchen", "pos_user"))],
 )
 async def list_tenant_stock_items(
     current_user: CurrentUser = Depends(get_current_user),
@@ -62,7 +63,7 @@ async def list_tenant_stock_items(
 @router.patch(
     "/items/{item_id}",
     response_model=StockItemResponse,
-    dependencies=[Depends(require_role("tenant_admin", "kitchen"))],
+    dependencies=[Depends(require_role("tenant_admin", "kitchen", "pos_user"))],
 )
 async def update_tenant_stock_item(
     item_id: uuid.UUID,
@@ -76,5 +77,11 @@ async def update_tenant_stock_item(
         item = await clear_item_stock(db, current_user.tenant_id, item)
     else:
         item = await set_item_stock(db, current_user.tenant_id, item, payload.available_qty, "manual_set")
+    # Remembers the "Calculate for Me" popup's per-item conversion for next time — only
+    # ever sent (as a pair) when that popup was actually used for this add, so a plain
+    # "Type Amount" save never overwrites an earlier calculator entry with nothing.
+    if payload.stock_calc_qty is not None and payload.stock_calc_unit is not None:
+        item.stock_calc_qty = payload.stock_calc_qty
+        item.stock_calc_unit = payload.stock_calc_unit
     await db.commit()
     return StockItemResponse.model_validate(item)

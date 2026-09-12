@@ -1,10 +1,13 @@
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+StockCalcUnit = Literal["g", "kg", "ml", "l", "pcs"]
+
 
 class StockItemResponse(BaseModel):
-    """One row for the KOT screen's Stock Management tab — every active item, any
+    """One row for the Stock Management screen — every active item, any
     track_inventory state, since giving an item a quantity here turns tracking on.
     """
 
@@ -16,6 +19,11 @@ class StockItemResponse(BaseModel):
     category_id: uuid.UUID
     track_inventory: bool
     available_qty: int | None
+    # The "Calculate for Me" popup's remembered per-item conversion (e.g. "500 g used
+    # per Chicken Biryani") — null until that calculator has been used for this item at
+    # least once, in which case the popup pre-fills these instead of asking again.
+    stock_calc_qty: float | None
+    stock_calc_unit: StockCalcUnit | None
 
 
 class StockUpdateRequest(BaseModel):
@@ -23,6 +31,11 @@ class StockUpdateRequest(BaseModel):
     # — saving the Stock Management tab's qty box blank, the reverse of giving it a
     # quantity turning tracking on.
     available_qty: int | None = Field(default=None, ge=0)
+    # Set together whenever the "Calculate for Me" popup was used for this add — both
+    # omitted (default None) leaves whatever was already remembered untouched, so a
+    # plain "Type Amount" save never wipes out an earlier calculator entry.
+    stock_calc_qty: float | None = Field(default=None, gt=0)
+    stock_calc_unit: StockCalcUnit | None = None
 
 
 class StockManagementSettingsRequest(BaseModel):

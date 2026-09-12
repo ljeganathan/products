@@ -57,6 +57,9 @@ export function AppShell({ children }: AppShellProps) {
         {role !== "kitchen" && <NavItem to="/pos" icon="🧾" label={t("nav.pos")} onNavigate={onNavigate} />}
         {role === "tenant_admin" && <NavItem to="/kot" icon="🍳" label={t("nav.kot")} onNavigate={onNavigate} />}
         {(role === "tenant_admin" || role === "pos_user") && (
+          <NavItem to="/stock" icon="📦" label="Stock Management" onNavigate={onNavigate} />
+        )}
+        {(role === "tenant_admin" || role === "pos_user") && (
           <>
             <NavItem to="/reports" icon="📈" label={t("nav.reports")} onNavigate={onNavigate} />
             <NavItem to="/billing/history" icon="🧮" label="Bill History" onNavigate={onNavigate} />

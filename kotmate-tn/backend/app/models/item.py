@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, Numeric, String, text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, text
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,6 +32,13 @@ class Item(UUIDPKMixin, TimestampMixin, Base):
     # tracking off clears it back to NULL rather than leaving a stale count hidden.
     track_inventory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     available_qty: Mapped[int | None] = mapped_column(Integer)
+    # Remembers the Stock Management "Calculate for Me" popup's per-item conversion
+    # (e.g. "500 g used per Chicken Biryani") so the next restock pre-fills it instead
+    # of asking the cashier to re-derive the same number every time — purely a UX
+    # convenience, never read by pricing/billing/KOT. Both null until that calculator
+    # is used at least once for this item.
+    stock_calc_qty: Mapped[float | None] = mapped_column(Numeric(10, 3))
+    stock_calc_unit: Mapped[str | None] = mapped_column(String(10))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     __table_args__ = (
@@ -58,5 +65,9 @@ class Item(UUIDPKMixin, TimestampMixin, Base):
             "name_ta",
             postgresql_using="gin",
             postgresql_ops={"name_ta": "gin_trgm_ops"},
+        ),
+        CheckConstraint(
+            "stock_calc_unit IS NULL OR stock_calc_unit IN ('g', 'kg', 'ml', 'l', 'pcs')",
+            name="ck_items_stock_calc_unit",
         ),
     )
