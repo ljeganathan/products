@@ -80,14 +80,23 @@ export function ItemCard({
         />
       )}
 
+      {/* line-clamp on both lines is load-bearing, not cosmetic: the price/Add row
+          below relies on `mt-auto` to sit at the bottom of this flex column, so if the
+          name (or a device's enlarged text-zoom setting) let it wrap to an unbounded
+          number of lines, it can push the price row down past the card's own rendered
+          height, making it disappear entirely on any item with an image — reported in
+          production on a device with larger system text, reproduced by forcing 2-line
+          wrapping locally. Capping the line count keeps this card's content height
+          bounded and the price row's position predictable regardless of name length,
+          language, or text-size zoom. */}
       <div className="leading-tight">
-        <span className={`font-bold ${item.is_combo_tile ? "text-base" : "text-[13px]"}`}>
+        <p className={`line-clamp-2 font-bold ${item.is_combo_tile ? "text-base" : "text-[13px]"}`}>
           {item.name_en}
-        </span>
-        {item.item_code && (
-          <span className="ml-1 font-mono text-[10px] font-medium text-ink-faint">#{item.item_code}</span>
-        )}
-        {item.name_ta && <span className="ta block text-xs font-medium text-ink-soft">{item.name_ta}</span>}
+          {item.item_code && (
+            <span className="ml-1 font-mono text-[10px] font-medium text-ink-faint">#{item.item_code}</span>
+          )}
+        </p>
+        {item.name_ta && <p className="ta truncate text-xs font-medium text-ink-soft">{item.name_ta}</p>}
       </div>
 
       <div className="mt-auto flex items-center justify-between gap-1.5">
