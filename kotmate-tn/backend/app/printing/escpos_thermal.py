@@ -4,6 +4,7 @@ from app.printing.base import (
     BillRenderData,
     KotTicketRenderData,
     ReportRenderData,
+    customer_lines,
     format_inr,
     line_chars_for_paper_width,
     now_ist,
@@ -158,6 +159,8 @@ def render_bill(bill: BillRenderData) -> bytes:
     waiter_label = f"Waiter: {bill.waiter_name}" if bill.waiter_name else ""
     for header_line in two_column_lines(waiter_label, date_str, line_width):
         out += _text(header_line)
+    for customer_line in customer_lines(bill):
+        out += _text(customer_line)
     out += sep
 
     for line in bill.lines:

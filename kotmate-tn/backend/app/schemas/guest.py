@@ -1,6 +1,7 @@
+import re
 import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.bills import BillPreviewResponse
 from app.schemas.orders import OrderLineInput
@@ -33,12 +34,35 @@ class GuestSessionResponse(BaseModel):
 
 
 class GuestProfileUpdateRequest(BaseModel):
-    """Always optional — CLAUDE.md's product framing is explicit that name/phone are
-    never a precondition to ordering, just a nice-to-have for the tenant.
+    """A generic partial-update primitive — either field left `None` leaves it
+    untouched — reused for two different call sites with different requirements
+    layered on top of it: the QR ordering flow (Phase 27) requires *both* fields be
+    set before `guest_service.update_cart` will let a session place its first order
+    (enforced there, not here, since this schema itself has no way to see whether the
+    *other* field is already set on the session), while the header button's follow-up
+    "edit your details" sheet reuses this same endpoint purely optionally once that
+    initial requirement has already been satisfied.
     """
 
     customer_name: str | None = Field(default=None, max_length=100)
     customer_phone: str | None = Field(default=None, max_length=20)
+
+    @field_validator("customer_phone")
+    @classmethod
+    def _normalize_phone(cls, v: str | None) -> str | None:
+        """Strips everything but digits and keeps the last 10 (absorbs a "+91"/"0"
+        prefix a guest might type) — this is the one path a future customer-loyalty
+        feature would key lookups off of (CLAUDE.md's phone-based identity, Phase 27),
+        so it's normalized strictly here even though a staff-entered `bills.
+        customer_phone` (bill_service.py) stays free-text/lenient for a walk-in
+        landline number.
+        """
+        if v is None:
+            return None
+        digits = re.sub(r"\D", "", v)
+        if len(digits) < 10:
+            raise ValueError("Enter a valid 10-digit phone number")
+        return digits[-10:]
 
 
 class GuestCartUpdateRequest(BaseModel):

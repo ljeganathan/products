@@ -223,3 +223,52 @@ class ZReportResponse(BaseModel):
     round_off_amount: float
     grand_total: float
     payments: list[PaymentMethodTotal]
+
+
+class DiscountSummaryRow(BaseModel):
+    """One row per discount rule name that fired at least once in the date range
+    (Phase 27) — sourced from `bill_discounts`, not from parsing `bills.discount_note`.
+    `bills.grand_total` is already net of discount (post-discount, post-tax) and is what
+    Sales Summary reports as sales, so `sales_after_discount` is exactly that figure and
+    `total_bill_amount` is the bill before discount (`sales + discount`) — Total Bill −
+    Discount = Sales on every row. A bill touched by more than one rule is counted under
+    every rule it touched (its own sales figure repeated), so the TOTAL row of a
+    multi-rule period can exceed Sales Summary's grand total.
+    """
+
+    discount_name: str
+    total_bill_amount: float
+    discount_amount: float
+    sales_after_discount: float
+
+
+class DiscountSummaryResponse(BaseModel):
+    rows: list[DiscountSummaryRow]
+    total_bill_amount: float
+    total_discount_amount: float
+    total_sales_after_discount: float
+
+
+class DiscountDetailRow(BaseModel):
+    """Same grouping/basis as `DiscountSummaryRow`, broken out to one row per
+    (discount rule, bill) pair instead of aggregated — `customer_name`/`customer_phone`
+    are the bill's own snapshotted fields (Phase 27), null on a bill nobody entered them
+    for.
+    """
+
+    discount_name: str
+    bill_number: str
+    customer_name: str | None
+    customer_phone: str | None
+    total_bill_amount: float
+    discount_amount: float
+    sales_after_discount: float
+
+
+class DiscountDetailResponse(BaseModel):
+    # Pre-sorted rule-major (discount name, then bill date) — same "caller never
+    # re-sorts" contract item_wise_sales already guarantees for its category grouping.
+    rows: list[DiscountDetailRow]
+    total_bill_amount: float
+    total_discount_amount: float
+    total_sales_after_discount: float

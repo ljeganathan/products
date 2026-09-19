@@ -43,6 +43,19 @@ function splitDiscountSegment(segment: string): [string, string] {
   return idx === -1 ? [segment, ""] : [segment.slice(0, idx), segment.slice(idx + 2)];
 }
 
+// FastAPI returns `detail` as a string for our own errors but as an array of
+// {msg, loc} objects for request-validation (422) errors — String() on that array is
+// what used to show a bare "[object Object]".
+function billingErrorMessage(err: unknown): string {
+  if (!axios.isAxiosError(err)) return "Billing failed";
+  const detail = err.response?.data?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d: { msg?: string }) => d.msg ?? "Invalid input").join("; ");
+  }
+  return err.message;
+}
+
 function formatBillDateTime(iso: string): string {
   return new Date(iso).toLocaleString("en-IN", {
     day: "2-digit",
@@ -70,6 +83,12 @@ export function BillingModal({
   // Item-level and Flat discounts auto-apply from active discount rules — the cashier's
   // only input here is an optional coupon code.
   const [couponCode, setCouponCode] = useState("");
+  // Optional customer identity — prefilled once from the preview (a QR guest's own
+  // name/phone), then owned by the cashier so later preview refetches (e.g. while typing
+  // a coupon) never overwrite an edit.
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [customerPrefilled, setCustomerPrefilled] = useState(false);
 
   const [payments, setPayments] = useState<BillPaymentInput[]>([
     { method: initialPaymentMethod, amount: 0 },
@@ -119,11 +138,21 @@ export function BillingModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview?.grand_total]);
 
+  useEffect(() => {
+    if (preview && !customerPrefilled) {
+      setCustomerName(preview.customer_name ?? "");
+      setCustomerPhone(preview.customer_phone ?? "");
+      setCustomerPrefilled(true);
+    }
+  }, [preview, customerPrefilled]);
+
   const finalizeMutation = useMutation({
     mutationFn: () =>
       (mode === "kot-and-bill" ? sendKotAndFinalizeBill : createBill)({
         order_id: order.id,
         coupon_code: debouncedCouponCode || undefined,
+        customer_name: customerName.trim() || undefined,
+        customer_phone: customerPhone.trim() || undefined,
         payments,
         skip_print: previewBeforePrint,
       }),
@@ -148,8 +177,7 @@ export function BillingModal({
       const warning = [billWarning, kotWarning].filter(Boolean).join(" · ") || undefined;
       onFinalized(warning);
     },
-    onError: (err) =>
-      setError(axios.isAxiosError(err) ? String(err.response?.data?.detail ?? err.message) : "Billing failed"),
+    onError: (err) => setError(billingErrorMessage(err)),
   });
 
   const printMutation = useMutation({
@@ -206,6 +234,11 @@ export function BillingModal({
             )}
             <p className="text-center">{formatBillDateTime(finalizedBill.created_at)}</p>
             {finalizedBill.waiter_name && <p className="text-center">Waiter: {finalizedBill.waiter_name}</p>}
+            {(finalizedBill.customer_name || finalizedBill.customer_phone) && (
+              <p className="text-center">
+                Customer: {[finalizedBill.customer_name, finalizedBill.customer_phone].filter(Boolean).join(" / ")}
+              </p>
+            )}
             <p className="my-1 border-t border-dashed border-black/40" />
             {finalizedBill.items.map((line) => (
               <div key={line.id ?? line.item_id}>
@@ -274,6 +307,30 @@ export function BillingModal({
         <h2 className="mb-3 text-lg font-extrabold">
           {mode === "kot-and-bill" ? "🍳🧾 Send to Kitchen & Finalize Bill" : "🧾 Finalize Bill"}
         </h2>
+
+        <div className="mb-3 rounded-lg border border-border p-3">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-ink-faint">
+            Customer (optional)
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              maxLength={100}
+              placeholder="Name"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              className="min-w-0 flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm"
+            />
+            <input
+              type="tel"
+              maxLength={20}
+              placeholder="Phone number"
+              value={customerPhone}
+              onChange={(e) => setCustomerPhone(e.target.value)}
+              className="min-w-0 flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm"
+            />
+          </div>
+        </div>
 
         {couponsEnabled && (
           <div className="mb-3 rounded-lg border border-border p-3">

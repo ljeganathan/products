@@ -14,6 +14,7 @@ from app.core.deps import CurrentUser
 from app.models import (
     AuditLog,
     Bill,
+    BillDiscount,
     BillItem,
     GuestSession,
     HotelMaster,
@@ -77,6 +78,21 @@ class _PricedItem:
 
 
 @dataclass
+class _DiscountContribution:
+    """One discount_rules row's own share of a bill's total discount — the structured
+    counterpart to the `f"{rule.name}: -₹{amount:.2f}"` text segments `_compute_discount`
+    already builds for `bills.discount_note`, persisted as its own `BillDiscount` row so
+    the Discount Summary/Detail reports can group/sum by rule without parsing that
+    string (Phase 27).
+    """
+
+    rule_id: uuid.UUID
+    rule_name: str
+    rule_type: str
+    amount: float
+
+
+@dataclass
 class _BillTotals:
     priced_items: list[_PricedItem]
     subtotal: float
@@ -89,6 +105,7 @@ class _BillTotals:
     # value, post-discount, pre-tax"), deliberately different from the live cart-screen
     # estimate in order_service (which has no discount to subtract yet at that point).
     net_taxable_value: float
+    discount_contributions: list[_DiscountContribution]
 
 
 def _round_half_up_rupee(value: float) -> int:
@@ -160,15 +177,20 @@ async def _compute_discount(
     priced_items: list[_PricedItem],
     subtotal: float,
     coupon_code: str | None,
-) -> tuple[float, str | None]:
+) -> tuple[float, str | None, list[_DiscountContribution]]:
     """Item-level, flat, and coupon discounts all auto-resolve from currently-active,
     non-expired `discount_rules` (Phase 23) and stack — each one computed against
     whatever's left after the previous ones, so `discount_amount` is naturally capped at
     `subtotal` without a separate clamp. The cashier's only input is an optional coupon
     code; item-level and flat apply themselves whenever a matching rule is active.
+
+    Returns the structured per-rule contributions (Phase 27) alongside the total/note —
+    `finalize_bill` persists these as `BillDiscount` rows; every other caller (namely
+    `preview_bill`) is free to just discard the list.
     """
     allowed_types = plan_features.get("discount_types", ["flat_percent"])
     notes: list[str] = []
+    contributions: list[_DiscountContribution] = []
     total = 0.0
 
     if "item_level" in allowed_types:
@@ -183,6 +205,7 @@ async def _compute_discount(
             if amount > 0:
                 total += amount
                 notes.append(f"{rule.name}: -₹{amount:.2f}")
+                contributions.append(_DiscountContribution(rule.id, rule.name, rule.type, amount))
 
     if "flat_percent" in allowed_types:
         remainder = subtotal - total
@@ -192,6 +215,7 @@ async def _compute_discount(
             if amount > 0:
                 total += amount
                 notes.append(f"{rule.name}: -₹{amount:.2f}")
+                contributions.append(_DiscountContribution(rule.id, rule.name, rule.type, amount))
 
     if coupon_code:
         if "coupon" not in allowed_types:
@@ -204,8 +228,9 @@ async def _compute_discount(
         if amount > 0:
             total += amount
             notes.append(f"{rule.name}: -₹{amount:.2f}")
+            contributions.append(_DiscountContribution(rule.id, rule.name, rule.type, amount))
 
-    return round(total, 2), "; ".join(notes) if notes else None
+    return round(total, 2), "; ".join(notes) if notes else None, contributions
 
 
 async def _resolve_line_tax_rule(
@@ -254,7 +279,7 @@ async def _compute_totals(
     line_tax_overrides: dict[uuid.UUID, uuid.UUID] | None,
 ) -> tuple[_BillTotals, str | None]:
     subtotal = round(sum(p.line_total for p in priced_items), 2)
-    discount_amount, discount_note = await _compute_discount(
+    discount_amount, discount_note, discount_contributions = await _compute_discount(
         session, tenant_id, plan_features, priced_items, subtotal, coupon_code
     )
     discount_amount = min(discount_amount, subtotal)
@@ -300,6 +325,7 @@ async def _compute_totals(
         round_off_amount=round_off_amount,
         grand_total=grand_total,
         net_taxable_value=net_taxable_value,
+        discount_contributions=discount_contributions,
     )
     return totals, discount_note
 
@@ -347,6 +373,35 @@ def _consolidate_bill_lines(rows: list[_ConsolidatedRow]) -> list[_ConsolidatedR
     ]
 
 
+def _blank_to_none(value: str | None) -> str | None:
+    """Treats an empty/whitespace-only string the same as never having been sent —
+    e.g. a cashier clears the Name field on the Finalize screen and submits blank
+    rather than leaving it untouched.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+async def _guest_session_for_order(
+    session: AsyncSession, order_id: uuid.UUID
+) -> GuestSession | None:
+    """The order's current (not yet closed) guest self-order session, if any — the
+    single source `preview_bill`/`finalize_bill` both read from to prefill/attribute
+    `customer_name`/`customer_phone` for a QR-placed order (Phase 27). `status !=
+    "closed"` rather than filtering to "active" specifically, since a guest who already
+    tapped "Request Bill" (status="payment_claimed") still has their name/phone here.
+    """
+    return (
+        await session.execute(
+            select(GuestSession).where(
+                GuestSession.order_id == order_id, GuestSession.status != "closed"
+            )
+        )
+    ).scalar_one_or_none()
+
+
 async def _next_bill_number(session: AsyncSession, tenant_id: uuid.UUID) -> str:
     count = (
         await session.execute(select(func.count()).select_from(Bill).where(Bill.tenant_id == tenant_id))
@@ -375,9 +430,12 @@ async def preview_bill(
         else None
     )
     pos_user = (await session.execute(select(User).where(User.id == order.pos_user_id))).scalar_one()
+    guest_session = await _guest_session_for_order(session, order.id)
 
     return BillPreviewResponse(
         order_id=order.id,
+        customer_name=guest_session.customer_name if guest_session else None,
+        customer_phone=guest_session.customer_phone if guest_session else None,
         items=[
             BillItemResponse(
                 id=None, item_id=item_id, name_en=name_en, name_ta=name_ta,
@@ -497,6 +555,8 @@ async def _dispatch_print_for_bill(
         show_tamil_names=hotel.show_tamil_names if hotel else True,
         party_label=bill.party_label,
         waiter_name=waiter.name if waiter else None,
+        customer_name=bill.customer_name,
+        customer_phone=bill.customer_phone,
         paper_width_mm=printer.paper_width_mm,
         logo_image_bytes=_read_uploaded_file(hotel.logo_url) if hotel else None,
         footer_message=(hotel.receipt_footer_message if hotel else None) or _DEFAULT_RECEIPT_FOOTER_MESSAGE,
@@ -572,6 +632,20 @@ async def finalize_bill(
     waiter_incentive = _incentive_amount(waiter.incentive_rate if waiter else None, totals.net_taxable_value)
     cashier_incentive = _incentive_amount(pos_user.incentive_rate, totals.net_taxable_value)
 
+    # Looked up before `Bill(...)` is built (not just later, when this same query
+    # already existed purely to close the session) so a QR self-order's captured
+    # name/phone can prefill the bill itself — an explicit `req.customer_name`/
+    # `customer_phone` (the cashier typed or edited something on the Finalize screen)
+    # always wins; a guest order otherwise falls back to what guest_service.py already
+    # required the guest to enter before they could order at all.
+    guest_session = await _guest_session_for_order(session, order.id)
+    customer_name = _blank_to_none(req.customer_name) or (
+        guest_session.customer_name if guest_session else None
+    )
+    customer_phone = _blank_to_none(req.customer_phone) or (
+        guest_session.customer_phone if guest_session else None
+    )
+
     bill = Bill(
         tenant_id=tenant_id,
         location_id=order.location_id,
@@ -591,10 +665,24 @@ async def finalize_bill(
         grand_total=totals.grand_total,
         waiter_incentive_amount=waiter_incentive,
         cashier_incentive_amount=cashier_incentive,
+        customer_name=customer_name,
+        customer_phone=customer_phone,
         status="finalized",
     )
     session.add(bill)
     await session.flush()
+
+    for contribution in totals.discount_contributions:
+        session.add(
+            BillDiscount(
+                tenant_id=tenant_id,
+                bill_id=bill.id,
+                discount_rule_id=contribution.rule_id,
+                rule_name_snapshot=contribution.rule_name,
+                rule_type_snapshot=contribution.rule_type,
+                amount=contribution.amount,
+            )
+        )
 
     for priced in totals.priced_items:
         session.add(
@@ -626,14 +714,8 @@ async def finalize_bill(
     # order is actually billed — closing it here, in the same transaction as every
     # other finalize side effect, means the table's QR is a clean slate for the next
     # guest the instant staff finalizes, with no separate cleanup job needed. A no-op
-    # for every ordinary staff-placed order (no matching row exists).
-    guest_session = (
-        await session.execute(
-            select(GuestSession).where(
-                GuestSession.order_id == order.id, GuestSession.status != "closed"
-            )
-        )
-    ).scalar_one_or_none()
+    # for every ordinary staff-placed order (`guest_session` is None — looked up
+    # earlier, alongside computing `customer_name`/`customer_phone` above).
     if guest_session is not None:
         guest_session.status = "closed"
 
@@ -758,6 +840,8 @@ async def build_bill_response(
         waiter_id=bill.waiter_id,
         waiter_name=waiter.name if waiter else None,
         party_label=bill.party_label,
+        customer_name=bill.customer_name,
+        customer_phone=bill.customer_phone,
         pos_user_id=bill.pos_user_id,
         pos_user_login_id=pos_user.user_id,
         status=bill.status,

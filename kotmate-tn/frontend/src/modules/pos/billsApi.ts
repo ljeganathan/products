@@ -34,6 +34,10 @@ interface BillTotals {
   grand_total: number;
   waiter_incentive_amount: number | null;
   cashier_incentive_amount: number | null;
+  // Optional customer identity. On a preview this is a read-only prefill from the
+  // order's QR guest session (if any); on a finalized bill it's what was saved/printed.
+  customer_name: string | null;
+  customer_phone: string | null;
 }
 
 export interface BillPreview extends BillTotals {
@@ -100,6 +104,8 @@ export interface BillPreviewPayload {
 export interface BillCreatePayload extends BillPreviewPayload {
   payments: BillPaymentInput[];
   skip_print?: boolean;
+  customer_name?: string | null;
+  customer_phone?: string | null;
 }
 
 export interface BillSearchParams {

@@ -212,6 +212,16 @@ export function GuestOrderApp() {
   }
 
   const session = sessionQuery.data as GuestSession;
+  if (!session.customer_name || !session.customer_phone) {
+    // Name + phone are mandatory before anything else on a QR order (also enforced
+    // server-side in guest_service.update_cart).
+    return (
+      <RequiredProfileScreen
+        onSaved={(updated) => queryClient.setQueryData(["guest-session", qrToken], updated)}
+        onSessionEnded={() => setSessionEnded(true)}
+      />
+    );
+  }
   const takeaway = isTakeawaySession(session);
   const unsentCount = order?.items.filter((l) => !l.is_kot_sent).length ?? 0;
 
@@ -239,7 +249,7 @@ export function GuestOrderApp() {
           onClick={() => setProfileOpen(true)}
           className="ml-auto shrink-0 rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-bold text-ink-soft hover:border-accent"
         >
-          {session.customer_name ? session.customer_name : "Add name (optional)"}
+          {session.customer_name}
         </button>
       </header>
 
@@ -322,6 +332,79 @@ export function GuestOrderApp() {
           onClose={() => setProfileOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+function RequiredProfileScreen({
+  onSaved,
+  onSessionEnded,
+}: {
+  onSaved: (updated: GuestSession) => void;
+  onSessionEnded: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const canContinue = name.trim().length > 0 && phone.replace(/\D/g, "").length >= 10;
+
+  async function handleContinue() {
+    if (!canContinue) return;
+    setSaving(true);
+    setError(null);
+    try {
+      onSaved(await updateGuestProfile({ customer_name: name.trim(), customer_phone: phone.trim() }));
+    } catch (err) {
+      if (isSessionEndedError(err)) {
+        onSessionEnded();
+        return;
+      }
+      setError(errorDetail(err) ?? "Couldn't save — please check your phone number and try again");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex h-dvh w-screen flex-col items-center justify-center bg-background p-6 text-foreground">
+      <img src={logoMark} alt="" className="mb-4 h-12 w-12 object-contain" />
+      <h1 className="mb-1 text-lg font-extrabold">Welcome!</h1>
+      <p className="mb-5 max-w-xs text-center text-sm text-ink-faint">
+        Please enter your name and phone number to start ordering.
+      </p>
+      <form
+        className="w-full max-w-xs"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void handleContinue();
+        }}
+      >
+        <input
+          autoFocus
+          value={name}
+          maxLength={100}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Your name"
+          className="mb-2.5 w-full rounded-lg border border-border bg-surface px-3.5 py-3 text-sm outline-none focus:border-accent"
+        />
+        <input
+          value={phone}
+          type="tel"
+          maxLength={20}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="Phone number"
+          className="mb-3 w-full rounded-lg border border-border bg-surface px-3.5 py-3 text-sm outline-none focus:border-accent"
+        />
+        {error && <p className="mb-3 text-xs font-semibold text-chili">{error}</p>}
+        <button
+          type="submit"
+          disabled={!canContinue || saving}
+          className="w-full rounded-lg bg-accent py-3 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
+        >
+          {saving ? "Saving…" : "Continue to Menu"}
+        </button>
+      </form>
     </div>
   );
 }
@@ -539,7 +622,7 @@ function ProfileSheet({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" onClick={onClose}>
       <div className="w-full max-w-sm rounded-2xl bg-surface p-5 shadow-pos" onClick={(e) => e.stopPropagation()}>
         <h2 className="mb-1 text-lg font-extrabold">Your details</h2>
-        <p className="mb-3 text-xs text-ink-faint">Optional — never required to order.</p>
+        <p className="mb-3 text-xs text-ink-faint">Shown on your bill. Update anytime.</p>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}

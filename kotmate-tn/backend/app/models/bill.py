@@ -53,6 +53,16 @@ class Bill(UUIDPKMixin, TimestampMixin, Base):
     # computed once at finalize time and never recomputed, so a reprint always shows the
     # same breakdown even if the underlying DiscountRule is edited/deactivated later.
     discount_note: Mapped[str | None] = mapped_column(Text)
+    # Optional customer identity captured on a bill (Phase 27) — staff can type these
+    # into any bill's Finalize screen, or they're auto-filled from the order's
+    # `guest_sessions` row when it came through QR self-order (which requires both
+    # fields up front, see guest_service.py). Printed on the bill when present. Phone is
+    # stored as free-text here (a staff-entered landline is fine) — deliberately the
+    # same column the QR flow's strictly-normalized 10-digit mobile number lands in too,
+    # so a future customer-loyalty feature has one consistent key to join bills on
+    # without a schema change.
+    customer_name: Mapped[str | None] = mapped_column(String(100))
+    customer_phone: Mapped[str | None] = mapped_column(String(20))
 
     __table_args__ = (
         tenant_composite_index("bills"),
@@ -80,6 +90,34 @@ class BillItem(UUIDPKMixin, TimestampMixin, Base):
     line_total: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
 
     __table_args__ = (tenant_composite_index("bill_items"),)
+
+
+class BillDiscount(UUIDPKMixin, TimestampMixin, Base):
+    """One row per discount rule that contributed to a bill (Phase 27) — the queryable
+    counterpart to `Bill.discount_note`'s free-text summary, so the Discount Summary/
+    Detail reports can group and sum by rule name without parsing that string. A bill
+    with two stacked discounts (e.g. an item-level rule plus a coupon) gets two rows
+    here, one per rule, each with its own contributed amount — `Bill.discount_amount`
+    stays their sum, unchanged.
+
+    `discount_rule_id` is nullable and `rule_name_snapshot`/`rule_type_snapshot` are
+    captured at finalize time, same immutable-reprint precedent as `BillItem`'s own
+    name snapshots — a renamed or later-deleted `DiscountRule` never changes how a past
+    bill reports.
+    """
+
+    __tablename__ = "bill_discounts"
+
+    tenant_id: Mapped[uuid.UUID] = tenant_id_column()
+    bill_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("bills.id"), nullable=False)
+    discount_rule_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("discount_rules.id")
+    )
+    rule_name_snapshot: Mapped[str] = mapped_column(String(100), nullable=False)
+    rule_type_snapshot: Mapped[str] = mapped_column(String(20), nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+
+    __table_args__ = (tenant_composite_index("bill_discounts"),)
 
 
 class Payment(UUIDPKMixin, TimestampMixin, Base):

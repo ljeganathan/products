@@ -9,7 +9,10 @@ from app.schemas.printing import PrintJobPayload
 
 class BillPaymentInput(BaseModel):
     method: str
-    amount: float = Field(gt=0)
+    # ge=0 (not gt=0): a fully discounted bill has a ₹0 grand total and still needs one
+    # payment row. A ₹0 payment against a non-zero total is rejected by the
+    # payments-must-equal-grand-total check in bill_service.finalize_bill.
+    amount: float = Field(ge=0)
 
     @field_validator("method")
     @classmethod
@@ -24,6 +27,13 @@ class BillCreateRequest(BaseModel):
     # Item-level and flat discounts auto-apply from currently-active discount_rules
     # (Phase 23) — the cashier's only discount input is an optional coupon code.
     coupon_code: str | None = None
+    # Optional customer identity (Phase 27) — the cashier can type these into any bill,
+    # or (for a QR self-order) the frontend prefills them from the guest's own session;
+    # either way, whatever's here wins. Left unset, the service falls back to the
+    # order's guest_sessions row when one exists, so a guest order still gets attributed
+    # correctly even if the frontend somehow sends nothing.
+    customer_name: str | None = Field(default=None, max_length=100)
+    customer_phone: str | None = Field(default=None, max_length=20)
     payments: list[BillPaymentInput] = Field(min_length=1)
     # order_item_id (string) -> tax_rule_id — Pro Max only ("multi_rate_per_item"),
     # rejected by the service on any other tax_mode. Anything above the audit threshold
@@ -76,6 +86,12 @@ class BillTotals(BaseModel):
     grand_total: float
     waiter_incentive_amount: float | None
     cashier_incentive_amount: float | None
+    # Optional customer identity (Phase 27) — None on an ordinary walk-in bill nobody
+    # entered these for. On `BillPreviewResponse` specifically, this is a read-only
+    # prefill sourced from the order's `guest_sessions` row (if any), for the Finalize
+    # screen to show before the cashier has typed/confirmed anything themselves.
+    customer_name: str | None = None
+    customer_phone: str | None = None
 
 
 class BillPreviewResponse(BillTotals):

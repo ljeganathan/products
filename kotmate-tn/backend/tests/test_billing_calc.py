@@ -274,3 +274,32 @@ def test_bill_header_label_includes_party_label_when_present():
         party_label="Customer-2",
     )
     assert bill.header_label == "T5 Customer-2 (AC)"
+
+
+def _bill_with_customer(name, phone):
+    return BillRenderData(
+        bill_number="B1", table_number="T5", section_name_en="AC", created_at=datetime.now(),
+        lines=[BillLine(name_en="Meals", name_ta=None, quantity=1, unit_price=100.0, line_total=100.0)],
+        subtotal=100.0, discount_amount=0, discount_note=None, cgst_amount=0, sgst_amount=0,
+        round_off_amount=0, grand_total=100.0, payments=[], hotel_name="Test Hotel",
+        hotel_address_lines=[], gstin=None, upi_id=None, qr_payload=None, show_tamil_names=False,
+        customer_name=name, customer_phone=phone,
+    )
+
+
+def test_customer_name_and_phone_print_on_dot_matrix_and_thermal():
+    from app.printing.dotmatrix_raw import render_bill as render_dm
+    from app.printing.escpos_thermal import render_bill as render_thermal
+
+    bill = _bill_with_customer("Ravi", "9876543210")
+    assert "Customer: Ravi / 9876543210" in render_dm(bill)
+    assert b"Customer: Ravi / 9876543210" in render_thermal(bill)
+
+    # Too long for one 32-char line: name and phone split onto separate lines, phone intact.
+    long_bill = _bill_with_customer("Ravi Kumar Subramaniam", "9876543210")
+    dm = render_dm(long_bill)
+    assert "Customer: Ravi Kumar Subramaniam\n9876543210\n" in dm
+
+    none = _bill_with_customer(None, None)
+    assert "Customer:" not in render_dm(none)
+    assert b"Customer:" not in render_thermal(none)

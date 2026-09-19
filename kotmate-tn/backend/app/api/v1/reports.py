@@ -16,6 +16,8 @@ from app.schemas.reports import (
     CashierIncentiveResponse,
     CashierSalesResponse,
     CategoryWiseSalesResponse,
+    DiscountDetailResponse,
+    DiscountSummaryResponse,
     ItemListResponse,
     ItemWiseSalesResponse,
     OrderTypeSalesResponse,
@@ -33,6 +35,7 @@ from app.services.export_service import export_grid
 from app.services.report_print_service import (
     REPORT_TITLES,
     build_report_body,
+    discount_detail_export_grid,
     is_report_printing_enabled,
     item_list_export_grid,
     render_report_print_bytes,
@@ -276,6 +279,52 @@ async def get_pos_operator_incentive_report(
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
         return _export_response("pos-operator-incentive", result, export)
+    return result
+
+
+@router.get("/discount-summary", response_model=DiscountSummaryResponse)
+async def get_discount_summary(
+    date_from: date,
+    date_to: date,
+    location_id: uuid.UUID | None = None,
+    export: str | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DiscountSummaryResponse | Response:
+    result = await report_service.discount_summary(
+        db, current_user.tenant_id, _params(date_from, date_to, location_id)
+    )
+    if export:
+        await _require_export_format(db, current_user.tenant_id, export)
+        return _export_response("discount-summary", result, export)
+    return result
+
+
+@router.get("/discount-detail", response_model=DiscountDetailResponse)
+async def get_discount_detail(
+    date_from: date,
+    date_to: date,
+    location_id: uuid.UUID | None = None,
+    export: str | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DiscountDetailResponse | Response:
+    """Print and export deliberately show different column shapes here, same exception
+    Item List already has (see `discount_detail_print_body`/`discount_detail_export_
+    grid`'s own docstrings) — Name/Phone get their own export columns but print as an
+    indented second line under each bill on narrow receipt paper.
+    """
+    result = await report_service.discount_detail(
+        db, current_user.tenant_id, _params(date_from, date_to, location_id)
+    )
+    if export:
+        await _require_export_format(db, current_user.tenant_id, export)
+        headers, grid = discount_detail_export_grid(
+            result.rows, result.total_bill_amount, result.total_discount_amount,
+            result.total_sales_after_discount,
+        )
+        content, media_type, filename = export_grid(REPORT_TITLES["discount-detail"], headers, grid, export)
+        return _file_response(content, media_type, filename)
     return result
 
 

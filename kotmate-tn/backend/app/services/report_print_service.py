@@ -14,6 +14,9 @@ from app.schemas.reports import (
     CashierSalesResponse,
     CategoryWiseSalesResponse,
     CategoryWiseSalesRow,
+    DiscountDetailResponse,
+    DiscountDetailRow,
+    DiscountSummaryResponse,
     ItemListRow,
     ItemWiseSalesResponse,
     ItemWiseSalesRow,
@@ -53,6 +56,8 @@ REPORT_TITLES = {
     "z-report": "Z Report",
     "item-list": "Item List",
     "order-type-wise": "Order Type Wise Sales",
+    "discount-summary": "Discount Summary",
+    "discount-detail": "Discount Detail",
 }
 
 # Order the user asked for — Cash, then UPI, then Card — not the UPI-first order the
@@ -218,6 +223,35 @@ def _sales_grid_body(
     return ReportBody(kind="grid", headers=headers, rows=rows)
 
 
+def _discount_summary_body(result: DiscountSummaryResponse) -> ReportBody:
+    """Discount Name / Total Bill / Discount / Sales — a flat grid, one row per rule
+    name (Phase 27), same shape shared by print and CSV/Excel/PDF export/on-screen.
+    "Sales" here means `total_bill_amount - discount_amount` for that row, not the
+    "net taxable value" other reports elsewhere call "Net Sales" — see
+    `DiscountSummaryRow`'s own docstring.
+    """
+    headers = ["Discount Name", "Total Bill", "Discount", "Sales"]
+    rows = [
+        [
+            r.discount_name,
+            _amount(r.total_bill_amount),
+            _amount(r.discount_amount),
+            _amount(r.sales_after_discount),
+        ]
+        for r in result.rows
+    ]
+    total_idx = len(rows)
+    rows.append(
+        [
+            "TOTAL",
+            _amount(result.total_bill_amount),
+            _amount(result.total_discount_amount),
+            _amount(result.total_sales_after_discount),
+        ]
+    )
+    return ReportBody(kind="grid", headers=headers, rows=rows, bold_rows={total_idx}, big_rows={total_idx})
+
+
 def _order_type_pairs(result: OrderTypeSalesResponse) -> list[tuple[str, str]]:
     """Row-wise, not the grid every other -wise-sales report uses (production feedback:
     a POS printer's paper is too narrow for a 3-column Name/Bill Count/Sales grid once
@@ -314,6 +348,93 @@ def item_list_export_grid(rows_data: list[ItemListRow]) -> tuple[list[str], list
     return headers, grid
 
 
+def discount_detail_print_body(
+    rows_data: list[DiscountDetailRow],
+    total_bill_amount: float,
+    total_discount_amount: float,
+    total_sales_after_discount: float,
+) -> ReportBody:
+    """Discount Detail's print copy deliberately shows a *different* column shape than
+    its own CSV/Excel/PDF export (`discount_detail_export_grid` below) — the one other
+    exception to "print and export share the same format" besides Item List, and for
+    the same reason: a receipt-width printer has no room for six columns (Bill No,
+    Name, Phone, Total, Discount, Sales) on one line. Each bill prints as two lines
+    instead — Bill No/Total/Discount/Sales on the first, Name/Phone (when either is
+    set) indented on a second, blank-filled row right under it — the exact same
+    "extra blank-filled row" technique `_item_wise_body` already uses for its category
+    group headers, just used here for a sub-line instead of a header.
+
+    Rows arrive pre-grouped rule-major (`report_service.discount_detail`) — this only
+    has to notice where one rule's run of rows ends and the next begins, same as
+    `_item_wise_body` never re-sorts what it's given.
+    """
+    headers = ["Bill No", "Total", "Discount", "Sales"]
+    rows: list[list[str]] = []
+    bold_rows: set[int] = set()
+    current_name: str | None = None
+    for r in rows_data:
+        if r.discount_name != current_name:
+            current_name = r.discount_name
+            header_idx = len(rows)
+            rows.append([r.discount_name, "", "", ""])
+            bold_rows.add(header_idx)
+        rows.append(
+            [
+                r.bill_number,
+                _amount(r.total_bill_amount),
+                _amount(r.discount_amount),
+                _amount(r.sales_after_discount),
+            ]
+        )
+        contact = " / ".join(filter(None, [r.customer_name, r.customer_phone]))
+        if contact:
+            rows.append([f"  {contact}", "", "", ""])
+    total_idx = len(rows)
+    bold_rows.add(total_idx)
+    rows.append(
+        [
+            "TOTAL",
+            _amount(total_bill_amount),
+            _amount(total_discount_amount),
+            _amount(total_sales_after_discount),
+        ]
+    )
+    return ReportBody(kind="grid", headers=headers, rows=rows, bold_rows=bold_rows, big_rows={total_idx})
+
+
+def discount_detail_export_grid(
+    rows_data: list[DiscountDetailRow],
+    total_bill_amount: float,
+    total_discount_amount: float,
+    total_sales_after_discount: float,
+) -> tuple[list[str], list[list[str]]]:
+    """CSV/Excel/PDF export (and the on-screen Reports table) show Name/Phone as their
+    own columns in the same row as the bill's figures, unlike the condensed two-line
+    print copy above — a spreadsheet has no narrow-paper constraint, and splitting one
+    bill's data across two rows there would just make it harder to filter/sum.
+    """
+    headers = ["Discount Name", "Bill No", "Name", "Phone", "Total Bill", "Discount", "Sales"]
+    grid = [
+        [
+            r.discount_name,
+            r.bill_number,
+            r.customer_name or "",
+            r.customer_phone or "",
+            _amount(r.total_bill_amount),
+            _amount(r.discount_amount),
+            _amount(r.sales_after_discount),
+        ]
+        for r in rows_data
+    ]
+    grid.append(
+        [
+            "TOTAL", "", "", "",
+            _amount(total_bill_amount), _amount(total_discount_amount), _amount(total_sales_after_discount),
+        ]
+    )
+    return headers, grid
+
+
 def build_report_body(report_type: str, result: object, tamil_names_enabled: bool = False) -> ReportBody:
     """Builds the printer-shaped `ReportBody` (renamed/no-"Rs." grid columns, row-wise
     key-value summaries) from an already-fetched `report_service` result — the single
@@ -396,6 +517,8 @@ def build_report_body(report_type: str, result: object, tamil_names_enabled: boo
             result.bill_count, result.subtotal, result.discount_amount, result.cgst_amount,
             result.sgst_amount, result.round_off_amount, result.grand_total, result.payments,
         ))
+    if report_type == "discount-summary":
+        return _discount_summary_body(cast(DiscountSummaryResponse, result))
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown report_type: {report_type}")
 
 
@@ -494,10 +617,23 @@ async def render_report_print_bytes(
             result = await report_service.cashier_incentive_report(session, tenant.id, params)
         elif req.report_type == "pos-operator-incentive":
             result = await report_service.pos_operator_incentive_report(session, tenant.id, params)
+        elif req.report_type == "discount-summary":
+            result = await report_service.discount_summary(session, tenant.id, params)
+        elif req.report_type == "discount-detail":
+            result = await report_service.discount_detail(session, tenant.id, params)
         else:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown report_type: {req.report_type}")
 
-        body = build_report_body(req.report_type, result, tenant.report_tamil_names_enabled)
+        # Discount Detail's print body deliberately differs from its own export shape
+        # (like item-list above) — see discount_detail_print_body's own docstring.
+        if req.report_type == "discount-detail":
+            result = cast(DiscountDetailResponse, result)
+            body = discount_detail_print_body(
+                result.rows, result.total_bill_amount, result.total_discount_amount,
+                result.total_sales_after_discount,
+            )
+        else:
+            body = build_report_body(req.report_type, result, tenant.report_tamil_names_enabled)
 
     data = ReportRenderData(
         title=title,

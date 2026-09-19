@@ -178,6 +178,31 @@ export interface ZReport {
   payments: PaymentMethodTotal[];
 }
 
+export interface DiscountSummaryRow {
+  discount_name: string;
+  total_bill_amount: number;
+  discount_amount: number;
+  sales_after_discount: number;
+}
+export interface DiscountSummary {
+  rows: DiscountSummaryRow[];
+  total_bill_amount: number;
+  total_discount_amount: number;
+  total_sales_after_discount: number;
+}
+
+export interface DiscountDetailRow extends DiscountSummaryRow {
+  bill_number: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+}
+export interface DiscountDetail {
+  rows: DiscountDetailRow[];
+  total_bill_amount: number;
+  total_discount_amount: number;
+  total_sales_after_discount: number;
+}
+
 async function getReport<T>(path: string, params: Record<string, string | undefined>): Promise<T> {
   return (await api.get<T>(`/api/v1/reports/${path}`, { params })).data;
 }
@@ -199,6 +224,10 @@ export const getPosOperatorWiseSales = (params: ReportFilterParams) =>
   getReport<PosOperatorSales>("pos-operator-wise", params);
 export const getPosOperatorIncentive = (params: ReportFilterParams) =>
   getReport<PosOperatorIncentive>("pos-operator-incentive", params);
+export const getDiscountSummary = (params: ReportFilterParams) =>
+  getReport<DiscountSummary>("discount-summary", params);
+export const getDiscountDetail = (params: ReportFilterParams) =>
+  getReport<DiscountDetail>("discount-detail", params);
 export const getZReport = (reportDate: string, locationId?: string) =>
   getReport<ZReport>("z-report", { report_date: reportDate, location_id: locationId });
 // Item master data, not date/location scoped (items aren't location-scoped) — see

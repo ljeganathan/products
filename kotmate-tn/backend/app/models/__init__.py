@@ -3,7 +3,7 @@ Alembic autogenerate or app startup touches the metadata.
 """
 
 from app.models.audit import AuditLog
-from app.models.bill import Bill, BillItem, Payment
+from app.models.bill import Bill, BillDiscount, BillItem, Payment
 from app.models.category import Category
 from app.models.discount import DiscountRule
 from app.models.guest import GuestSession, SectionQrCode, TableQrCode
@@ -26,6 +26,7 @@ from app.models.waiter import Waiter
 __all__ = [
     "AuditLog",
     "Bill",
+    "BillDiscount",
     "BillItem",
     "Payment",
     "Category",

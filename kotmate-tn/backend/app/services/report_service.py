@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     Bill,
+    BillDiscount,
     BillItem,
     Category,
     Item,
@@ -23,6 +24,10 @@ from app.schemas.reports import (
     CashierSalesRow,
     CategoryWiseSalesResponse,
     CategoryWiseSalesRow,
+    DiscountDetailResponse,
+    DiscountDetailRow,
+    DiscountSummaryResponse,
+    DiscountSummaryRow,
     ItemListPriceOverride,
     ItemListResponse,
     ItemListRow,
@@ -580,6 +585,87 @@ async def item_list(session: AsyncSession, tenant_id: uuid.UUID) -> ItemListResp
         for item, category in rows
     ]
     return ItemListResponse(rows=result_rows, total_items=len(result_rows))
+
+
+async def discount_summary(
+    session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
+) -> DiscountSummaryResponse:
+    """Grouped by `bill_discounts.rule_name_snapshot` (Phase 27) — a bill touched by two
+    different rules contributes its own grand total under each rule's group, see
+    `DiscountSummaryRow`'s own docstring for why that's intentional, not a bug.
+    """
+    rows = (
+        await session.execute(
+            select(
+                BillDiscount.rule_name_snapshot,
+                func.sum(Bill.grand_total),
+                func.sum(BillDiscount.amount),
+            )
+            .join(Bill, Bill.id == BillDiscount.bill_id)
+            .where(*_bill_filters(tenant_id, params))
+            .group_by(BillDiscount.rule_name_snapshot)
+            .order_by(func.sum(BillDiscount.amount).desc())
+        )
+    ).all()
+    result_rows = [
+        DiscountSummaryRow(
+            discount_name=name,
+            # `bills.grand_total` is already net of discount (post-discount, post-tax), so
+            # it IS the sales figure — the pre-discount "Total Bill" adds the discount back.
+            total_bill_amount=round(float(total_bill) + float(disc), 2),
+            discount_amount=float(disc),
+            sales_after_discount=float(total_bill),
+        )
+        for name, total_bill, disc in rows
+    ]
+    return DiscountSummaryResponse(
+        rows=result_rows,
+        total_bill_amount=round(sum(r.total_bill_amount for r in result_rows), 2),
+        total_discount_amount=round(sum(r.discount_amount for r in result_rows), 2),
+        total_sales_after_discount=round(sum(r.sales_after_discount for r in result_rows), 2),
+    )
+
+
+async def discount_detail(
+    session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
+) -> DiscountDetailResponse:
+    """One row per (discount rule, bill) pair, pre-sorted rule-major then by bill date —
+    same "caller never re-sorts" contract `item_wise_sales` guarantees for its own
+    category-major ordering.
+    """
+    rows = (
+        await session.execute(
+            select(
+                BillDiscount.rule_name_snapshot,
+                Bill.bill_number,
+                Bill.customer_name,
+                Bill.customer_phone,
+                Bill.grand_total,
+                BillDiscount.amount,
+            )
+            .join(Bill, Bill.id == BillDiscount.bill_id)
+            .where(*_bill_filters(tenant_id, params))
+            .order_by(BillDiscount.rule_name_snapshot, Bill.created_at)
+        )
+    ).all()
+    result_rows = [
+        DiscountDetailRow(
+            discount_name=name,
+            bill_number=bill_number,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+            total_bill_amount=round(float(grand_total) + float(amount), 2),
+            discount_amount=float(amount),
+            sales_after_discount=float(grand_total),
+        )
+        for name, bill_number, customer_name, customer_phone, grand_total, amount in rows
+    ]
+    return DiscountDetailResponse(
+        rows=result_rows,
+        total_bill_amount=round(sum(r.total_bill_amount for r in result_rows), 2),
+        total_discount_amount=round(sum(r.discount_amount for r in result_rows), 2),
+        total_sales_after_discount=round(sum(r.sales_after_discount for r in result_rows), 2),
+    )
 
 
 async def z_report(

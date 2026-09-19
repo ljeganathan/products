@@ -12,6 +12,8 @@ import {
   getCashierIncentive,
   getCashierWiseSales,
   getCategoryWiseSales,
+  getDiscountDetail,
+  getDiscountSummary,
   getItemList,
   getItemWiseSales,
   getOrderTypeWiseSales,
@@ -37,6 +39,8 @@ const REPORTS = [
   { key: "item-list", label: "Item List" },
   { key: "item-wise", label: "Item-wise Sales" },
   { key: "category-wise", label: "Category-wise Sales" },
+  { key: "discount-summary", label: "Discount Summary" },
+  { key: "discount-detail", label: "Discount Detail" },
   { key: "tax-summary", label: "Tax Summary" },
   { key: "waiter-wise", label: "Waiter-wise Sales" },
   { key: "cashier-wise", label: "Cashier-wise Sales" },
@@ -86,6 +90,10 @@ export function ReportsPage() {
           return getCategoryWiseSales(params);
         case "tax-summary":
           return getTaxSummary(params);
+        case "discount-summary":
+          return getDiscountSummary(params);
+        case "discount-detail":
+          return getDiscountDetail(params);
         case "waiter-wise":
           return getWaiterWiseSales(params);
         case "cashier-wise":
@@ -461,6 +469,105 @@ function ReportTable({ reportKey, data }: { reportKey: ReportKey; data: any }) {
                 <td className={tdClass}>TOTAL</td>
                 <td className={tdClass} />
                 <td className={`${tdClass} text-right tabular-nums`}>{formatINR(data.total_revenue)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    case "discount-summary":
+      return (
+        <div className={tableWrapClass}>
+          <table className={tableClass}>
+            <thead className={theadClass}>
+              <tr>
+                <th className={thClass}>Discount Name</th>
+                <th className={`${thClass} text-right`}>Total Bill</th>
+                <th className={`${thClass} text-right`}>Discount</th>
+                <th className={`${thClass} text-right`}>Sales</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map(
+                (r: { discount_name: string; total_bill_amount: number; discount_amount: number; sales_after_discount: number }) => (
+                  <tr key={r.discount_name} className="border-t border-border">
+                    <td className={tdClass}>{r.discount_name}</td>
+                    <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.total_bill_amount)}</td>
+                    <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.discount_amount)}</td>
+                    <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.sales_after_discount)}</td>
+                  </tr>
+                ),
+              )}
+              <tr className={totalRowClass}>
+                <td className={tdClass}>TOTAL</td>
+                <td className={`${tdClass} text-right tabular-nums`}>{formatINR(data.total_bill_amount)}</td>
+                <td className={`${tdClass} text-right tabular-nums`}>{formatINR(data.total_discount_amount)}</td>
+                <td className={`${tdClass} text-right tabular-nums`}>{formatINR(data.total_sales_after_discount)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      );
+
+    case "discount-detail": {
+      let lastName: string | null = null;
+      return (
+        <div className={tableWrapClass}>
+          <table className={tableClass}>
+            <thead className={theadClass}>
+              <tr>
+                <th className={thClass}>Bill No</th>
+                <th className={thClass}>Name</th>
+                <th className={thClass}>Phone</th>
+                <th className={`${thClass} text-right`}>Total Bill</th>
+                <th className={`${thClass} text-right`}>Discount</th>
+                <th className={`${thClass} text-right`}>Sales</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map(
+                (
+                  r: {
+                    discount_name: string;
+                    bill_number: string;
+                    customer_name: string | null;
+                    customer_phone: string | null;
+                    total_bill_amount: number;
+                    discount_amount: number;
+                    sales_after_discount: number;
+                  },
+                  i: number,
+                ) => {
+                  const showHeader = r.discount_name !== lastName;
+                  lastName = r.discount_name;
+                  return (
+                    <Fragment key={`${r.discount_name}-${r.bill_number}-${i}`}>
+                      {showHeader && (
+                        <tr className="border-t border-border bg-foreground/5">
+                          <td className={`${tdClass} font-semibold`} colSpan={6}>
+                            {r.discount_name}
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="border-t border-border">
+                        <td className={tdClass}>{r.bill_number}</td>
+                        <td className={tdClass}>{r.customer_name ?? "—"}</td>
+                        <td className={tdClass}>{r.customer_phone ?? "—"}</td>
+                        <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.total_bill_amount)}</td>
+                        <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.discount_amount)}</td>
+                        <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.sales_after_discount)}</td>
+                      </tr>
+                    </Fragment>
+                  );
+                },
+              )}
+              <tr className={totalRowClass}>
+                <td className={tdClass}>TOTAL</td>
+                <td className={tdClass} colSpan={2} />
+                <td className={`${tdClass} text-right tabular-nums`}>{formatINR(data.total_bill_amount)}</td>
+                <td className={`${tdClass} text-right tabular-nums`}>{formatINR(data.total_discount_amount)}</td>
+                <td className={`${tdClass} text-right tabular-nums`}>{formatINR(data.total_sales_after_discount)}</td>
               </tr>
             </tbody>
           </table>

@@ -310,6 +310,17 @@ async def update_cart(
 ) -> OrderResponse:
     tenant = (await session.execute(select(Tenant).where(Tenant.id == guest.tenant_id))).scalar_one()
     guest_session = await _get_active_session_or_404(session, guest)
+    if not guest_session.customer_name or not guest_session.customer_phone:
+        # Backend enforcement for the mandatory name/phone capture (Phase 27) — the
+        # frontend already blocks the whole menu behind this same requirement (a
+        # full-screen prompt shown before anything else renders), so this only ever
+        # fires against a stale page or a direct API call, never the normal flow. This
+        # single check is enough to gate every ordering action: send-to-kitchen/
+        # place-order/request-bill all require `guest_session.order_id`, which only
+        # `update_cart` itself ever sets.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Please share your name and phone number before ordering"
+        )
     system_user = await get_or_create_system_account(session, tenant)
     fake_current_user = _system_current_user(system_user, tenant.id)
 

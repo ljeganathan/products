@@ -53,6 +53,16 @@ async def _start_guest_session(client: AsyncClient, qr_token: str) -> dict:
     return resp.json()
 
 
+async def _set_guest_profile(client: AsyncClient, headers: dict) -> None:
+    """Name/phone are mandatory before a guest can order (Phase 27)."""
+    resp = await client.patch(
+        "/api/v1/guest/sessions/me",
+        json={"customer_name": "Test Guest", "customer_phone": "9876543210"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+
 def _guest_headers(session: dict) -> dict:
     return {"Authorization": f"Bearer {session['guest_token']}"}
 
@@ -118,7 +128,9 @@ async def test_two_scans_of_same_takeaway_qr_never_share_a_cart(
     category = await _create_category(client, headers)
     item = await _create_item(client, headers, category["id"], price=90)
     guest_a = _guest_headers(session_a)
+    await _set_guest_profile(client, guest_a)
     guest_b = _guest_headers(session_b)
+    await _set_guest_profile(client, guest_b)
 
     order_a = (
         await client.post(
@@ -153,6 +165,7 @@ async def test_takeaway_place_order_creates_no_ticket_until_staff_confirms(
 
     session = await _start_guest_session(client, qr_token)
     guest = _guest_headers(session)
+    await _set_guest_profile(client, guest)
     cart = await client.post(
         "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 2}]}, headers=guest
     )
@@ -200,6 +213,7 @@ async def test_clearing_a_pending_takeaway_order_deletes_it(client: AsyncClient,
 
     session = await _start_guest_session(client, qr_token)
     guest = _guest_headers(session)
+    await _set_guest_profile(client, guest)
     cart = await client.post(
         "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
     )
@@ -230,6 +244,7 @@ async def test_cannot_clear_an_already_ticketed_takeaway_order(
 
     session = await _start_guest_session(client, qr_token)
     guest = _guest_headers(session)
+    await _set_guest_profile(client, guest)
     cart = await client.post(
         "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
     )
@@ -259,6 +274,7 @@ async def test_takeaway_guest_can_request_bill_and_staff_sees_it_claimed(
 
     session = await _start_guest_session(client, qr_token)
     guest = _guest_headers(session)
+    await _set_guest_profile(client, guest)
     cart = await client.post(
         "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
     )

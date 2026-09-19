@@ -73,6 +73,21 @@ def _guest_headers(session: dict) -> dict:
     return {"Authorization": f"Bearer {session['guest_token']}"}
 
 
+async def _set_guest_profile(
+    client: AsyncClient, guest_headers: dict, name: str = "Test Guest", phone: str = "9876543210"
+) -> dict:
+    """Name/phone are mandatory before a guest session can place its first order
+    (Phase 27) — every test below that adds to cart must call this first.
+    """
+    resp = await client.patch(
+        "/api/v1/guest/sessions/me",
+        json={"customer_name": name, "customer_phone": phone},
+        headers=guest_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
 async def test_qr_generation_gated_pro_max_only_and_one_per_table(
     client: AsyncClient, tenant_admin: dict, pro_max_tenant_admin: dict
 ):
@@ -150,6 +165,7 @@ async def test_multiple_scans_of_same_table_qr_share_one_cart(
     item = await _create_item(client, headers, category["id"], price=150)
 
     phone_a = _guest_headers(await _start_guest_session(client, qr_token))
+    await _set_guest_profile(client, phone_a)
     await client.post(
         "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=phone_a
     )
@@ -181,6 +197,7 @@ async def test_guest_full_order_to_bill_flow(client: AsyncClient, pro_max_tenant
     item = await _create_item(client, headers, category["id"], name_en="Filter Coffee", price=30)
 
     guest = _guest_headers(await _start_guest_session(client, qr_token))
+    await _set_guest_profile(client, guest, name="Sen", phone="9876543210")
 
     menu = await client.get("/api/v1/guest/menu", headers=guest)
     assert menu.status_code == 200
@@ -215,6 +232,16 @@ async def test_guest_full_order_to_bill_flow(client: AsyncClient, pro_max_tenant
     assert preview.status_code == 200, preview.text
     assert preview.json()["grand_total"] > 0
 
+    # The staff Finalize screen's own preview prefills the guest's captured name/phone
+    # (Phase 27) — sourced from the same guest_sessions row, not the guest's own preview
+    # endpoint above (which is a different response shape).
+    staff_preview = await client.post(
+        "/api/v1/bills/preview", json={"order_id": order["id"]}, headers=headers
+    )
+    assert staff_preview.status_code == 200, staff_preview.text
+    assert staff_preview.json()["customer_name"] == "Sen"
+    assert staff_preview.json()["customer_phone"] == "9876543210"
+
     claim = await client.post("/api/v1/guest/request-bill", headers=guest)
     assert claim.status_code == 200
     assert claim.json()["status"] == "payment_claimed"
@@ -231,6 +258,9 @@ async def test_guest_full_order_to_bill_flow(client: AsyncClient, pro_max_tenant
         headers=headers,
     )
     assert bill.status_code == 201, bill.text
+    # Auto-filled from the guest session since the request didn't override either field.
+    assert bill.json()["customer_name"] == "Sen"
+    assert bill.json()["customer_phone"] == "9876543210"
 
     # Ordering session is closed once staff finalizes — the table's QR is a clean
     # slate again (rescanning starts a brand-new order, not the just-billed one).
@@ -297,6 +327,7 @@ async def test_stale_payment_claimed_session_does_not_break_next_scan(
     item = await _create_item(client, headers, category["id"], price=90)
 
     guest = _guest_headers(await _start_guest_session(client, qr_token))
+    await _set_guest_profile(client, guest)
     await client.post(
         "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
     )
@@ -320,6 +351,7 @@ async def test_stale_payment_claimed_session_does_not_break_next_scan(
     rescan = await _start_guest_session(client, qr_token)
     assert rescan["order_id"] is None
     new_guest = _guest_headers(rescan)
+    await _set_guest_profile(client, new_guest)
 
     add_item = await client.post(
         "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=new_guest
@@ -350,6 +382,7 @@ async def test_kot_tickets_list_shows_guest_payment_claimed(
     item = await _create_item(client, headers, category["id"], price=90)
 
     guest = _guest_headers(await _start_guest_session(client, qr_token))
+    await _set_guest_profile(client, guest)
     await client.post(
         "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
     )
@@ -377,6 +410,7 @@ async def test_system_account_excluded_from_user_listing_and_seat_cap(
     category = await _create_category(client, headers)
     item = await _create_item(client, headers, category["id"])
     guest = _guest_headers(await _start_guest_session(client, qr_token))
+    await _set_guest_profile(client, guest)
 
     users_before = (await client.get("/api/v1/users", headers=headers)).json()
 
@@ -387,3 +421,32 @@ async def test_system_account_excluded_from_user_listing_and_seat_cap(
     users_after = (await client.get("/api/v1/users", headers=headers)).json()
     assert len(users_after) == len(users_before)
     assert not any("QRORDER" in u["user_id"] for u in users_after)
+
+
+async def test_cart_rejected_until_guest_profile_set(client: AsyncClient, pro_max_tenant_admin: dict):
+    headers = pro_max_tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    table = await _create_table(client, headers, location_id, section_id)
+    await _enable_qr_self_order(client, headers)
+    qr_token = await _generate_qr(client, headers, table["id"])
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"])
+    guest = _guest_headers(await _start_guest_session(client, qr_token))
+    payload = {"items": [{"item_id": item["id"], "quantity": 1}]}
+
+    blocked = await client.post("/api/v1/guest/cart", json=payload, headers=guest)
+    assert blocked.status_code == 400
+    assert "name and phone" in blocked.json()["detail"]
+
+    bad_phone = await client.patch(
+        "/api/v1/guest/sessions/me",
+        json={"customer_name": "A", "customer_phone": "123"},
+        headers=guest,
+    )
+    assert bad_phone.status_code == 422
+
+    saved = await _set_guest_profile(client, guest, phone="+91 98765 43210")
+    assert saved["customer_phone"] == "9876543210"
+    ok = await client.post("/api/v1/guest/cart", json=payload, headers=guest)
+    assert ok.status_code == 200, ok.text

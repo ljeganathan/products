@@ -1,3 +1,4 @@
+import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
@@ -207,6 +208,11 @@ class BillRenderData:
     # Assigned waiter's name, if any (CLAUDE.md §11) — printed only when the bill
     # actually has one; a walk-in cashier-only sale has no waiter line at all.
     waiter_name: str | None = None
+    # Optional customer identity (Phase 27) — cashier-entered, or auto-filled from a QR
+    # self-order's guest_sessions row. Printed only when present, same treatment as
+    # waiter_name above.
+    customer_name: str | None = None
+    customer_phone: str | None = None
     # Sourced from the bill printer's own `paper_width_mm` (Printers settings) — None
     # falls back to the original 58mm/32-col layout.
     paper_width_mm: int | None = None
@@ -252,6 +258,27 @@ def two_column_lines(left: str, right: str, line_width: int) -> list[str]:
     return [left, f"{right:>{line_width}}"]
 
 
+def customer_lines(bill: BillRenderData) -> list[str]:
+    """The "Customer: name / phone" line (Phase 27), wrapped to the paper width so a long name
+    never runs off a 58mm printer — empty when neither is set. Shared by the thermal
+    and dot-matrix bill renderers.
+    """
+    parts = [p for p in (bill.customer_name, bill.customer_phone) if p]
+    if not parts:
+        return []
+    one_line = f"Customer: {' / '.join(parts)}"
+    if len(one_line) <= bill.line_width:
+        return [one_line]
+    # Doesn't fit on one line (narrow paper / long name) — name and phone each get their
+    # own line so the number is never split mid-digit.
+    out: list[str] = []
+    if bill.customer_name:
+        out.extend(textwrap.wrap(f"Customer: {bill.customer_name}", width=bill.line_width))
+    if bill.customer_phone:
+        out.append(bill.customer_phone if bill.customer_name else f"Customer: {bill.customer_phone}")
+    return out
+
+
 def format_bill_text_lines(bill: BillRenderData) -> list[str]:
     """Shared plain-text layout for both bill adapters. `show_tamil_names` mirrors
     `hotel_master.show_tamil_names` — controls only the printed copy, never the POS
@@ -277,6 +304,7 @@ def format_bill_text_lines(bill: BillRenderData) -> list[str]:
     lines.extend(two_column_lines(bill.header_label, f"Bill #{bill.bill_number}", bill.line_width))
     waiter_label = f"Waiter: {bill.waiter_name}" if bill.waiter_name else ""
     lines.extend(two_column_lines(waiter_label, date_str, bill.line_width))
+    lines.extend(customer_lines(bill))
     lines.append(sep)
 
     for line in bill.lines:
