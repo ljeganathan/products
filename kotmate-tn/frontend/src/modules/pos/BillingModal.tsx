@@ -301,90 +301,85 @@ export function BillingModal({
     );
   }
 
+  const inputClass = "min-w-0 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm";
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-surface p-5 shadow-pos">
-        <h2 className="mb-3 text-lg font-extrabold">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3">
+      {/* dvh (not vh) so the modal is sized to the *visible* area on Android/iOS browsers,
+          whose address bar otherwise pushes the bottom buttons off-screen. Header and
+          button row are pinned; only the middle scrolls on a very short screen. */}
+      <div className="flex max-h-[94dvh] w-full max-w-md flex-col rounded-2xl bg-surface shadow-pos">
+        <h2 className="flex-none px-4 pb-2 pt-3.5 text-base font-extrabold">
           {mode === "kot-and-bill" ? "🍳🧾 Send to Kitchen & Finalize Bill" : "🧾 Finalize Bill"}
         </h2>
 
-        <div className="mb-3 rounded-lg border border-border p-3">
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-ink-faint">
-            Customer (optional)
-          </label>
-          <div className="flex gap-2">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pb-2">
+          <div className="grid grid-cols-2 gap-2">
             <input
               type="text"
               maxLength={100}
-              placeholder="Name"
+              placeholder="Customer name (optional)"
+              aria-label="Customer name (optional)"
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
-              className="min-w-0 flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm"
+              className={inputClass}
             />
             <input
               type="tel"
               maxLength={20}
-              placeholder="Phone number"
+              placeholder="Phone (optional)"
+              aria-label="Customer phone (optional)"
               value={customerPhone}
               onChange={(e) => setCustomerPhone(e.target.value)}
-              className="min-w-0 flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm"
+              className={inputClass}
             />
+            {couponsEnabled && (
+              <input
+                type="text"
+                placeholder="Enter coupon code (optional)"
+                aria-label="Coupon code"
+                value={couponCode}
+                onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                className={`${inputClass} col-span-2 uppercase`}
+              />
+            )}
           </div>
-        </div>
 
-        {couponsEnabled && (
-          <div className="mb-3 rounded-lg border border-border p-3">
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-ink-faint">
-              Coupon Code
-            </label>
-            <input
-              type="text"
-              placeholder="Enter coupon code (optional)"
-              value={couponCode}
-              onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
-              className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm uppercase"
-            />
+          <div className="rounded-lg bg-surface-2 px-3 py-2 text-[13px]">
+            {previewLoading && <p className="text-ink-faint">Calculating…</p>}
+            {previewError && <p className="text-chili">Couldn't calculate totals — try again.</p>}
+            {preview && (
+              <>
+                <Row label="Subtotal" value={preview.subtotal} />
+                {preview.discount_note ? (
+                  preview.discount_note.split("; ").map((seg, i) => {
+                    const [label, amount] = splitDiscountSegment(seg);
+                    return (
+                      <div key={i} className="flex items-center justify-between text-veg">
+                        <span className="text-xs">{label}</span>
+                        <span className="text-xs font-bold tabular-nums">{amount}</span>
+                      </div>
+                    );
+                  })
+                ) : (
+                  preview.discount_amount > 0 && <Row label="Discount" value={-preview.discount_amount} />
+                )}
+                <Row label="CGST" value={preview.cgst_amount} />
+                <Row label="SGST" value={preview.sgst_amount} />
+                <Row label="Round Off" value={preview.round_off_amount} signed />
+                <div className="mt-1 flex items-center justify-between border-t border-dashed border-border pt-1 text-base font-extrabold">
+                  <span>Grand Total</span>
+                  <span className="tabular-nums">{formatINR(preview.grand_total)}</span>
+                </div>
+              </>
+            )}
           </div>
-        )}
 
-        <div className="mb-3 rounded-lg bg-surface-2 px-3.5 py-3 text-sm">
-          {previewLoading && <p className="text-ink-faint">Calculating…</p>}
-          {previewError && <p className="text-chili">Couldn't calculate totals — try again.</p>}
-          {preview && (
-            <>
-              <Row label="Subtotal" value={preview.subtotal} />
-              {preview.discount_note ? (
-                preview.discount_note.split("; ").map((seg, i) => {
-                  const [label, amount] = splitDiscountSegment(seg);
-                  return (
-                    <div key={i} className="flex items-center justify-between py-0.5 text-veg">
-                      <span className="text-xs">{label}</span>
-                      <span className="text-xs font-bold tabular-nums">{amount}</span>
-                    </div>
-                  );
-                })
-              ) : (
-                preview.discount_amount > 0 && <Row label="Discount" value={-preview.discount_amount} />
-              )}
-              <Row label="CGST" value={preview.cgst_amount} />
-              <Row label="SGST" value={preview.sgst_amount} />
-              <Row label="Round Off" value={preview.round_off_amount} signed />
-              <div className="mt-1.5 flex items-center justify-between border-t border-dashed border-border pt-1.5 text-base font-extrabold">
-                <span>Grand Total</span>
-                <span className="tabular-nums">{formatINR(preview.grand_total)}</span>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="mb-3">
-          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-ink-faint">
-            Payment
-          </label>
           <div className="flex flex-col gap-1.5">
             {payments.map((payment, i) => (
               <div key={i} className="flex items-center gap-1.5">
                 <select
+                  aria-label="Payment method"
                   value={payment.method}
                   onChange={(e) => updatePayment(i, { method: e.target.value as BillPaymentInput["method"] })}
                   className="rounded-md border border-border bg-background px-2 py-1.5 text-xs font-bold"
@@ -398,72 +393,76 @@ export function BillingModal({
                 <input
                   type="number"
                   min={0}
+                  aria-label="Payment amount"
                   value={payment.amount || ""}
                   onChange={(e) => updatePayment(i, { amount: Number(e.target.value) })}
-                  className="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-right text-sm tabular-nums"
+                  className="min-w-0 flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-right text-sm tabular-nums"
                 />
                 {payments.length > 1 && (
                   <button
                     type="button"
                     onClick={() => setPayments((prev) => prev.filter((_, idx) => idx !== i))}
-                    className="text-chili"
+                    className="px-1 text-chili"
                     aria-label="Remove payment"
                   >
                     ✕
                   </button>
                 )}
+                {i === payments.length - 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setPayments((prev) => [...prev, { method: "cash", amount: 0 }])}
+                    className="shrink-0 rounded-md border border-accent bg-accent-soft px-2.5 py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-accent-foreground"
+                  >
+                    + Split
+                  </button>
+                )}
               </div>
             ))}
-            <button
-              type="button"
-              onClick={() => setPayments((prev) => [...prev, { method: "cash", amount: 0 }])}
-              className="min-h-[38px] rounded-lg border border-accent bg-accent-soft px-3 text-sm font-bold text-accent hover:bg-accent hover:text-accent-foreground"
-            >
-              + Split Payment
-            </button>
+            {preview && !balanced && (
+              <p className="text-[11px] font-semibold text-chili">
+                Payments total {formatINR(paymentsTotal)} — must equal {formatINR(preview.grand_total)}
+              </p>
+            )}
           </div>
-          {preview && !balanced && (
-            <p className="mt-1.5 text-[11px] font-semibold text-chili">
-              Payments total {formatINR(paymentsTotal)} — must equal {formatINR(preview.grand_total)}
+
+          {error && (
+            <p role="alert" className="rounded-md bg-chili-soft px-3 py-2 text-xs font-semibold text-chili">
+              {error}
             </p>
           )}
         </div>
 
-        {error && (
-          <p role="alert" className="mb-3 rounded-md bg-chili-soft px-3 py-2 text-xs font-semibold text-chili">
-            {error}
-          </p>
-        )}
-
-        <label className="mb-3 flex items-center gap-2 text-xs font-semibold text-ink-soft">
-          <input
-            type="checkbox"
-            checked={previewBeforePrint}
-            onChange={(e) => setPreviewBeforePrint(e.target.checked)}
-          />
-          Show print preview before printing
-        </label>
-
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-border px-4 py-2 text-sm font-bold hover:bg-surface-2"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => finalizeMutation.mutate()}
-            disabled={!preview || !balanced || finalizeMutation.isPending}
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-bold text-accent-foreground disabled:opacity-40"
-          >
-            {finalizeMutation.isPending
-              ? "Finalizing…"
-              : mode === "kot-and-bill"
-                ? "Confirm — KOT + Bill"
-                : "Confirm & Bill"}
-          </button>
+        <div className="flex flex-none items-center justify-between gap-2 border-t border-border px-4 py-2.5">
+          <label className="flex items-center gap-1.5 text-[11px] font-semibold leading-tight text-ink-soft">
+            <input
+              type="checkbox"
+              checked={previewBeforePrint}
+              onChange={(e) => setPreviewBeforePrint(e.target.checked)}
+            />
+            Print preview
+          </label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-border px-4 py-2 text-sm font-bold hover:bg-surface-2"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => finalizeMutation.mutate()}
+              disabled={!preview || !balanced || finalizeMutation.isPending}
+              className="rounded-lg bg-accent px-4 py-2 text-sm font-bold text-accent-foreground disabled:opacity-40"
+            >
+              {finalizeMutation.isPending
+                ? "Finalizing…"
+                : mode === "kot-and-bill"
+                  ? "Confirm — KOT + Bill"
+                  : "Confirm & Bill"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -481,7 +480,7 @@ function Row({ label, value, signed, mono }: { label: string; value: number; sig
     );
   }
   return (
-    <div className="flex items-center justify-between py-0.5 text-ink-soft">
+    <div className="flex items-center justify-between text-ink-soft">
       <span>{label}</span>
       <span className="tabular-nums font-bold text-foreground">{display}</span>
     </div>
