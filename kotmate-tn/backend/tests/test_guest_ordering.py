@@ -450,3 +450,19 @@ async def test_cart_rejected_until_guest_profile_set(client: AsyncClient, pro_ma
     assert saved["customer_phone"] == "9876543210"
     ok = await client.post("/api/v1/guest/cart", json=payload, headers=guest)
     assert ok.status_code == 200, ok.text
+
+
+def test_guest_upi_link_has_reference_merchant_code_and_order_note():
+    import uuid
+    from urllib.parse import parse_qs, urlparse
+
+    from app.services.guest_service import build_guest_upi_link
+
+    order_id = uuid.uuid4()
+    link = build_guest_upi_link(
+        upi_id="hotel@ybl", payee_name="Hotel Aryaas", amount=85, order_id=order_id, order_label="TA-13"
+    )
+    q = {k: v[0] for k, v in parse_qs(urlparse(link).query).items()}
+    assert q["pa"] == "hotel@ybl" and q["am"] == "85.00" and q["cu"] == "INR"
+    assert q["mc"] == "5812" and q["tn"] == "Order TA-13"
+    assert q["tr"] == "KM" + order_id.hex[:30] and len(q["tr"]) <= 35

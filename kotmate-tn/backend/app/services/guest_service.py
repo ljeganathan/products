@@ -404,6 +404,36 @@ async def get_order_status(session: AsyncSession, guest: CurrentGuest) -> list[A
     return [t for t in tickets if t.order_id == guest_session.order_id]
 
 
+# Merchant category code for restaurants/eating places (ISO 18245) — sent as `mc` so
+# UPI apps treat the link as a merchant payment rather than a peer-to-peer transfer.
+_UPI_MERCHANT_CODE_RESTAURANT = "5812"
+
+
+def build_guest_upi_link(
+    *, upi_id: str, payee_name: str, amount: float, order_id: uuid.UUID, order_label: str
+) -> str:
+    """The guest "Pay via UPI" deep link. Same core fields as the printed-bill QR, plus
+    what UPI apps expect on a link opened from a web page (an "intent" payment, held to a
+    stricter standard than a scanned QR): a unique transaction reference `tr` per order
+    (NPCI: alphanumeric, max 35 chars), a merchant category code `mc`, and a specific
+    note instead of a bare "Order".
+    """
+    tr = "KM" + order_id.hex[:30]
+    return (
+        f"upi://pay?pa={quote(upi_id)}&pn={quote(payee_name)}&mc={_UPI_MERCHANT_CODE_RESTAURANT}"
+        f"&tr={tr}&am={amount:.2f}&cu=INR&tn={quote('Order ' + order_label)}"
+    )
+
+
+async def _table_label(session: AsyncSession, guest_session: GuestSession) -> str:
+    if guest_session.table_id is None:
+        return ""
+    table = (
+        await session.execute(select(Table).where(Table.id == guest_session.table_id))
+    ).scalar_one()
+    return table.table_number
+
+
 async def preview_guest_bill(session: AsyncSession, guest: CurrentGuest) -> GuestBillPreviewResponse:
     guest_session = await _get_active_session_or_404(session, guest)
     if guest_session.order_id is None:
@@ -419,9 +449,12 @@ async def preview_guest_bill(session: AsyncSession, guest: CurrentGuest) -> Gues
     upi_link = None
     if hotel and hotel.upi_id:
         branch = await resolve_branch_header(session, guest.location_id)
-        upi_link = (
-            f"upi://pay?pa={quote(hotel.upi_id)}&pn={quote(branch.name)}"
-            f"&am={preview.grand_total:.2f}&cu=INR&tn={quote('Order')}"
+        upi_link = build_guest_upi_link(
+            upi_id=hotel.upi_id,
+            payee_name=branch.name,
+            amount=preview.grand_total,
+            order_id=guest_session.order_id,
+            order_label=guest_session.pickup_token or await _table_label(session, guest_session),
         )
     return GuestBillPreviewResponse(**preview.model_dump(), upi_link=upi_link)
 
