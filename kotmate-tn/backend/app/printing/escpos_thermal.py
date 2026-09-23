@@ -212,10 +212,15 @@ def render_bill(bill: BillRenderData) -> bytes:
         out += _CENTER + _BOLD_ON + _text(bill.footer_message) + _BOLD_OFF + _LEFT
 
     if bill.qr_payload:
-        out += _CENTER + generate_qr_escpos(bill.qr_payload) + b"\n" + _LEFT
-    if bill.qr_payload and bill.upi_id:
-        out += sep
-        out += _text(f"Scan to pay via UPI ({bill.upi_id})")
+        # No separator line and no centered/left toggle between the image and the
+        # caption below it (production feedback: a full dashed line plus the QR's own
+        # built-in quiet zone was reading as a large dead gap on a narrow receipt) — the
+        # QR block is already a clear visual boundary on its own, and the caption stays
+        # centered under it instead of resetting to the left margin.
+        out += _CENTER + generate_qr_escpos(bill.qr_payload) + b"\n"
+        if bill.upi_id:
+            out += _text(f"Scan to pay via UPI ({bill.upi_id})")
+        out += _LEFT
 
     return out + b"\n\n" + _CUT
 

@@ -23,6 +23,11 @@ class GuestSessionResponse(BaseModel):
     guest_token: str
     tenant_id: uuid.UUID
     location_id: uuid.UUID
+    # Company name + this location's own name (CLAUDE.md §4's Company/Location split) —
+    # shown on the guest menu header so a customer knows which hotel/branch they're
+    # ordering from, since the QR flow never asks them to pick one themselves.
+    hotel_name: str
+    branch_name: str
     table_id: uuid.UUID | None
     table_number: str | None
     pickup_token: str | None = None

@@ -42,6 +42,8 @@ export interface GuestSession {
   guest_token: string;
   tenant_id: string;
   location_id: string;
+  hotel_name: string;
+  branch_name: string;
   // Both null for a Takeaway session (Phase 26) — pickup_token/section_name_en are
   // set instead, shown where a table number would otherwise appear.
   table_id: string | null;

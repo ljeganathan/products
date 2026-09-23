@@ -6,6 +6,7 @@ import { useParams } from "react-router-dom";
 import logoMark from "@/assets/logo-mark.png";
 import { formatINR } from "@/lib/utils";
 import type { Category } from "@/modules/admin/categoriesApi";
+import { QrCodeImage } from "@/modules/admin/QrCodeImage";
 import { ALL_ITEMS_ID, CategoryNav, TOP_SELLING_ID } from "@/modules/pos/CategoryNav";
 import { ItemCard } from "@/modules/pos/ItemCard";
 import type { Order, OrderLineInput } from "@/modules/pos/posApi";
@@ -21,7 +22,6 @@ import {
   getGuestOrderStatus,
   getGuestTopSellers,
   isTakeawaySession,
-  requestGuestBill,
   sendGuestOrderToKitchen,
   startGuestSession,
   updateGuestCart,
@@ -262,6 +262,8 @@ export function GuestOrderApp() {
       <main className="flex-1 overflow-y-auto">
         {tab === "menu" && (
           <MenuTab
+            hotelName={session.hotel_name}
+            branchName={session.branch_name}
             items={menuQuery.data ?? []}
             topSellers={topSellersQuery.data ?? []}
             categories={categoriesQuery.data ?? []}
@@ -272,13 +274,10 @@ export function GuestOrderApp() {
             onAdd={(item) => void handleAddItem(item)}
           />
         )}
-        {tab === "status" && <StatusTab onSessionEnded={() => setSessionEnded(true)} />}
-        {tab === "bill" && (
-          <BillTab
-            onRequestBill={() => setNotice("Staff has been notified — please wait")}
-            onSessionEnded={() => setSessionEnded(true)}
-          />
+        {tab === "status" && (
+          <StatusTab onSessionEnded={() => setSessionEnded(true)} onGoToBill={() => setTab("bill")} />
         )}
+        {tab === "bill" && <BillTab onSessionEnded={() => setSessionEnded(true)} />}
       </main>
 
       <nav className="flex flex-none items-stretch border-t border-border bg-surface">
@@ -418,6 +417,8 @@ function CenteredMessage({ children }: { children: React.ReactNode }) {
 }
 
 function MenuTab({
+  hotelName,
+  branchName,
   items,
   topSellers,
   categories,
@@ -427,6 +428,8 @@ function MenuTab({
   order,
   onAdd,
 }: {
+  hotelName: string;
+  branchName: string;
   items: GuestMenuItem[];
   topSellers: GuestMenuItem[];
   categories: Category[];
@@ -457,6 +460,12 @@ function MenuTab({
 
   return (
     <div className="flex h-full flex-col">
+      <div className="flex-none border-b border-border bg-surface px-4 py-2 text-center">
+        <p className="truncate text-sm font-extrabold leading-tight">{hotelName}</p>
+        {branchName !== hotelName && (
+          <p className="truncate text-[11px] font-semibold text-ink-faint">{branchName}</p>
+        )}
+      </div>
       <CategoryNav
         categories={categories}
         activeCategoryId={activeCategoryId}
@@ -658,7 +667,13 @@ function ProfileSheet({
   );
 }
 
-function StatusTab({ onSessionEnded }: { onSessionEnded: () => void }) {
+function StatusTab({
+  onSessionEnded,
+  onGoToBill,
+}: {
+  onSessionEnded: () => void;
+  onGoToBill: () => void;
+}) {
   const { data, isLoading, error } = useQuery({
     queryKey: ["guest-order-status"],
     queryFn: getGuestOrderStatus,
@@ -674,6 +689,13 @@ function StatusTab({ onSessionEnded }: { onSessionEnded: () => void }) {
 
   return (
     <div className="flex flex-col gap-2.5 p-3">
+      <button
+        type="button"
+        onClick={onGoToBill}
+        className="rounded-lg bg-accent py-2.5 text-sm font-extrabold text-accent-foreground"
+      >
+        🧾 Bill
+      </button>
       {tickets.length === 0 && (
         <p className="p-4 text-center text-sm text-ink-faint">
           Nothing sent to the kitchen yet — add items from the Menu tab.
@@ -682,7 +704,7 @@ function StatusTab({ onSessionEnded }: { onSessionEnded: () => void }) {
       {tickets.map((ticket: GuestOrderStatusTicket) => (
         <div key={ticket.id} className="rounded-xl border border-border bg-surface p-3.5 shadow-pos">
           <div className="mb-2 flex items-center justify-between">
-            <span className="font-mono text-xs font-bold text-ink-faint">#{ticket.ticket_number}</span>
+            <span className="font-mono text-2xl font-black leading-none">#{ticket.ticket_number}</span>
             <span
               className={`rounded-full px-2 py-0.5 text-[11px] font-extrabold capitalize ${
                 ticket.status === "ready"
@@ -712,15 +734,7 @@ function StatusTab({ onSessionEnded }: { onSessionEnded: () => void }) {
   );
 }
 
-function BillTab({
-  onRequestBill,
-  onSessionEnded,
-}: {
-  onRequestBill: () => void;
-  onSessionEnded: () => void;
-}) {
-  const [claimed, setClaimed] = useState(false);
-  const [requestError, setRequestError] = useState<string | null>(null);
+function BillTab({ onSessionEnded }: { onSessionEnded: () => void }) {
   const { data, isLoading, isError, error } = useQuery<GuestBillPreview>({
     queryKey: ["guest-bill-preview"],
     queryFn: getGuestBillPreview,
@@ -730,21 +744,6 @@ function BillTab({
   useEffect(() => {
     if (isSessionEndedError(error)) onSessionEnded();
   }, [error, onSessionEnded]);
-
-  async function handleRequestBill() {
-    setRequestError(null);
-    try {
-      await requestGuestBill();
-      setClaimed(true);
-      onRequestBill();
-    } catch (err) {
-      if (isSessionEndedError(err)) {
-        onSessionEnded();
-        return;
-      }
-      setRequestError(errorDetail(err) ?? "Couldn't notify staff — please try again");
-    }
-  }
 
   if (isLoading) return <p className="p-4 text-sm text-ink-faint">Loading…</p>;
   if (isError || !data) {
@@ -778,25 +777,15 @@ function BillTab({
         </div>
       </div>
 
-      <div className="mt-4 flex flex-col gap-2">
-        {data.upi_link && (
-          <a
-            href={data.upi_link}
-            className="block rounded-lg bg-accent py-3 text-center text-sm font-extrabold text-accent-foreground"
-          >
-            💳 Pay via UPI
-          </a>
-        )}
-        <button
-          type="button"
-          onClick={() => void handleRequestBill()}
-          disabled={claimed}
-          className="rounded-lg border border-border py-3 text-sm font-bold hover:bg-surface-2 disabled:opacity-50"
-        >
-          {claimed ? "Staff notified — please wait" : "I've Paid — Notify Staff"}
-        </button>
-        {requestError && <p className="text-center text-xs font-semibold text-chili">{requestError}</p>}
-      </div>
+      {data.upi_link && (
+        <div className="mt-4 rounded-xl border border-border bg-surface p-4 text-center shadow-pos">
+          <h2 className="mb-1 text-sm font-extrabold uppercase tracking-wide text-ink-faint">
+            💳 Scan to Pay via UPI
+          </h2>
+          <p className="mb-1 text-xs text-ink-faint">Scan with any UPI app, or download and pay from another device.</p>
+          <QrCodeImage value={data.upi_link} downloadName={`upi-payment-${Math.round(data.grand_total)}`} />
+        </div>
+      )}
     </div>
   );
 }

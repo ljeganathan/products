@@ -136,10 +136,16 @@ async def to_session_response(session: AsyncSession, guest_session: GuestSession
             )
         ).scalar_one()
         section_name_en = section.name_en
+    branch = await resolve_branch_header(session, guest_session.location_id)
+    tenant = (
+        await session.execute(select(Tenant).where(Tenant.id == guest_session.tenant_id))
+    ).scalar_one()
     return GuestSessionResponse(
         guest_token="",  # filled in by the caller, which alone knows the JWT
         tenant_id=guest_session.tenant_id,
         location_id=guest_session.location_id,
+        hotel_name=tenant.company_name,
+        branch_name=branch.name,
         table_id=guest_session.table_id,
         table_number=table_number,
         pickup_token=guest_session.pickup_token,

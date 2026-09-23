@@ -303,3 +303,27 @@ def test_customer_name_and_phone_print_on_dot_matrix_and_thermal():
     none = _bill_with_customer(None, None)
     assert "Customer:" not in render_dm(none)
     assert b"Customer:" not in render_thermal(none)
+
+
+def test_thermal_qr_caption_has_no_separator_and_stays_centered():
+    """Phase 27 follow-up: a full dashed separator line between the UPI QR image and its
+    "Scan to pay" caption, on top of the QR's own built-in quiet zone, read as a large
+    dead gap on a narrow receipt (production feedback) — the caption now follows the
+    image directly, still centered, with no separator in between.
+    """
+    from app.printing.escpos_thermal import _CENTER, _LEFT, render_bill
+
+    bill = _bill_with_customer(None, None)
+    bill.qr_payload = "upi://pay?pa=hotel@ybl&pn=Hotel&am=100.00&cu=INR"
+    bill.upi_id = "hotel@ybl"
+    out = render_bill(bill)
+
+    qr_start = out.index(b"\x1dv0")
+    caption_start = out.index(b"Scan to pay via UPI")
+    between = out[qr_start:caption_start]
+    assert b"-" * 10 not in between  # no dashed separator line
+    # Centered mode is entered right before the QR and never reset to left before the
+    # caption prints — it should only switch back to left-align after the caption.
+    assert out[qr_start - len(_CENTER) : qr_start] == _CENTER
+    assert _LEFT not in between
+    assert out.index(_LEFT, caption_start) > caption_start
