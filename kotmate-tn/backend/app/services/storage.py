@@ -14,6 +14,12 @@ class StorageBackend(ABC):
     async def save(self, *, tenant_id: uuid.UUID, subfolder: str, filename: str, content: bytes) -> str:
         """Persists `content` and returns a URL the frontend can load it from."""
 
+    @abstractmethod
+    async def save_platform(self, *, subfolder: str, filename: str, content: bytes) -> str:
+        """Same as `save`, for assets that belong to the platform rather than any one
+        tenant (marketing blog-post cover images, Phase 29) — no `tenant_id` to key by.
+        """
+
 
 class LocalDiskStorage(StorageBackend):
     def __init__(self, base_dir: Path, url_prefix: str) -> None:
@@ -29,6 +35,16 @@ class LocalDiskStorage(StorageBackend):
         (dest_dir / stored_name).write_bytes(content)
 
         return f"{self._url_prefix}/{tenant_id}/{subfolder}/{stored_name}"
+
+    async def save_platform(self, *, subfolder: str, filename: str, content: bytes) -> str:
+        dest_dir = self._base_dir / "_platform" / subfolder
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        suffix = Path(filename).suffix.lower()
+        stored_name = f"{uuid.uuid4().hex}{suffix}"
+        (dest_dir / stored_name).write_bytes(content)
+
+        return f"{self._url_prefix}/_platform/{subfolder}/{stored_name}"
 
 
 def get_storage() -> StorageBackend:

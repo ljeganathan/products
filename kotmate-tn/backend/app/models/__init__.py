@@ -11,7 +11,9 @@ from app.models.hotel import HotelMaster
 from app.models.invoice import Invoice
 from app.models.item import Item
 from app.models.kot import KotTicket, KotTicketItem
+from app.models.marketing import BlogPost, DemoVideo
 from app.models.order import Order, OrderItem
+from app.models.payment_gateway import PaymentAttempt, TenantPaymentGateway
 from app.models.plan import Plan, Subscription
 from app.models.platform_settings import PlatformSettings
 from app.models.printer import Printer
@@ -26,6 +28,10 @@ from app.models.waiter import Waiter
 __all__ = [
     "AuditLog",
     "Bill",
+    "BlogPost",
+    "DemoVideo",
+    "PaymentAttempt",
+    "TenantPaymentGateway",
     "BillDiscount",
     "BillItem",
     "Payment",

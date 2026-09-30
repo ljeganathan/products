@@ -7,6 +7,7 @@ import logoMark from "@/assets/logo-mark.png";
 import { formatINR } from "@/lib/utils";
 import type { Category } from "@/modules/admin/categoriesApi";
 import { QrCodeImage } from "@/modules/admin/QrCodeImage";
+import { OnlinePayCard } from "@/modules/guest/OnlinePayCard";
 import { ALL_ITEMS_ID, CategoryNav, TOP_SELLING_ID } from "@/modules/pos/CategoryNav";
 import { ItemCard } from "@/modules/pos/ItemCard";
 import type { Order, OrderLineInput } from "@/modules/pos/posApi";
@@ -277,7 +278,12 @@ export function GuestOrderApp() {
         {tab === "status" && (
           <StatusTab onSessionEnded={() => setSessionEnded(true)} onGoToBill={() => setTab("bill")} />
         )}
-        {tab === "bill" && <BillTab onSessionEnded={() => setSessionEnded(true)} />}
+        {tab === "bill" && (
+          <BillTab
+            tokenLabel={takeaway ? (session.pickup_token ?? "") : `Table ${session.table_number}`}
+            onSessionEnded={() => setSessionEnded(true)}
+          />
+        )}
       </main>
 
       <nav className="flex flex-none items-stretch border-t border-border bg-surface">
@@ -734,7 +740,8 @@ function StatusTab({
   );
 }
 
-function BillTab({ onSessionEnded }: { onSessionEnded: () => void }) {
+function BillTab({ tokenLabel, onSessionEnded }: { tokenLabel: string; onSessionEnded: () => void }) {
+  const queryClient = useQueryClient();
   const { data, isLoading, isError, error } = useQuery<GuestBillPreview>({
     queryKey: ["guest-bill-preview"],
     queryFn: getGuestBillPreview,
@@ -777,7 +784,17 @@ function BillTab({ onSessionEnded }: { onSessionEnded: () => void }) {
         </div>
       </div>
 
-      {data.upi_link && (
+      {data.online_payment.enabled && (
+        <OnlinePayCard
+          info={data.online_payment}
+          total={data.grand_total}
+          tokenLabel={tokenLabel}
+          onPaid={() => void queryClient.invalidateQueries({ queryKey: ["guest-bill-preview"] })}
+          onSessionEnded={onSessionEnded}
+        />
+      )}
+
+      {!data.online_payment.enabled && data.upi_link && (
         <div className="mt-4 rounded-xl border border-border bg-surface p-4 text-center shadow-pos">
           <h2 className="mb-1 text-sm font-extrabold uppercase tracking-wide text-ink-faint">
             💳 Scan to Pay via UPI

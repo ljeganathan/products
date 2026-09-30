@@ -129,6 +129,9 @@ class Payment(UUIDPKMixin, TimestampMixin, Base):
     bill_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("bills.id"), nullable=False)
     method: Mapped[str] = mapped_column(String(10), nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    # Gateway payment id (e.g. Razorpay "pay_...") when this line was paid online through
+    # a self-order — for reconciliation against the gateway's own reports (Phase 28).
+    reference: Mapped[str | None] = mapped_column(String(64))
 
     __table_args__ = (
         tenant_composite_index("payments"),

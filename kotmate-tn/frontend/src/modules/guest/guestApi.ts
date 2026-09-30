@@ -134,6 +134,44 @@ export async function getGuestOrderStatus(): Promise<GuestOrderStatusTicket[]> {
   return (await guestApi.get<GuestOrderStatusTicket[]>("/api/v1/guest/order-status")).data;
 }
 
+// Online (Razorpay) payment, Phase 28. `enabled` false -> the Bill tab shows the plain UPI
+// QR instead. The amount is never sent from here: the server works it out from the order.
+export interface GuestOnlinePaymentInfo {
+  enabled: boolean;
+  key_id: string | null;
+  is_test_mode: boolean;
+  paid: boolean;
+  paid_amount: number | null;
+  reference: string | null;
+}
+
+export interface GuestCreatedPayment {
+  provider_order_id: string;
+  key_id: string;
+  amount_paise: number;
+  currency: string;
+  hotel_name: string;
+  description: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  is_test_mode: boolean;
+}
+
+export interface GuestPaymentStatus {
+  status: "none" | "created" | "paid" | "failed";
+  paid_amount: number | null;
+  reference: string | null;
+  failure_reason: string | null;
+}
+
+export async function createGuestPayment(): Promise<GuestCreatedPayment> {
+  return (await guestApi.post<GuestCreatedPayment>("/api/v1/guest/payments/create")).data;
+}
+
+export async function getGuestPaymentStatus(): Promise<GuestPaymentStatus> {
+  return (await guestApi.get<GuestPaymentStatus>("/api/v1/guest/payments/status")).data;
+}
+
 export interface GuestBillPreview {
   order_id: string;
   items: { item_id: string; name_en: string; name_ta: string | null; quantity: number; line_total: number }[];
@@ -145,6 +183,7 @@ export interface GuestBillPreview {
   round_off_amount: number;
   grand_total: number;
   upi_link: string | null;
+  online_payment: GuestOnlinePaymentInfo;
 }
 
 export async function getGuestBillPreview(): Promise<GuestBillPreview> {

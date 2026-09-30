@@ -25,7 +25,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://kotmate:kotmate@postgres:5432/kotmate
       APP_DATABASE_URL: postgresql+asyncpg://kotmate_app:kotmate_app@postgres:5432/kotmate
-      CORS_ORIGINS: '["http://localhost:5173", "http://192.168.0.125:5173"]'
+      # localhost:8080 is the local landing-site container (docker compose up landing) —
+      # its static JS calls the two read-only /api/v1/public/* endpoints cross-origin.
+      CORS_ORIGINS: '["http://localhost:5173", "http://192.168.0.125:5173", "http://localhost:8080"]'
     ports:
       - "8000:8000"
     volumes:

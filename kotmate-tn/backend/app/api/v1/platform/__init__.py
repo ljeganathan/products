@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 
+from app.api.v1.platform.content import router as content_router
 from app.api.v1.platform.dashboard import router as dashboard_router
 from app.api.v1.platform.invoices import router as invoices_router
 from app.api.v1.platform.metrics import router as metrics_router
@@ -13,6 +14,7 @@ from app.core.deps import require_platform_scope
 router = APIRouter(prefix="/platform", dependencies=[Depends(require_platform_scope)])
 router.include_router(tenants_router)
 router.include_router(plans_router)
+router.include_router(content_router)
 router.include_router(settings_router)
 router.include_router(metrics_router)
 router.include_router(invoices_router)

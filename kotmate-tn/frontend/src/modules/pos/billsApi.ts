@@ -38,6 +38,9 @@ interface BillTotals {
   // order's QR guest session (if any); on a finalized bill it's what was saved/printed.
   customer_name: string | null;
   customer_phone: string | null;
+  // Set when the guest already paid this order online (verified with the gateway).
+  online_paid_amount: number | null;
+  online_payment_reference: string | null;
 }
 
 export interface BillPreview extends BillTotals {

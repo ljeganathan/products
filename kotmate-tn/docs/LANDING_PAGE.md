@@ -12,9 +12,12 @@ step — served by its own `nginx:alpine` container (`landing/Dockerfile`),
 deployed as a **separate Docker service** alongside the existing `backend`/
 `nginx` (app frontend)/`postgres` stack, routed by the shared Traefik
 instance to the apex domain `kotmatetn.in` (+ `www.kotmatetn.in`) instead of
-the `app.` subdomain. It never talks to the KOTMate API/database — every
-"Login"/"Start Free Trial" action links out to `https://app.kotmatetn.in` or
-to WhatsApp/email.
+the `app.` subdomain. It never talks to the KOTMate API/database for anything on
+this page — every "Login"/"Start Free Trial" action links out to
+`https://app.kotmatetn.in` or to WhatsApp/email. The one exception, added later, is
+the "Demos & Blog" page (`resources.html`/`blog-post.html`), which makes two
+read-only, unauthenticated calls to the app's public content API — see
+`docs/MARKETING_CONTENT.md`.
 
 ## 1. Files created
 

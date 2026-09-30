@@ -125,8 +125,15 @@ export function BillingModal({
   const paymentsTotal = payments.reduce((sum, p) => sum + (Number.isFinite(p.amount) ? p.amount : 0), 0);
   const balanced = Math.abs(paymentsTotal - grandTotal) <= AMOUNT_TOLERANCE;
 
+  // A guest who already paid online is billed as UPI for exactly what they paid.
+  const onlinePaid = preview?.online_paid_amount ?? null;
+
   function syncSinglePaymentToGrandTotal(total: number) {
-    setPayments((prev) => (prev.length === 1 ? [{ ...prev[0], amount: total }] : prev));
+    setPayments((prev) =>
+      prev.length === 1
+        ? [{ ...prev[0], amount: total, ...(onlinePaid !== null ? { method: "upi" as const } : {}) }]
+        : prev,
+    );
   }
 
   // Payment defaults to the full grand total as soon as it's known — a single (non-split)
@@ -314,6 +321,17 @@ export function BillingModal({
         </h2>
 
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pb-2">
+          {preview && onlinePaid !== null && (
+            <div className="rounded-lg bg-veg/10 px-3 py-2 text-xs font-semibold text-veg" role="status">
+              ✓ Paid online {formatINR(onlinePaid)} by UPI
+              {preview.online_payment_reference ? ` · ${preview.online_payment_reference}` : ""}
+              {Math.abs(onlinePaid - preview.grand_total) > 0.01 && (
+                <span className="mt-0.5 block text-chili">
+                  The bill is now {formatINR(preview.grand_total)} — settle the difference with the customer.
+                </span>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <input
               type="text"

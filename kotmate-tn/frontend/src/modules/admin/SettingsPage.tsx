@@ -30,6 +30,7 @@ import {
   updateWaiterMandatorySetting,
 } from "@/modules/admin/posLayoutSettingsApi";
 import { PrinterFormModal } from "@/modules/admin/PrintersPage";
+import { OnlinePaymentsSettings } from "@/modules/admin/OnlinePaymentsSettings";
 import { updateQrSelfOrderSetting } from "@/modules/admin/qrSelfOrderSettingsApi";
 import { type Printer, listPrinters } from "@/modules/admin/printersApi";
 import {
@@ -325,6 +326,8 @@ function PreferencesTab({
           />
         </div>
       )}
+
+      {qrSelfOrderOnPlan && <OnlinePaymentsSettings />}
     </div>
   );
 }

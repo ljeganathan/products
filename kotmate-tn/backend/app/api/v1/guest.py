@@ -16,6 +16,7 @@ from app.schemas.guest import (
 )
 from app.schemas.items import ItemResponse
 from app.schemas.kot import ActiveKotTicketResponse, KotSendResponse
+from app.schemas.online_payments import GuestCreatePaymentResponse, GuestPaymentStatusResponse
 from app.schemas.orders import OrderResponse
 from app.services.category_service import list_categories
 from app.services.guest_service import (
@@ -24,10 +25,12 @@ from app.services.guest_service import (
     get_menu,
     get_order_status,
     get_top_sellers,
+    online_payment_status,
     place_takeaway_order,
     preview_guest_bill,
     request_bill,
     send_kot_for_guest,
+    start_online_payment,
     to_session_response,
     update_cart,
     update_profile,
@@ -235,3 +238,45 @@ async def guest_request_bill(
         },
     )
     return RequestBillResponse(status=guest_session.status)
+
+
+@router.post(
+    "/payments/create",
+    response_model=GuestCreatePaymentResponse,
+    dependencies=[Depends(require_guest_tenant_scope)],
+)
+async def guest_create_payment(
+    guest: CurrentGuest = Depends(require_guest_tenant_scope), db: AsyncSession = Depends(get_db)
+) -> GuestCreatePaymentResponse:
+    """Creates the gateway order for this guest's bill. The amount is worked out here from
+    the order itself — the client never sends one.
+    """
+    result = await start_online_payment(db, guest)
+    await db.commit()
+    return result
+
+
+@router.get(
+    "/payments/status",
+    response_model=GuestPaymentStatusResponse,
+    dependencies=[Depends(require_guest_tenant_scope)],
+)
+async def guest_payment_status_route(
+    guest: CurrentGuest = Depends(require_guest_tenant_scope), db: AsyncSession = Depends(get_db)
+) -> GuestPaymentStatusResponse:
+    """Polled by the guest page after paying (and when it regains focus after the UPI app
+    closes). Each call re-checks the gateway, so no public webhook is needed to work.
+    """
+    result, notice = await online_payment_status(db, guest)
+    await db.commit()
+    if notice is not None:
+        await ws_manager.broadcast(
+            notice.location_id,
+            {
+                "type": "payment_claimed",
+                "table_id": str(notice.table_id) if notice.table_id else None,
+                "pickup_token": notice.pickup_token,
+                "verified": True,
+            },
+        )
+    return result  # type: ignore[return-value]

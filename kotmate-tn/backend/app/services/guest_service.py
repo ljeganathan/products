@@ -30,6 +30,13 @@ from app.services.branch_header import resolve_branch_header
 from app.services.item_service import list_items, list_top_sellers
 from app.services.kot_service import KotSendResult, list_active_tickets
 from app.services.kot_service import send_kot as _send_kot
+from app.services.online_payment_service import (
+    PaidNotice,
+    create_guest_payment,
+    find_paid_attempt,
+    guest_payment_info,
+    guest_payment_status,
+)
 from app.services.order_service import (
     apply_order_update,
     build_order_response,
@@ -316,6 +323,14 @@ async def update_cart(
 ) -> OrderResponse:
     tenant = (await session.execute(select(Tenant).where(Tenant.id == guest.tenant_id))).scalar_one()
     guest_session = await _get_active_session_or_404(session, guest)
+    if guest_session.order_id is not None and await find_paid_attempt(
+        session, guest.tenant_id, guest_session.order_id
+    ):
+        # Once an order is paid online its total is settled — further cart changes would
+        # silently make the bill differ from what was charged.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This order has been paid — please ask staff to add more items"
+        )
     if not guest_session.customer_name or not guest_session.customer_phone:
         # Backend enforcement for the mandatory name/phone capture (Phase 27) — the
         # frontend already blocks the whole menu behind this same requirement (a
@@ -462,7 +477,20 @@ async def preview_guest_bill(session: AsyncSession, guest: CurrentGuest) -> Gues
             order_id=guest_session.order_id,
             order_label=guest_session.pickup_token or await _table_label(session, guest_session),
         )
-    return GuestBillPreviewResponse(**preview.model_dump(), upi_link=upi_link)
+    online_payment = await guest_payment_info(session, guest.tenant_id, guest_session.order_id)
+    return GuestBillPreviewResponse(**preview.model_dump(), upi_link=upi_link, online_payment=online_payment)
+
+
+async def start_online_payment(session: AsyncSession, guest: CurrentGuest):
+    guest_session = await _get_active_session_or_404(session, guest)
+    return await create_guest_payment(session, guest, guest_session)
+
+
+async def online_payment_status(
+    session: AsyncSession, guest: CurrentGuest
+) -> tuple[object, PaidNotice | None]:
+    guest_session = await _get_active_session_or_404(session, guest)
+    return await guest_payment_status(session, guest, guest_session)
 
 
 async def request_bill(session: AsyncSession, guest: CurrentGuest) -> GuestSession:

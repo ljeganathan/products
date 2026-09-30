@@ -22,6 +22,7 @@ from app.models import (
     Order,
     OrderItem,
     Payment,
+    PaymentAttempt,
     Printer,
     SeatingSection,
     Table,
@@ -402,6 +403,18 @@ async def _guest_session_for_order(
     ).scalar_one_or_none()
 
 
+async def _paid_online_attempt(session: AsyncSession, order_id: uuid.UUID) -> PaymentAttempt | None:
+    """The order's verified online payment (Phase 28), if the guest paid through the
+    gateway — `payment_attempts.status == "paid"` is only ever set after the backend
+    confirmed it with the gateway itself.
+    """
+    return (
+        await session.execute(
+            select(PaymentAttempt).where(PaymentAttempt.order_id == order_id, PaymentAttempt.status == "paid")
+        )
+    ).scalars().first()
+
+
 async def _next_bill_number(session: AsyncSession, tenant_id: uuid.UUID) -> str:
     count = (
         await session.execute(select(func.count()).select_from(Bill).where(Bill.tenant_id == tenant_id))
@@ -431,9 +444,12 @@ async def preview_bill(
     )
     pos_user = (await session.execute(select(User).where(User.id == order.pos_user_id))).scalar_one()
     guest_session = await _guest_session_for_order(session, order.id)
+    paid_attempt = await _paid_online_attempt(session, order.id)
 
     return BillPreviewResponse(
         order_id=order.id,
+        online_paid_amount=float(paid_attempt.amount) if paid_attempt else None,
+        online_payment_reference=paid_attempt.provider_payment_id if paid_attempt else None,
         customer_name=guest_session.customer_name if guest_session else None,
         customer_phone=guest_session.customer_phone if guest_session else None,
         items=[
@@ -697,10 +713,31 @@ async def finalize_bill(
                 line_total=priced.line_total,
             )
         )
+    online_attempt = await _paid_online_attempt(session, order.id)
+    reference_used = False
     for payment in req.payments:
+        # The guest's verified online payment is a UPI line — attach the gateway payment id
+        # to the first UPI line matching its amount, for reconciliation.
+        reference = None
+        if (
+            online_attempt is not None
+            and not reference_used
+            and payment.method == "upi"
+            and abs(payment.amount - float(online_attempt.amount)) <= _PAYMENT_AMOUNT_TOLERANCE
+        ):
+            reference = online_attempt.provider_payment_id
+            reference_used = True
         session.add(
-            Payment(tenant_id=tenant_id, bill_id=bill.id, method=payment.method, amount=payment.amount)
+            Payment(
+                tenant_id=tenant_id,
+                bill_id=bill.id,
+                method=payment.method,
+                amount=payment.amount,
+                reference=reference,
+            )
         )
+    if online_attempt is not None:
+        online_attempt.bill_id = bill.id
 
     await _deduct_stock_for_unsent_items(
         session, tenant_id, plan_features, order, bill.id, totals.priced_items

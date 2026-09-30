@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title id="page-title">Blog | KOTMate</title>
+<meta id="meta-description" name="description" content="KOTMate blog." />
+<meta name="robots" content="noindex" />
+<link rel="icon" href="assets/favicon.png" type="image/png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="css/styles.css" />
+<style>
+  .post-cover { width: 100%; aspect-ratio: 16/7; object-fit: cover; border-radius: var(--radius-md); margin-bottom: 28px; }
+  .prose h1 + .updated { margin-top: -8px; }
+</style>
+</head>
+<body>
+
+<header class="site-header is-scrolled">
+  <div class="container site-header__inner">
+    <a href="/" class="brand" aria-label="KOTMate home">
+      <img src="assets/logo-full.png" alt="KOTMate TN — Hotel Billing &amp; POS System" width="168" height="32" />
+    </a>
+    <div class="header-actions">
+      <a class="btn btn--secondary" href="resources.html">← Demos &amp; Blog</a>
+      <a class="btn btn--primary" href="https://app.kotmatetn.in" data-track="login_click">Login</a>
+    </div>
+  </div>
+</header>
+
+<main class="section">
+  <div class="container prose" id="post-root">
+    <p>Loading…</p>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-bottom">
+    <span>© <span id="year"></span> KOTMate TN. All rights reserved.</span>
+    <span><a href="/">Home</a> · <a href="privacy.html">Privacy Policy</a> · <a href="terms.html">Terms &amp; Conditions</a></span>
+  </div>
+</footer>
+
+<script>document.getElementById("year").textContent = new Date().getFullYear();</script>
+<script defer src="js/api-config.js"></script>
+<script defer src="js/resources.js"></script>
+<script defer>
+  window.addEventListener("DOMContentLoaded", async () => {
+    const { fetchJson, renderMarkdown, formatDate, escapeHtml } = window.KOTMateResources;
+    const root = document.getElementById("post-root");
+    const slug = new URLSearchParams(location.search).get("slug");
+
+    if (!slug) {
+      root.innerHTML = "<h1>Post not found</h1><p><a href=\"resources.html\">Back to Demos &amp; Blog</a></p>";
+      return;
+    }
+
+    try {
+      const post = await fetchJson(`/api/v1/public/blog-posts/${encodeURIComponent(slug)}`);
+      document.title = `${post.title} | KOTMate`;
+      document.getElementById("page-title").textContent = `${post.title} | KOTMate`;
+      if (post.excerpt) document.getElementById("meta-description").setAttribute("content", post.excerpt);
+
+      root.innerHTML = `
+        <h1>${escapeHtml(post.title)}</h1>
+        <p class="updated">${formatDate(post.published_at)}</p>
+        ${post.cover_image_url ? `<img class="post-cover" src="${escapeHtml(post.cover_image_url)}" alt="" />` : ""}
+        <div id="post-body"></div>
+        <p style="margin-top:40px;"><a href="resources.html">← Back to Demos &amp; Blog</a></p>
+      `;
+      document.getElementById("post-body").innerHTML = renderMarkdown(post.body_markdown);
+    } catch {
+      root.innerHTML = "<h1>Post not found</h1><p>This post may have been unpublished or removed.</p><p><a href=\"resources.html\">Back to Demos &amp; Blog</a></p>";
+    }
+  });
+</script>
+</body>
+</html>

@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+    # Encrypts stored payment-gateway secrets (Phase 28). Any string; unset falls back to a
+    # key derived from JWT_SECRET so nothing needs configuring — set it explicitly in
+    # production so rotating JWT_SECRET doesn't make saved gateway secrets unreadable.
+    PAYMENT_SECRETS_KEY: str = ""
+    # Public base URL shown to hotel owners as their webhook address.
+    PUBLIC_BASE_URL: str = "http://localhost:8000"
 
     # Local-disk item image storage (Phase 05) — served back at UPLOAD_URL_PREFIX,
     # abstracted behind app/services/storage.py so swapping to S3/Azure Blob later is a

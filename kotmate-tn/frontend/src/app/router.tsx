@@ -18,6 +18,7 @@ import { BillHistoryPage } from "@/modules/billing/BillHistoryPage";
 import { GuestOrderApp } from "@/modules/guest/GuestOrderApp";
 import { KotDisplayPage } from "@/modules/kot/KotDisplayPage";
 import { POSLayoutRouter } from "@/modules/pos/POSLayoutRouter";
+import { ContentPage } from "@/modules/product-owner/ContentPage";
 import { InvoicesPage } from "@/modules/product-owner/InvoicesPage";
 import { MaintenancePage } from "@/modules/product-owner/MaintenancePage";
 import { PlansPage } from "@/modules/product-owner/PlansPage";
@@ -207,6 +208,7 @@ export const router = createBrowserRouter([
           { path: "invoices", element: <InvoicesPage /> },
           { path: "plans", element: <PlansPage /> },
           { path: "maintenance", element: <MaintenancePage /> },
+          { path: "content", element: <ContentPage /> },
         ],
       },
     ],

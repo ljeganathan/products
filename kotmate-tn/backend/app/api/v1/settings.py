@@ -10,6 +10,11 @@ from app.models import Tenant
 from app.schemas.category_display import CategoryDisplaySettingsRequest, CategoryDisplaySettingsResponse
 from app.schemas.guest import QrSelfOrderSettingsRequest, QrSelfOrderSettingsResponse
 from app.schemas.hotel_master import HotelMasterResponse, HotelMasterUpdateRequest
+from app.schemas.online_payments import (
+    OnlinePaymentSettingsRequest,
+    OnlinePaymentSettingsResponse,
+    OnlinePaymentTestResponse,
+)
 from app.schemas.pos_layout import (
     PosLayoutSettingsRequest,
     PosLayoutSettingsResponse,
@@ -32,6 +37,7 @@ from app.services.hotel_master_service import (
     upload_hotel_master_logo,
     upsert_hotel_master,
 )
+from app.services.online_payment_service import get_settings_view, save_settings, test_credentials
 from app.services.report_print_service import has_report_printing_feature
 from app.services.stock_service import has_stock_management_feature
 from app.services.tenant_onboarding import get_active_plan
@@ -298,3 +304,41 @@ async def delete_tenant_hotel_master_logo(
     result = await remove_hotel_master_logo(db, current_user.tenant_id, location_id)
     await db.commit()
     return result
+
+
+@router.get(
+    "/online-payments",
+    response_model=OnlinePaymentSettingsResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def get_online_payment_settings(
+    current_user: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> OnlinePaymentSettingsResponse:
+    return await get_settings_view(db, current_user.tenant_id)
+
+
+@router.put(
+    "/online-payments",
+    response_model=OnlinePaymentSettingsResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def update_online_payment_settings(
+    payload: OnlinePaymentSettingsRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> OnlinePaymentSettingsResponse:
+    result = await save_settings(db, current_user.tenant_id, payload)
+    await db.commit()
+    return result
+
+
+@router.post(
+    "/online-payments/test",
+    response_model=OnlinePaymentTestResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def test_online_payment_credentials(
+    current_user: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> OnlinePaymentTestResponse:
+    is_test = await test_credentials(db, current_user.tenant_id)
+    return OnlinePaymentTestResponse(ok=True, is_test_mode=is_test)

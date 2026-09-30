@@ -48,6 +48,12 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: 30
       REFRESH_TOKEN_EXPIRE_DAYS: 7
       CORS_ORIGINS: ${CORS_ORIGINS}
+      # Online payments (Razorpay): the public address shown to hotel owners as their
+      # webhook URL, and the key that encrypts stored gateway secrets (falls back to a key
+      # derived from JWT_SECRET when unset — set it so rotating JWT_SECRET can't lock out
+      # saved gateway secrets).
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://app.kotmatetn.in}
+      PAYMENT_SECRETS_KEY: ${PAYMENT_SECRETS_KEY:-}
     restart: always
     ports: !override []
 

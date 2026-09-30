@@ -4,6 +4,7 @@ import uuid
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.bills import BillPreviewResponse
+from app.schemas.online_payments import GuestOnlinePaymentInfo
 from app.schemas.orders import OrderLineInput
 
 
@@ -88,6 +89,10 @@ class GuestBillPreviewResponse(BillPreviewResponse):
     """
 
     upi_link: str | None = None
+    # Whether the hotel takes online (Razorpay) payments, and whether this order has
+    # already been paid that way (Phase 28). Absent/disabled -> the guest UI falls back
+    # to the plain UPI QR above.
+    online_payment: GuestOnlinePaymentInfo = GuestOnlinePaymentInfo()
 
 
 class RequestBillResponse(BaseModel):

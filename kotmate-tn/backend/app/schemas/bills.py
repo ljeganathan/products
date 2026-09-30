@@ -92,6 +92,10 @@ class BillTotals(BaseModel):
     # screen to show before the cashier has typed/confirmed anything themselves.
     customer_name: str | None = None
     customer_phone: str | None = None
+    # Set when the guest already paid this order online (Phase 28) — the Finalize screen
+    # then pre-selects UPI for exactly that amount and shows the gateway reference.
+    online_paid_amount: float | None = None
+    online_payment_reference: str | None = None
 
 
 class BillPreviewResponse(BillTotals):

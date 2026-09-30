@@ -13,6 +13,7 @@ from app.api.v1.locations import router as locations_router
 from app.api.v1.orders import router as orders_router
 from app.api.v1.platform import router as platform_router
 from app.api.v1.printers import router as printers_router
+from app.api.v1.public import router as public_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.sections import router as sections_router
 from app.api.v1.settings import router as settings_router
@@ -21,6 +22,7 @@ from app.api.v1.tables import router as tables_router
 from app.api.v1.tax_rules import router as tax_rules_router
 from app.api.v1.users import router as users_router
 from app.api.v1.waiters import router as waiters_router
+from app.api.v1.webhooks import router as webhooks_router
 
 # Public-route allowlist (CLAUDE.md §2/Phase 02 acceptance criteria: every route from
 # Phase 01 onward requires auth by default). Only these four are unauthenticated:
@@ -55,3 +57,5 @@ api_router.include_router(stock_router)
 api_router.include_router(reports_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(guest_router)
+api_router.include_router(webhooks_router)
+api_router.include_router(public_router)

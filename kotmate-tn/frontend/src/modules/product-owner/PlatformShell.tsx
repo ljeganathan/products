@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { to: "/platform/invoices", label: "Invoices" },
   { to: "/platform/plans", label: "Plans" },
   { to: "/platform/maintenance", label: "Maintenance" },
+  { to: "/platform/content", label: "Content" },
 ] as const;
 
 export function PlatformShell() {
