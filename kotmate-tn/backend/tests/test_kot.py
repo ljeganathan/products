@@ -389,3 +389,52 @@ async def test_takeaway_ticket_has_no_table_number(client: AsyncClient, pro_max_
     body = resp.json()
     assert body["table_number"] is None
     assert body["section_name_en"] == "Takeaway"
+
+
+async def test_print_job_endpoint_rebuilds_ticket_for_handheld_printer(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    # The Kitchen Display's catch-up path (its 15s refresh) reprints a ticket whose live
+    # socket message never arrived. The rebuilt job must match what send_kot handed back.
+    headers = pro_max_tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=20)
+
+    no_printer_order = await _create_order(
+        client, headers, location_id, section_id, [{"item_id": item["id"], "quantity": 1}]
+    )
+    no_printer_ticket = (
+        await client.post("/api/v1/kot", json={"order_id": no_printer_order["id"]}, headers=headers)
+    ).json()
+    no_printer_job = await client.get(
+        f"/api/v1/kot/tickets/{no_printer_ticket['id']}/print-job", headers=headers
+    )
+    assert no_printer_job.status_code == 200
+    assert no_printer_job.json() is None
+
+    await client.post(
+        "/api/v1/printers",
+        json={
+            "location_id": location_id,
+            "name": "Kitchen Printer",
+            "target": "kot",
+            "printer_type": "thermal",
+            "connection_type": "bluetooth",
+            "connection_details": {"device_name": "KOT-BT"},
+        },
+        headers=headers,
+    )
+    order = await _create_order(
+        client, headers, location_id, section_id, [{"item_id": item["id"], "quantity": 2}]
+    )
+    sent = (await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)).json()
+    assert sent["print_job"] is not None
+
+    resp = await client.get(f"/api/v1/kot/tickets/{sent['id']}/print-job", headers=headers)
+    assert resp.status_code == 200, resp.text
+    job = resp.json()
+    assert job["connection_type"] == "bluetooth"
+    assert job["connection_details"] == {"device_name": "KOT-BT"}
+    assert job["data_base64"] == sent["print_job"]["data_base64"]

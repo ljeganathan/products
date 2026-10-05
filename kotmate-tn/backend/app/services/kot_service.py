@@ -78,6 +78,96 @@ async def _load_section_and_table(
     return section, table
 
 
+# KOT printer connections the server can't reach itself — the rendered bytes go back to
+# the open Kitchen Display, which pushes them to the printer (see send_kot).
+HANDHELD_KOT_CONNECTIONS = ("usb", "local_agent", "bluetooth", "rawbt")
+
+
+async def _find_kot_printer(
+    session: AsyncSession, tenant_id: uuid.UUID, location_id: uuid.UUID
+) -> Printer | None:
+    return (
+        await session.execute(
+            select(Printer).where(
+                Printer.tenant_id == tenant_id,
+                Printer.location_id == location_id,
+                Printer.target == "kot",
+                Printer.is_active.is_(True),
+            )
+        )
+    ).scalars().first()
+
+
+async def _render_kot_content(
+    session: AsyncSession,
+    printer: Printer,
+    order: Order,
+    table: Table | None,
+    section: SeatingSection,
+    ticket: KotTicket,
+    render_lines: list[KotTicketLine],
+) -> bytes:
+    hotel = (
+        await session.execute(select(HotelMaster).where(HotelMaster.location_id == order.location_id))
+    ).scalar_one_or_none()
+    render_data = KotTicketRenderData(
+        ticket_number=ticket.ticket_number,
+        table_number=table.table_number if table else None,
+        section_name_en=section.name_en,
+        created_at=ticket.created_at,
+        lines=render_lines,
+        show_tamil_names=hotel.show_tamil_names if hotel else True,
+        party_label=order.party_label,
+        paper_width_mm=printer.paper_width_mm,
+    )
+    return dispatch_kot_print(printer, render_data)
+
+
+def _handheld_print_job(printer: Printer, content: bytes) -> PrintJobPayload:
+    return PrintJobPayload(
+        printer_id=printer.id,
+        connection_type=printer.connection_type,
+        connection_details=printer.connection_details or {},
+        data_base64=base64.b64encode(content).decode("ascii"),
+        paper_width_mm=printer.paper_width_mm,
+    )
+
+
+async def build_kot_reprint_job(
+    session: AsyncSession, tenant: Tenant, ticket_id: uuid.UUID
+) -> PrintJobPayload | None:
+    """Rebuilds the kitchen print job for a ticket that already exists, for a Kitchen
+    Display that never received its live `kot_ticket` message (e.g. its socket was down
+    when the ticket fired). Same rendering as send_kot. Returns None when the tenant's plan
+    doesn't print KOTs, or the location's KOT printer isn't one the display can reach.
+    """
+    ticket = await get_ticket_or_404(session, tenant.id, ticket_id)
+    plan = await get_active_plan(session, tenant.id)
+    if not (plan and plan.features.get("kot_printing")):
+        return None
+    order = await get_order_or_404(session, tenant.id, ticket.order_id)
+    printer = await _find_kot_printer(session, tenant.id, order.location_id)
+    if printer is None or printer.connection_type not in HANDHELD_KOT_CONNECTIONS:
+        return None
+
+    section, table = await _load_section_and_table(session, order)
+    rows = (
+        await session.execute(
+            select(KotTicketItem, OrderItem, Item)
+            .join(OrderItem, OrderItem.id == KotTicketItem.order_item_id)
+            .join(Item, Item.id == OrderItem.item_id)
+            .where(KotTicketItem.kot_ticket_id == ticket.id)
+            .order_by(OrderItem.line_no)
+        )
+    ).all()
+    render_lines = [
+        KotTicketLine(name_en=item.name_en, name_ta=item.name_ta, quantity=kti.quantity, notes=oi.notes)
+        for kti, oi, item in rows
+    ]
+    content = await _render_kot_content(session, printer, order, table, section, ticket, render_lines)
+    return _handheld_print_job(printer, content)
+
+
 async def send_kot(
     session: AsyncSession, tenant: Tenant, order_id: uuid.UUID
 ) -> KotSendResult:
@@ -161,33 +251,9 @@ async def send_kot(
     print_job: PrintJobPayload | None = None
     print_error: str | None = None
     if plan and plan.features.get("kot_printing"):
-        printer = (
-            await session.execute(
-                select(Printer).where(
-                    Printer.tenant_id == tenant.id,
-                    Printer.location_id == order.location_id,
-                    Printer.target == "kot",
-                    Printer.is_active.is_(True),
-                )
-            )
-        ).scalars().first()
+        printer = await _find_kot_printer(session, tenant.id, order.location_id)
         if printer is not None:
-            hotel = (
-                await session.execute(
-                    select(HotelMaster).where(HotelMaster.location_id == order.location_id)
-                )
-            ).scalar_one_or_none()
-            render_data = KotTicketRenderData(
-                ticket_number=ticket.ticket_number,
-                table_number=table.table_number if table else None,
-                section_name_en=section.name_en,
-                created_at=ticket.created_at,
-                lines=render_lines,
-                show_tamil_names=hotel.show_tamil_names if hotel else True,
-                party_label=order.party_label,
-                paper_width_mm=printer.paper_width_mm,
-            )
-            content = dispatch_kot_print(printer, render_data)
+            content = await _render_kot_content(session, printer, order, table, section, ticket, render_lines)
             # "usb"/"local_agent"/"bluetooth"/"rawbt" KOT printers are physically
             # attached to (or paired with, or resolved by RawBT on) the counter
             # machine, not this backend container — hand the rendered bytes back to the
@@ -196,14 +262,8 @@ async def send_kot(
             # "network"/"wifi" printers are reachable directly from here over the LAN,
             # so the backend sends the raw bytes itself instead of claiming success and
             # doing nothing.
-            if printer.connection_type in ("usb", "local_agent", "bluetooth", "rawbt"):
-                print_job = PrintJobPayload(
-                    printer_id=printer.id,
-                    connection_type=printer.connection_type,
-                    connection_details=printer.connection_details or {},
-                    data_base64=base64.b64encode(content).decode("ascii"),
-                    paper_width_mm=printer.paper_width_mm,
-                )
+            if printer.connection_type in HANDHELD_KOT_CONNECTIONS:
+                print_job = _handheld_print_job(printer, content)
                 printed = True
             elif printer.connection_type in ("network", "wifi"):
                 details = printer.connection_details or {}

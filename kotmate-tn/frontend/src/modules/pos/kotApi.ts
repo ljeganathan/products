@@ -63,6 +63,12 @@ export async function listActiveKotTickets(locationId?: string): Promise<ActiveK
   ).data;
 }
 
+// The Kitchen Display's catch-up print for a ticket whose live message never arrived.
+// Null when the location's kitchen printer is one the server prints to itself (or none).
+export async function getKotTicketPrintJob(ticketId: string): Promise<BillPrintJob | null> {
+  return (await api.get<BillPrintJob | null>(`/api/v1/kot/tickets/${ticketId}/print-job`)).data;
+}
+
 export async function updateKotTicketStatus(
   ticketId: string,
   status: "preparing" | "ready",

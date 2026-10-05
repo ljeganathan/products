@@ -8,8 +8,10 @@ from app.core.deps import CurrentUser, get_current_user, require_role, require_t
 from app.db.session import get_db
 from app.models import Order, Tenant
 from app.schemas.kot import ActiveKotTicketResponse, KotSendRequest, KotSendResponse, KotTicketStatusUpdate
+from app.schemas.printing import PrintJobPayload
 from app.services.kot_service import (
     build_active_ticket_response,
+    build_kot_reprint_job,
     build_kot_ticket_broadcast,
     cancel_pending_takeaway_order,
     clear_billed_ticket,
@@ -68,6 +70,20 @@ async def send_order_to_kot(
         print_job=result.print_job,
         print_error=result.print_error,
     )
+
+
+@router.get("/tickets/{ticket_id}/print-job", response_model=PrintJobPayload | None)
+async def get_ticket_print_job(
+    ticket_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PrintJobPayload | None:
+    """The Kitchen Display's catch-up path: a ticket that showed up in its 15-second refresh
+    but never arrived over the live socket still needs printing (see build_kot_reprint_job).
+    """
+    await _require_kds_feature(db, current_user.tenant_id)
+    tenant = await _get_tenant(db, current_user)
+    return await build_kot_reprint_job(db, tenant, ticket_id)
 
 
 @router.get("/tickets/active", response_model=list[ActiveKotTicketResponse])

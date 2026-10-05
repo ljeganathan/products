@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import logoMark from "@/assets/logo-mark.png";
@@ -9,9 +9,9 @@ import { listLocations } from "@/modules/admin/locationsApi";
 import { me } from "@/modules/auth/authApi";
 import { useAuthStore } from "@/modules/auth/authStore";
 import { UserMenu } from "@/modules/auth/UserMenu";
-import { type ActiveKotTicket, listActiveKotTickets, updateKotTicketStatus } from "@/modules/pos/kotApi";
-import { printKotTicketOnce } from "@/lib/printDispatch";
+import { printKotTicketFromServer, printKotTicketOnce } from "@/lib/printDispatch";
 import type { BillPrintJob } from "@/modules/pos/billsApi";
+import { getKotTicketPrintJob, type ActiveKotTicket, listActiveKotTickets, updateKotTicketStatus } from "@/modules/pos/kotApi";
 import { useLocationSocket } from "@/modules/realtime/useLocationSocket";
 import { StockManagementView } from "@/modules/stock/StockManagementView";
 
@@ -71,7 +71,7 @@ export function KotDisplayPage() {
     setSelectedLocationId(nextId);
   }
 
-  const { data: tickets = [], isLoading } = useQuery({
+  const { data: tickets = [], isLoading, isSuccess: ticketsLoaded } = useQuery({
     queryKey: ["kot-tickets-active", location?.id],
     queryFn: () => listActiveKotTickets(location?.id),
     // Wait for the locations list to resolve so this doesn't fire once unscoped (all
@@ -80,6 +80,26 @@ export function KotDisplayPage() {
     enabled: !locationsLoading,
     refetchInterval: 15_000,
   });
+
+  // Tickets this page has already seen, per location. The first load records what's
+  // already on screen so it isn't reprinted; after that, any ticket that appears in a
+  // refresh and was never printed by the live message gets printed from here.
+  const seenTickets = useRef<{ locationId: string; ticketIds: Set<string> } | null>(null);
+  useEffect(() => {
+    if (!ticketsLoaded || !location) return;
+    const seen = seenTickets.current;
+    if (!seen || seen.locationId !== location.id) {
+      seenTickets.current = { locationId: location.id, ticketIds: new Set(tickets.map((t) => t.id)) };
+      return;
+    }
+    for (const ticket of tickets) {
+      if (seen.ticketIds.has(ticket.id) || ticket.is_pending_takeaway) continue;
+      seen.ticketIds.add(ticket.id);
+      void printKotTicketFromServer(ticket.id, () => getKotTicketPrintJob(ticket.id)).then((error) => {
+        if (error) setPrintNotice(error);
+      });
+    }
+  }, [tickets, ticketsLoaded, location]);
 
   const { data: items = [] } = useQuery({
     queryKey: ["kds-tracked-items"],
