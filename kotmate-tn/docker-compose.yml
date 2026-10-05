@@ -44,6 +44,9 @@ services:
     restart: unless-stopped
     environment:
       VITE_API_URL: http://192.168.0.125:8000
+      # Base address printed into table/section QR codes, so a phone scanning the QR can
+      # reach the app over the same Wi-Fi (localhost would point at the phone itself).
+      VITE_PUBLIC_APP_URL: http://192.168.0.125:5173
     ports:
       - "5173:5173"
     volumes:

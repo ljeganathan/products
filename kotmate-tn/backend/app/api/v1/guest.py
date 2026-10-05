@@ -36,6 +36,7 @@ from app.services.guest_service import (
     update_profile,
 )
 from app.services.kot_service import build_kot_ticket_broadcast
+from app.services.online_payment_service import broadcast_paid_notice
 from app.ws.manager import manager as ws_manager
 
 # Genuinely public route (no CurrentUser, no CurrentGuest) — this *is* the guest
@@ -270,13 +271,5 @@ async def guest_payment_status_route(
     result, notice = await online_payment_status(db, guest)
     await db.commit()
     if notice is not None:
-        await ws_manager.broadcast(
-            notice.location_id,
-            {
-                "type": "payment_claimed",
-                "table_id": str(notice.table_id) if notice.table_id else None,
-                "pickup_token": notice.pickup_token,
-                "verified": True,
-            },
-        )
+        await broadcast_paid_notice(notice)
     return result  # type: ignore[return-value]

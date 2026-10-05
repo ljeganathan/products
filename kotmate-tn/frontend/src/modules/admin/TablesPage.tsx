@@ -201,7 +201,7 @@ function TableQrCodeModal({ table, onClose }: { table: Table; onClose: () => voi
   });
 
   function scanUrl(qrToken: string): string {
-    return `${window.location.origin}/order/${qrToken}`;
+    return `${(import.meta.env.VITE_PUBLIC_APP_URL as string | undefined) ?? window.location.origin}/order/${qrToken}`;
   }
 
   // navigator.clipboard only exists in a "secure context" (HTTPS, or localhost) — it's

@@ -257,3 +257,199 @@ async def test_online_payment_disabled_falls_back(client: AsyncClient, pro_max_t
     assert preview.json()["online_payment"]["enabled"] is False
     create = await client.post("/api/v1/guest/payments/create", headers=guest)
     assert create.status_code == 400
+
+
+async def test_takeaway_kot_fires_automatically_once_paid_online(
+    client: AsyncClient, pro_max_tenant_admin: dict, fake_gateway
+):
+    """A takeaway order stays pending until paid; once the payment is verified its kitchen
+    ticket fires by itself, and a second check does not send it again.
+    """
+    from tests.test_takeaway_qr_ordering import (
+        _create_category as tw_category,
+    )
+    from tests.test_takeaway_qr_ordering import (
+        _create_item as tw_item,
+    )
+    from tests.test_takeaway_qr_ordering import (
+        _default_location_id as tw_location,
+    )
+    from tests.test_takeaway_qr_ordering import (
+        _enable_qr_self_order as tw_enable,
+    )
+    from tests.test_takeaway_qr_ordering import (
+        _generate_section_qr,
+    )
+    from tests.test_takeaway_qr_ordering import (
+        _guest_headers as tw_guest,
+    )
+    from tests.test_takeaway_qr_ordering import (
+        _section_id as tw_section,
+    )
+    from tests.test_takeaway_qr_ordering import (
+        _set_guest_profile as tw_profile,
+    )
+    from tests.test_takeaway_qr_ordering import (
+        _start_guest_session as tw_start,
+    )
+
+    headers = pro_max_tenant_admin["headers"]
+    await _configure(client, headers)
+    await tw_enable(client, headers)
+    location_id = await tw_location(client, headers)
+    section_id = await tw_section(client, headers, "Takeaway")
+    qr_token = await _generate_section_qr(client, headers, section_id, location_id)
+    category = await tw_category(client, headers)
+    item = await tw_item(client, headers, category["id"], price=60)
+
+    guest = tw_guest(await tw_start(client, qr_token))
+    await tw_profile(client, guest)
+    cart = await client.post(
+        "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
+    )
+    order_id = cart.json()["id"]
+    created = (await client.post("/api/v1/guest/payments/create", headers=guest)).json()
+
+    # Before payment the order shows to staff only as a pending row, never a real ticket.
+    before = await client.get("/api/v1/kot/tickets/active", headers=headers)
+    assert [t["status"] for t in before.json() if t["order_id"] == order_id] == ["pending"]
+
+    fake_gateway.pay(created["provider_order_id"], 6000)
+    paid = await client.get("/api/v1/guest/payments/status", headers=guest)
+    assert paid.json()["status"] == "paid"
+
+    after = await client.get("/api/v1/kot/tickets/active", headers=headers)
+    tickets = [t for t in after.json() if t["order_id"] == order_id]
+    assert [t["status"] for t in tickets] == ["new"]
+
+    # Checking again must not fire a second ticket for the same items.
+    await client.get("/api/v1/guest/payments/status", headers=guest)
+    again = await client.get("/api/v1/kot/tickets/active", headers=headers)
+    assert len([t for t in again.json() if t["order_id"] == order_id]) == 1
+
+
+async def test_dine_in_send_to_kitchen_prints_on_network_kot_printer(
+    client: AsyncClient, pro_max_tenant_admin: dict, monkeypatch
+):
+    """Tapping "Send to Kitchen" on a table QR fires the KOT and sends it straight to a
+    network kitchen printer, with no printer setup on the customer's side.
+    """
+    from app.services import kot_service
+    from tests.test_guest_ordering import (
+        _create_category,
+        _create_item,
+        _create_table,
+        _default_location_id,
+        _enable_qr_self_order,
+        _generate_qr,
+        _guest_headers,
+        _section_id,
+        _set_guest_profile,
+        _start_guest_session,
+    )
+
+    sent: list[tuple] = []
+
+    def fake_send(ip, port, content):
+        sent.append((ip, port, content))
+        return None
+
+    monkeypatch.setattr(kot_service, "send_raw_bytes_over_network", fake_send)
+
+    headers = pro_max_tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    table = await _create_table(client, headers, location_id, section_id)
+    await _enable_qr_self_order(client, headers)
+    qr_token = await _generate_qr(client, headers, table["id"])
+    printer = await client.post(
+        "/api/v1/printers",
+        json={
+            "location_id": location_id,
+            "name": "Kitchen",
+            "target": "kot",
+            "printer_type": "thermal",
+            "connection_type": "network",
+            "connection_details": {"ip_address": "192.168.0.50", "port": 9100},
+            "paper_width_mm": 80,
+        },
+        headers=headers,
+    )
+    assert printer.status_code == 201, printer.text
+
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=40)
+    guest = _guest_headers(await _start_guest_session(client, qr_token))
+    await _set_guest_profile(client, guest)
+    await client.post(
+        "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
+    )
+
+    send = await client.post("/api/v1/guest/send-kot", headers=guest)
+    assert send.status_code == 201, send.text
+    assert len(sent) == 1 and sent[0][0] == "192.168.0.50" and sent[0][1] == 9100
+    assert len(sent[0][2]) > 0
+
+
+async def test_bluetooth_kitchen_ticket_is_broadcast_with_print_job(
+    client: AsyncClient, pro_max_tenant_admin: dict, monkeypatch
+):
+    """A Bluetooth (device-paired) kitchen printer can't be reached by the server, so a dine-in
+    ticket must reach the open Kitchen Display with its print data attached, to print there.
+    """
+    from app.api.v1 import guest as guest_routes
+    from tests.test_guest_ordering import (
+        _create_category,
+        _create_item,
+        _create_table,
+        _default_location_id,
+        _enable_qr_self_order,
+        _generate_qr,
+        _guest_headers,
+        _section_id,
+        _set_guest_profile,
+        _start_guest_session,
+    )
+
+    messages: list[dict] = []
+
+    async def capture(location_id, message):
+        messages.append(message)
+
+    monkeypatch.setattr(guest_routes.ws_manager, "broadcast", capture)
+
+    headers = pro_max_tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    table = await _create_table(client, headers, location_id, section_id)
+    await _enable_qr_self_order(client, headers)
+    qr_token = await _generate_qr(client, headers, table["id"])
+    printer = await client.post(
+        "/api/v1/printers",
+        json={
+            "location_id": location_id,
+            "name": "Kitchen BT",
+            "target": "kot",
+            "printer_type": "thermal",
+            "connection_type": "bluetooth",
+            "connection_details": {"device_name": "RP-80", "device_id": "abc"},
+            "paper_width_mm": 80,
+        },
+        headers=headers,
+    )
+    assert printer.status_code == 201, printer.text
+
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=40)
+    guest = _guest_headers(await _start_guest_session(client, qr_token))
+    await _set_guest_profile(client, guest)
+    await client.post(
+        "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
+    )
+    send = await client.post("/api/v1/guest/send-kot", headers=guest)
+    assert send.status_code == 201, send.text
+
+    kot = [m for m in messages if m.get("type") == "kot_ticket"]
+    assert len(kot) == 1
+    job = kot[0]["print_job"]
+    assert job is not None and job["connection_type"] == "bluetooth" and job["data_base64"]

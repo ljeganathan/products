@@ -31,8 +31,10 @@ from app.schemas.online_payments import (
 )
 from app.services.bill_service import preview_bill
 from app.services.branch_header import resolve_branch_header
+from app.services.kot_service import KotSendResult, build_kot_ticket_broadcast, send_kot
 from app.services.payment_gateway import PaymentGateway, build_gateway, get_gateway, get_gateway_row
 from app.services.tenant_onboarding import get_active_plan
+from app.ws.manager import manager as ws_manager
 
 _RECENT_ATTEMPTS_TO_SYNC = 5
 
@@ -44,6 +46,9 @@ class PaidNotice:
     location_id: uuid.UUID
     table_id: uuid.UUID | None
     pickup_token: str | None
+    # Set when a takeaway order's kitchen ticket was fired automatically on payment, so the
+    # route can broadcast it to the KOT screens the same way a normal KOT send does.
+    kot_result: KotSendResult | None = None
 
 
 def to_paise(amount: float) -> int:
@@ -143,6 +148,20 @@ async def find_paid_attempt(
     return next((a for a in attempts if a.status == "paid"), None)
 
 
+async def _auto_send_takeaway_kot(
+    session: AsyncSession, tenant_id: uuid.UUID, order_id: uuid.UUID
+) -> KotSendResult | None:
+    """A verified online payment means the takeaway customer has paid, so their kitchen
+    ticket fires automatically (same send path as the Send button). Returns None when there
+    is nothing new to send, e.g. staff already sent it, so a paid order is never sent twice.
+    """
+    tenant = (await session.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one()
+    try:
+        return await send_kot(session, tenant, order_id)
+    except HTTPException:
+        return None
+
+
 async def apply_gateway_payments(
     session: AsyncSession,
     gateway: PaymentGateway,
@@ -187,7 +206,12 @@ async def apply_gateway_payments(
         await session.flush()
         if guest_session is None:
             return None
-        return PaidNotice(guest_session.location_id, guest_session.table_id, guest_session.pickup_token)
+        kot_result = None
+        if guest_session.table_id is None and guest_session.order_id is not None:
+            kot_result = await _auto_send_takeaway_kot(session, attempt.tenant_id, guest_session.order_id)
+        return PaidNotice(
+            guest_session.location_id, guest_session.table_id, guest_session.pickup_token, kot_result
+        )
 
     failed = [p for p in payments if p.get("status") == "failed"]
     if failed:
@@ -346,3 +370,23 @@ async def handle_webhook(
     # Re-read from the gateway rather than trusting the webhook body's contents.
     payments = await gateway.fetch_order_payments(provider_order_id)
     return await apply_gateway_payments(session, gateway, attempt, payments)
+
+
+async def broadcast_paid_notice(notice: PaidNotice) -> None:
+    """Live updates for staff screens after a verified payment: the "paid" alert, and for a
+    takeaway order that just fired its kitchen ticket, the same ticket and stock messages a
+    normal KOT send broadcasts. Called only after the DB transaction has committed.
+    """
+    await ws_manager.broadcast(
+        notice.location_id,
+        {
+            "type": "payment_claimed",
+            "table_id": str(notice.table_id) if notice.table_id else None,
+            "pickup_token": notice.pickup_token,
+            "verified": True,
+        },
+    )
+    if notice.kot_result is not None:
+        await ws_manager.broadcast(notice.location_id, build_kot_ticket_broadcast(notice.kot_result))
+        for stock_message in notice.kot_result.stock_messages:
+            await ws_manager.broadcast(notice.location_id, stock_message)

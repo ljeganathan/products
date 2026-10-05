@@ -391,6 +391,10 @@ async def list_active_tickets(
             Order.source == "guest",
             Order.table_id.is_(None),
             Order.status == "open",
+            # Only orders with no kitchen ticket yet. Once a ticket exists (staff sent it, or
+            # it was auto-sent on a verified online payment) the real ticket above shows it;
+            # listing it here too would show the same order twice.
+            ~Order.id.in_(select(KotTicket.order_id).where(KotTicket.tenant_id == tenant_id)),
         )
     )
     if location_id is not None:
@@ -450,4 +454,7 @@ def build_kot_ticket_broadcast(result: KotSendResult) -> dict:
         "table_number": result.table_number,
         "section_name_en": result.section_name_en,
         "status": result.ticket.status,
+        # Set only for a Bluetooth/USB/RawBT kitchen printer, which the server cannot reach
+        # itself. The open Kitchen Display screen (paired with that printer) prints it.
+        "print_job": result.print_job.model_dump(mode="json") if result.print_job else None,
     }

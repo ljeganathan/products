@@ -6,8 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.services.online_payment_service import handle_webhook
-from app.ws.manager import manager as ws_manager
+from app.services.online_payment_service import broadcast_paid_notice, handle_webhook
 
 # Public by design (the gateway calls it, with no login) — authenticity comes from the
 # HMAC signature checked against that tenant's own webhook secret, and the handler
@@ -30,13 +29,5 @@ async def razorpay_webhook(
     notice = await handle_webhook(db, tenant_id, raw_body, x_razorpay_signature, payload)
     await db.commit()
     if notice is not None:
-        await ws_manager.broadcast(
-            notice.location_id,
-            {
-                "type": "payment_claimed",
-                "table_id": str(notice.table_id) if notice.table_id else None,
-                "pickup_token": notice.pickup_token,
-                "verified": True,
-            },
-        )
+        await broadcast_paid_notice(notice)
     return {"ok": True}

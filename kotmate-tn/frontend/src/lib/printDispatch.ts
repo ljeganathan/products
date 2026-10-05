@@ -30,3 +30,14 @@ export async function dispatchPrintJob(job: BillPrintJob | null): Promise<string
     return err instanceof Error ? err.message : "Couldn't print to the local printer.";
   }
 }
+
+// Kitchen tickets for Bluetooth/USB/RawBT kitchen printers arrive over the live location
+// socket, and the open Kitchen Display prints them. A ticket is printed at most once per
+// page session, so a reconnect or a second message for the same ticket never reprints.
+const printedKotTickets = new Set<string>();
+
+export async function printKotTicketOnce(ticketId: string, job: BillPrintJob): Promise<string | null> {
+  if (printedKotTickets.has(ticketId)) return null;
+  printedKotTickets.add(ticketId);
+  return dispatchPrintJob(job);
+}

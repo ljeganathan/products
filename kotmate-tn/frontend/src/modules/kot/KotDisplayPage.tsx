@@ -10,6 +10,8 @@ import { me } from "@/modules/auth/authApi";
 import { useAuthStore } from "@/modules/auth/authStore";
 import { UserMenu } from "@/modules/auth/UserMenu";
 import { type ActiveKotTicket, listActiveKotTickets, updateKotTicketStatus } from "@/modules/pos/kotApi";
+import { printKotTicketOnce } from "@/lib/printDispatch";
+import type { BillPrintJob } from "@/modules/pos/billsApi";
 import { useLocationSocket } from "@/modules/realtime/useLocationSocket";
 import { StockManagementView } from "@/modules/stock/StockManagementView";
 
@@ -84,8 +86,17 @@ export function KotDisplayPage() {
     queryFn: () => listItems({ active_only: true }),
   });
 
+  const [printNotice, setPrintNotice] = useState<string | null>(null);
+
   useLocationSocket(location?.id, (msg) => {
     if (msg.type === "kot_ticket") {
+      // Bluetooth/USB/RawBT kitchen printers are reachable only from this screen's device,
+      // so the ticket prints here when it arrives (see printKotTicketOnce).
+      if (msg.print_job) {
+        void printKotTicketOnce(msg.id as string, msg.print_job as BillPrintJob).then((error) =>
+          setPrintNotice(error),
+        );
+      }
       // Only a brand-new ticket starts life with status "new" — a status-update
       // broadcast (kitchen staff marking one preparing/ready) reuses the same message
       // shape but never carries that value, so this is how a "new order" chime stays
@@ -154,6 +165,16 @@ export function KotDisplayPage() {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
+      {printNotice && (
+        <button
+          type="button"
+          onClick={() => setPrintNotice(null)}
+          role="alert"
+          className="flex-none bg-chili-soft px-4 py-2 text-left text-xs font-semibold text-chili"
+        >
+          Kitchen ticket didn't print: {printNotice}. Check the printer is switched on and connected to this screen, then tap here to dismiss.
+        </button>
+      )}
       <header className="flex items-center gap-2.5 border-b border-border bg-surface px-4 py-2.5 shadow-pos">
         <img src={logoMark} alt="KOTMate TN" className="h-7 w-7 object-contain" />
         <span className="text-[13px] font-extrabold leading-none">Kitchen Display</span>
