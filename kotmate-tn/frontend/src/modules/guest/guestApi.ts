@@ -54,6 +54,8 @@ export interface GuestSession {
   customer_phone: string | null;
   order_id: string | null;
   status: "active" | "payment_claimed" | "closed";
+  // Takeaway only: how the guest chose to pay when placing the order. Null until chosen.
+  takeaway_payment?: "online" | "cash" | null;
 }
 
 // True for a Takeaway/non-seating session — every scan is its own independent order
@@ -115,10 +117,17 @@ export interface GuestKotSendResponse {
   id: string;
   ticket_number: string;
   order_id: string;
+  // Takeaway: "pending" (cash, waiting for the counter) or "awaiting_payment" (pay online first).
+  status: string;
 }
 
-export async function sendGuestOrderToKitchen(): Promise<GuestKotSendResponse> {
-  return (await guestApi.post<GuestKotSendResponse>("/api/v1/guest/send-kot")).data;
+// Takeaway orders pass how the guest pays. Dine-in orders pass nothing.
+export async function sendGuestOrderToKitchen(paymentMethod?: "online" | "cash"): Promise<GuestKotSendResponse> {
+  return (
+    await guestApi.post<GuestKotSendResponse>("/api/v1/guest/send-kot", {
+      payment_method: paymentMethod ?? null,
+    })
+  ).data;
 }
 
 export interface GuestOrderStatusTicket {
@@ -134,10 +143,12 @@ export async function getGuestOrderStatus(): Promise<GuestOrderStatusTicket[]> {
   return (await guestApi.get<GuestOrderStatusTicket[]>("/api/v1/guest/order-status")).data;
 }
 
-// Online (Razorpay) payment, Phase 28. `enabled` false -> the Bill tab shows the plain UPI
-// QR instead. The amount is never sent from here: the server works it out from the order.
+// Online payment (Phase 28, Razorpay; Cashfree added later). `enabled` false -> the Bill tab
+// shows the plain UPI QR instead. The amount is never sent from here: the server works it out
+// from the order.
 export interface GuestOnlinePaymentInfo {
   enabled: boolean;
+  provider: "razorpay" | "cashfree" | null;
   key_id: string | null;
   is_test_mode: boolean;
   paid: boolean;
@@ -146,8 +157,11 @@ export interface GuestOnlinePaymentInfo {
 }
 
 export interface GuestCreatedPayment {
+  provider: "razorpay" | "cashfree";
   provider_order_id: string;
   key_id: string;
+  // Cashfree's checkout is opened with this session id.
+  payment_session_id: string | null;
   amount_paise: number;
   currency: string;
   hotel_name: string;
@@ -155,6 +169,7 @@ export interface GuestCreatedPayment {
   customer_name: string | null;
   customer_phone: string | null;
   is_test_mode: boolean;
+  environment: "sandbox" | "production" | null;
 }
 
 export interface GuestPaymentStatus {

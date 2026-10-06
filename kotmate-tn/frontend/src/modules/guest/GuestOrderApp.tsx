@@ -116,6 +116,16 @@ export function GuestOrderApp() {
   });
   const [activeCategoryId, setActiveCategoryId] = useState<string>(TOP_SELLING_ID);
 
+  // Takeaway only: whether the "pay online" choice is offered in the cart — the same answer
+  // the Bill tab gets. Asked only once there's something in the cart to pay for.
+  const hasUnsentItems = order?.items.some((l) => !l.is_kot_sent) ?? false;
+  const onlinePreviewQuery = useQuery({
+    queryKey: ["guest-bill-preview"],
+    queryFn: getGuestBillPreview,
+    enabled: sessionQuery.isSuccess && sessionQuery.data?.table_id === null && hasUnsentItems,
+  });
+  const onlineAvailable = onlinePreviewQuery.data?.online_payment.enabled ?? false;
+
   // Rehydrates the draft cart on load — without this a guest who added items but
   // hasn't sent them to the kitchen yet would lose sight of their own cart on refresh.
   useEffect(() => {
@@ -162,20 +172,33 @@ export function GuestOrderApp() {
     }
   }
 
-  async function handleSendToKitchen() {
+  async function handleSendToKitchen(paymentMethod?: "online" | "cash") {
     setBusy(true);
     try {
-      const result = await sendGuestOrderToKitchen();
+      const result = await sendGuestOrderToKitchen(paymentMethod);
+      if (paymentMethod) {
+        // Written straight into the session (not refetched): the session query must never
+        // re-run on its own, since that would mint a new takeaway session.
+        queryClient.setQueryData<GuestSession>(["guest-session", qrToken], (prev) =>
+          prev ? { ...prev, takeaway_payment: paymentMethod } : prev,
+        );
+      }
       const fresh = await getGuestCart();
       setOrder(fresh);
       setCartOpen(false);
+      if (result.status === "awaiting_payment") {
+        // Takeaway paying online: no ticket yet. The bill tab takes the payment, and the
+        // ticket is created only once the payment is verified.
+        setTab("bill");
+        setNotice("Pay to place your order — your ticket is created once payment is confirmed.");
+        return;
+      }
       setTab("status");
-      // Takeaway: nothing has actually reached the kitchen yet (staff confirm it from
-      // their side first, see the backend's own place_takeaway_order docstring) — the
-      // ticket_number here is really the pickup token, so the wording matches that.
+      // Takeaway: the ticket_number here is the pickup token. A cash order waits for the
+      // counter to confirm it before it reaches the kitchen.
       setNotice(
         session && isTakeawaySession(session)
-          ? `Order placed! Your pickup number: ${result.ticket_number}`
+          ? `Order placed! Your pickup number: ${result.ticket_number}${paymentMethod === "cash" ? " — pay at the counter" : ""}`
           : `Sent to the kitchen — ticket #${result.ticket_number}`,
       );
     } catch (err) {
@@ -276,11 +299,16 @@ export function GuestOrderApp() {
           />
         )}
         {tab === "status" && (
-          <StatusTab onSessionEnded={() => setSessionEnded(true)} onGoToBill={() => setTab("bill")} />
+          <StatusTab
+            takeaway={takeaway}
+            onSessionEnded={() => setSessionEnded(true)}
+            onGoToBill={() => setTab("bill")}
+          />
         )}
         {tab === "bill" && (
           <BillTab
             tokenLabel={takeaway ? (session.pickup_token ?? "") : `Table ${session.table_number}`}
+            payAtCounter={takeaway && session.takeaway_payment === "cash"}
             onSessionEnded={() => setSessionEnded(true)}
           />
         )}
@@ -316,8 +344,9 @@ export function GuestOrderApp() {
           order={order}
           busy={busy}
           takeaway={takeaway}
+          onlineAvailable={onlineAvailable}
           onQuantityChange={(id, qty) => void handleQuantityChange(id, qty)}
-          onSend={() => void handleSendToKitchen()}
+          onSend={(paymentMethod) => void handleSendToKitchen(paymentMethod)}
           onClose={() => setCartOpen(false)}
         />
       )}
@@ -502,6 +531,7 @@ function CartSheet({
   order,
   busy,
   takeaway,
+  onlineAvailable,
   onQuantityChange,
   onSend,
   onClose,
@@ -509,8 +539,9 @@ function CartSheet({
   order: Order | null;
   busy: boolean;
   takeaway: boolean;
+  onlineAvailable: boolean;
   onQuantityChange: (lineId: string, qty: number) => void;
-  onSend: () => void;
+  onSend: (paymentMethod?: "online" | "cash") => void;
   onClose: () => void;
 }) {
   const unsent = order?.items.filter((l) => !l.is_kot_sent) ?? [];
@@ -571,23 +602,56 @@ function CartSheet({
           </div>
         )}
 
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-border px-4 py-2.5 text-sm font-bold hover:bg-surface-2"
-          >
-            Close
-          </button>
-          <button
-            type="button"
-            onClick={onSend}
-            disabled={unsent.length === 0 || busy}
-            className="flex-1 rounded-lg bg-accent py-2.5 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
-          >
-            {busy ? "Placing…" : takeaway ? "Place Order" : "Send to Kitchen"}
-          </button>
-        </div>
+        {takeaway ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm font-extrabold">How would you like to pay?</p>
+            {onlineAvailable && (
+              <button
+                type="button"
+                onClick={() => onSend("online")}
+                disabled={unsent.length === 0 || busy}
+                className="rounded-lg bg-accent py-3 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
+              >
+                💳 Pay online now
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onSend("cash")}
+              disabled={unsent.length === 0 || busy}
+              className={`rounded-lg py-3 text-sm font-extrabold disabled:opacity-40 ${
+                onlineAvailable ? "border border-border hover:bg-surface-2" : "bg-accent text-accent-foreground"
+              }`}
+            >
+              {busy ? "Placing…" : "💵 Pay by cash at the counter"}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg py-2 text-sm font-bold text-ink-faint hover:bg-surface-2"
+            >
+              Close
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-border px-4 py-2.5 text-sm font-bold hover:bg-surface-2"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={() => onSend()}
+              disabled={unsent.length === 0 || busy}
+              className="flex-1 rounded-lg bg-accent py-2.5 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
+            >
+              {busy ? "Placing…" : "Send to Kitchen"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -674,9 +738,11 @@ function ProfileSheet({
 }
 
 function StatusTab({
+  takeaway,
   onSessionEnded,
   onGoToBill,
 }: {
+  takeaway: boolean;
   onSessionEnded: () => void;
   onGoToBill: () => void;
 }) {
@@ -700,7 +766,7 @@ function StatusTab({
         onClick={onGoToBill}
         className="rounded-lg bg-accent py-2.5 text-sm font-extrabold text-accent-foreground"
       >
-        🧾 Bill
+        {takeaway ? "🧾 Bill" : "💳 Pay Bill"}
       </button>
       {tickets.length === 0 && (
         <p className="p-4 text-center text-sm text-ink-faint">
@@ -740,7 +806,15 @@ function StatusTab({
   );
 }
 
-function BillTab({ tokenLabel, onSessionEnded }: { tokenLabel: string; onSessionEnded: () => void }) {
+function BillTab({
+  tokenLabel,
+  payAtCounter,
+  onSessionEnded,
+}: {
+  tokenLabel: string;
+  payAtCounter: boolean;
+  onSessionEnded: () => void;
+}) {
   const queryClient = useQueryClient();
   const { data, isLoading, isError, error } = useQuery<GuestBillPreview>({
     queryKey: ["guest-bill-preview"],
@@ -784,7 +858,14 @@ function BillTab({ tokenLabel, onSessionEnded }: { tokenLabel: string; onSession
         </div>
       </div>
 
-      {data.online_payment.enabled && (
+      {payAtCounter && (
+        <div className="mt-4 rounded-xl border border-border bg-surface p-4 text-center shadow-pos">
+          <p className="text-sm font-extrabold">💵 Pay at the counter</p>
+          <p className="mt-1 text-xs text-ink-faint">Pay when you collect your order, with the pickup number above.</p>
+        </div>
+      )}
+
+      {!payAtCounter && data.online_payment.enabled && (
         <OnlinePayCard
           info={data.online_payment}
           total={data.grand_total}
@@ -794,7 +875,7 @@ function BillTab({ tokenLabel, onSessionEnded }: { tokenLabel: string; onSession
         />
       )}
 
-      {!data.online_payment.enabled && data.upi_link && (
+      {!payAtCounter && !data.online_payment.enabled && data.upi_link && (
         <div className="mt-4 rounded-xl border border-border bg-surface p-4 text-center shadow-pos">
           <h2 className="mb-1 text-sm font-extrabold uppercase tracking-wide text-ink-faint">
             💳 Scan to Pay via UPI

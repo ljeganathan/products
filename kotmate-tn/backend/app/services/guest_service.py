@@ -43,6 +43,7 @@ from app.services.order_service import (
     create_order,
     get_order_or_404,
 )
+from app.services.payment_gateway import get_gateway
 from app.services.tenant_onboarding import get_active_plan, get_active_subscription
 
 _UNAVAILABLE_MESSAGE = "Ordering is currently unavailable right now."
@@ -161,6 +162,7 @@ async def to_session_response(session: AsyncSession, guest_session: GuestSession
         customer_phone=guest_session.customer_phone,
         order_id=guest_session.order_id,
         status=guest_session.status,
+        takeaway_payment=guest_session.takeaway_payment,
     )
 
 
@@ -398,7 +400,9 @@ async def send_kot_for_guest(session: AsyncSession, guest: CurrentGuest) -> KotS
     return await _send_kot(session, tenant, guest_session.order_id)
 
 
-async def place_takeaway_order(session: AsyncSession, guest: CurrentGuest) -> GuestSession:
+async def place_takeaway_order(
+    session: AsyncSession, guest: CurrentGuest, payment_method: str | None = None
+) -> GuestSession:
     """A Takeaway guest's equivalent of "Send to Kitchen" — deliberately does almost
     nothing server-side (production decision): no `KotTicket` is created, no stock is
     deducted, and nothing is sent to the kitchen printer yet. The items are already
@@ -414,6 +418,19 @@ async def place_takeaway_order(session: AsyncSession, guest: CurrentGuest) -> Gu
     guest_session = await _get_active_session_or_404(session, guest)
     if guest_session.order_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add an item before placing your order")
+    if payment_method is None:
+        return guest_session
+
+    if payment_method == "online":
+        if guest_session.takeaway_payment == "cash":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "This order is set to pay at the counter"
+            )
+        if await get_gateway(session, guest.tenant_id) is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Online payment isn't available here")
+        if await find_paid_attempt(session, guest.tenant_id, guest_session.order_id) is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "This order has already been paid")
+    guest_session.takeaway_payment = payment_method
     return guest_session
 
 

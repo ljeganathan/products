@@ -64,11 +64,19 @@ class GuestSession(UUIDPKMixin, TimestampMixin, Base):
     order_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("orders.id"))
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Takeaway only: how the guest chose to pay at placement. 'online' keeps the order off the
+    # POS list until the payment is verified; 'cash' puts it there for the counter to confirm.
+    # NULL for dine-in and for takeaway sessions placed before this column existed.
+    takeaway_payment: Mapped[str | None] = mapped_column(String(10))
 
     __table_args__ = (
         tenant_composite_index("guest_sessions"),
         CheckConstraint(
             "status IN ('active', 'payment_claimed', 'closed')", name="ck_guest_sessions_status_valid"
+        ),
+        CheckConstraint(
+            "takeaway_payment IS NULL OR takeaway_payment IN ('online', 'cash')",
+            name="ck_guest_sessions_takeaway_payment_valid",
         ),
         CheckConstraint(
             "table_id IS NOT NULL OR section_id IS NOT NULL", name="ck_guest_sessions_table_or_section"

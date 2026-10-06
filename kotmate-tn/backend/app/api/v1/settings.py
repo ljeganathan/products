@@ -338,7 +338,9 @@ async def update_online_payment_settings(
     dependencies=[Depends(require_role("tenant_admin"))],
 )
 async def test_online_payment_credentials(
-    current_user: CurrentUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+    provider: str | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> OnlinePaymentTestResponse:
-    is_test = await test_credentials(db, current_user.tenant_id)
+    is_test = await test_credentials(db, current_user.tenant_id, provider)
     return OnlinePaymentTestResponse(ok=True, is_test_mode=is_test)

@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 // GET /api/v1/bills (search), GET /api/v1/bills/{id}, POST /api/v1/bills/{id}/reprint.
 
 export interface BillPaymentInput {
-  method: "upi" | "cash" | "card";
+  method: "upi" | "cash" | "card" | "online";
   amount: number;
 }
 

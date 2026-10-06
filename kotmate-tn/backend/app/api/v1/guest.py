@@ -11,6 +11,7 @@ from app.schemas.guest import (
     GuestBillPreviewResponse,
     GuestCartUpdateRequest,
     GuestProfileUpdateRequest,
+    GuestSendKotRequest,
     GuestSessionResponse,
     RequestBillResponse,
 )
@@ -156,18 +157,32 @@ async def update_guest_cart(
     dependencies=[Depends(require_guest_tenant_scope)],
 )
 async def guest_send_to_kitchen(
-    guest: CurrentGuest = Depends(require_guest_tenant_scope), db: AsyncSession = Depends(get_db)
+    payload: GuestSendKotRequest | None = None,
+    guest: CurrentGuest = Depends(require_guest_tenant_scope),
+    db: AsyncSession = Depends(get_db),
 ) -> KotSendResponse:
     if guest.table_id is None:
         # Takeaway: no real KOT ticket yet, nothing printed, no stock touched — see
         # `place_takeaway_order`'s own docstring for why. The order is already visible
         # to staff on the KOT Tickets screen as a pending row the moment it has items,
         # so there's nothing to broadcast here either.
-        guest_session = await place_takeaway_order(db, guest)
+        guest_session = await place_takeaway_order(db, guest, payload.payment_method if payload else None)
         section = (
             await db.execute(select(SeatingSection).where(SeatingSection.id == guest_session.section_id))
         ).scalar_one()
         await db.commit()
+        if guest_session.takeaway_payment == "online":
+            # Nothing is created until the payment is verified (the auto-KOT on payment fires
+            # the ticket). The guest is sent to pay, and the order stays off the POS list.
+            return KotSendResponse(
+                id=guest_session.order_id,
+                ticket_number="",
+                order_id=guest_session.order_id,
+                table_number=None,
+                section_name_en=section.name_en,
+                status="awaiting_payment",
+                printed=False,
+            )
         return KotSendResponse(
             id=guest_session.order_id,
             ticket_number=guest_session.pickup_token or "",

@@ -1,5 +1,6 @@
 import re
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -37,6 +38,15 @@ class GuestSessionResponse(BaseModel):
     customer_phone: str | None
     order_id: uuid.UUID | None
     status: str
+    # Takeaway only: 'online' | 'cash' once the guest has chosen how to pay; null otherwise.
+    takeaway_payment: str | None = None
+
+
+class GuestSendKotRequest(BaseModel):
+    """Takeaway only: how the guest pays when placing the order. Omitted keeps the older
+    behaviour (the order goes straight to the counter, no payment choice)."""
+
+    payment_method: Literal["online", "cash"] | None = None
 
 
 class GuestProfileUpdateRequest(BaseModel):

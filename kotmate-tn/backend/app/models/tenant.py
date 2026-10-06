@@ -91,7 +91,7 @@ class Tenant(UUIDPKMixin, TimestampMixin, Base):
         CheckConstraint(_PINCODE_CHECK_SQL, name="ck_tenants_pincode_format"),
         CheckConstraint(_TENANT_CODE_CHECK_SQL, name="ck_tenants_tenant_code_format"),
         CheckConstraint(
-            "default_payment_method IN ('upi', 'cash', 'card')",
+            "default_payment_method IN ('upi', 'cash', 'card', 'online')",
             name="ck_tenants_default_payment_method_valid",
         ),
         CheckConstraint("pos_layout IN ('default', 'guided')", name="ck_tenants_pos_layout_valid"),

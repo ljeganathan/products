@@ -17,7 +17,7 @@ import type { Order } from "@/modules/pos/posApi";
 
 interface BillingModalProps {
   order: Order;
-  initialPaymentMethod: "upi" | "cash" | "card";
+  initialPaymentMethod: "upi" | "cash" | "card" | "online";
   onClose: () => void;
   onFinalized: (printWarning?: string) => void;
   // "kot-and-bill" is Guided POS's non-seating combined action — same modal, same
@@ -29,6 +29,7 @@ interface BillingModalProps {
 
 const PAYMENT_METHODS = [
   { code: "upi", label: "UPI" },
+  { code: "online", label: "Online" },
   { code: "cash", label: "Cash" },
   { code: "card", label: "Card" },
 ] as const;
@@ -125,13 +126,13 @@ export function BillingModal({
   const paymentsTotal = payments.reduce((sum, p) => sum + (Number.isFinite(p.amount) ? p.amount : 0), 0);
   const balanced = Math.abs(paymentsTotal - grandTotal) <= AMOUNT_TOLERANCE;
 
-  // A guest who already paid online is billed as UPI for exactly what they paid.
+  // A guest who already paid online is billed as "online" for exactly what they paid.
   const onlinePaid = preview?.online_paid_amount ?? null;
 
   function syncSinglePaymentToGrandTotal(total: number) {
     setPayments((prev) =>
       prev.length === 1
-        ? [{ ...prev[0], amount: total, ...(onlinePaid !== null ? { method: "upi" as const } : {}) }]
+        ? [{ ...prev[0], amount: total, ...(onlinePaid !== null ? { method: "online" as const } : {}) }]
         : prev,
     );
   }
@@ -323,7 +324,7 @@ export function BillingModal({
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-4 pb-2">
           {preview && onlinePaid !== null && (
             <div className="rounded-lg bg-veg/10 px-3 py-2 text-xs font-semibold text-veg" role="status">
-              ✓ Paid online {formatINR(onlinePaid)} by UPI
+              ✓ Paid online {formatINR(onlinePaid)}
               {preview.online_payment_reference ? ` · ${preview.online_payment_reference}` : ""}
               {Math.abs(onlinePaid - preview.grand_total) > 0.01 && (
                 <span className="mt-0.5 block text-chili">

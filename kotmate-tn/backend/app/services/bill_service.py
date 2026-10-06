@@ -716,13 +716,13 @@ async def finalize_bill(
     online_attempt = await _paid_online_attempt(session, order.id)
     reference_used = False
     for payment in req.payments:
-        # The guest's verified online payment is a UPI line — attach the gateway payment id
-        # to the first UPI line matching its amount, for reconciliation.
+        # The guest's verified online payment is an "online" line (older screens sent "upi") —
+        # attach the gateway payment id to the first such line matching its amount, for reconciliation.
         reference = None
         if (
             online_attempt is not None
             and not reference_used
-            and payment.method == "upi"
+            and payment.method in ("online", "upi")
             and abs(payment.amount - float(online_attempt.amount)) <= _PAYMENT_AMOUNT_TOLERANCE
         ):
             reference = online_attempt.provider_payment_id

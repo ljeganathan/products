@@ -170,7 +170,7 @@ function PreferencesTab({
     onSuccess: invalidateMe,
   });
   const paymentMethodMutation = useMutation({
-    mutationFn: (method: "upi" | "cash" | "card") => updateDefaultPaymentMethod(method),
+    mutationFn: (method: "upi" | "cash" | "card" | "online") => updateDefaultPaymentMethod(method),
     onSuccess: invalidateMe,
   });
   const posLayoutMutation = useMutation({
@@ -258,7 +258,7 @@ function PreferencesTab({
       <div className="rounded-lg border border-border bg-surface p-4">
         <p className="mb-2 text-sm font-medium text-foreground">Default payment method</p>
         <div className="flex gap-1.5">
-          {(["upi", "cash", "card"] as const).map((method) => (
+          {(["upi", "online", "cash", "card"] as const).map((method) => (
             <button
               key={method}
               type="button"

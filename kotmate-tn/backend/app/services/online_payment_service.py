@@ -1,20 +1,23 @@
-"""Online (Razorpay) payment for QR self-orders — Phase 28.
+"""Online payment for QR self-orders — Phase 28 (Razorpay), extended with Cashfree.
 
 Trust model: the customer's browser is never believed about money. An attempt only becomes
 'paid' after this backend fetched the order's payments from the gateway with the hotel's
 own credentials (polling from the guest page) or received a correctly signed webhook.
 Both paths end in `apply_gateway_payments`, so behaviour is identical either way and the
 feature works locally without any public webhook URL.
+
+A tenant has one saved set of credentials per provider, and at most one provider is
+enabled for new payments. Payments already in flight keep settling through the provider
+they were created with, even after the owner switches providers.
 """
 
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -28,14 +31,25 @@ from app.schemas.online_payments import (
     GuestPaymentStatusResponse,
     OnlinePaymentSettingsRequest,
     OnlinePaymentSettingsResponse,
+    ProviderStatus,
 )
 from app.services.bill_service import preview_bill
 from app.services.branch_header import resolve_branch_header
 from app.services.kot_service import KotSendResult, build_kot_ticket_broadcast, send_kot
-from app.services.payment_gateway import PaymentGateway, build_gateway, get_gateway, get_gateway_row
+from app.services.payment_gateway import (
+    PROVIDERS,
+    PaymentGateway,
+    get_gateway,
+    get_gateway_for_provider,
+    get_gateway_row,
+    get_gateway_rows,
+    to_paise,
+)
 from app.services.tenant_onboarding import get_active_plan
 from app.ws.manager import manager as ws_manager
 
+_PROVIDER_LABELS = {"razorpay": "Razorpay", "cashfree": "Cashfree"}
+_CASHFREE_ENVIRONMENTS = ("sandbox", "production")
 _RECENT_ATTEMPTS_TO_SYNC = 5
 
 
@@ -51,10 +65,6 @@ class PaidNotice:
     kot_result: KotSendResult | None = None
 
 
-def to_paise(amount: float) -> int:
-    return int((Decimal(str(amount)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-
-
 # --- Settings (tenant_admin) -------------------------------------------------------
 
 
@@ -63,24 +73,59 @@ async def _plan_allows(session: AsyncSession, tenant_id: uuid.UUID) -> bool:
     return bool(plan and plan.features.get("qr_self_order"))
 
 
-def _webhook_url(tenant_id: uuid.UUID) -> str:
+def _webhook_url(tenant_id: uuid.UUID, provider: str) -> str:
     base = get_settings().PUBLIC_BASE_URL.rstrip("/")
-    return f"{base}/api/v1/webhooks/razorpay/{tenant_id}"
+    return f"{base}/api/v1/webhooks/{provider}/{tenant_id}"
 
 
-async def get_settings_view(session: AsyncSession, tenant_id: uuid.UUID) -> OnlinePaymentSettingsResponse:
-    row = await get_gateway_row(session, tenant_id)
-    return OnlinePaymentSettingsResponse(
-        available=await _plan_allows(session, tenant_id),
+def _is_test_mode(row: TenantPaymentGateway | None) -> bool:
+    if row is None or not row.key_id:
+        return False
+    if row.provider == "cashfree":
+        return row.environment == "sandbox"
+    return row.key_id.startswith("rzp_test_")
+
+
+def _provider_status(
+    tenant_id: uuid.UUID, provider: str, row: TenantPaymentGateway | None
+) -> ProviderStatus:
+    return ProviderStatus(
+        provider=provider,
+        configured=bool(row and row.key_id and row.secret_encrypted),
         enabled=bool(row and row.is_enabled),
-        provider=row.provider if row else "razorpay",
-        auth_mode=row.auth_mode if row else "api_keys",
         key_id=row.key_id if row else None,
         has_secret=bool(row and row.secret_encrypted),
         has_webhook_secret=bool(row and row.webhook_secret_encrypted),
-        is_test_mode=bool(row and row.key_id and row.key_id.startswith("rzp_test_")),
-        webhook_url=_webhook_url(tenant_id),
+        environment=row.environment if row else None,
+        is_test_mode=_is_test_mode(row),
+        webhook_url=_webhook_url(tenant_id, provider),
     )
+
+
+async def get_settings_view(session: AsyncSession, tenant_id: uuid.UUID) -> OnlinePaymentSettingsResponse:
+    rows = {row.provider: row for row in await get_gateway_rows(session, tenant_id)}
+    enabled_row = next((row for row in rows.values() if row.is_enabled), None)
+    # Top-level fields describe the enabled provider, or Razorpay when none is enabled.
+    shown = enabled_row or rows.get("razorpay")
+    return OnlinePaymentSettingsResponse(
+        available=await _plan_allows(session, tenant_id),
+        enabled=enabled_row is not None,
+        provider=enabled_row.provider if enabled_row else "razorpay",
+        auth_mode=shown.auth_mode if shown else "api_keys",
+        key_id=shown.key_id if shown else None,
+        has_secret=bool(shown and shown.secret_encrypted),
+        has_webhook_secret=bool(shown and shown.webhook_secret_encrypted),
+        is_test_mode=_is_test_mode(shown),
+        webhook_url=_webhook_url(tenant_id, enabled_row.provider if enabled_row else "razorpay"),
+        providers=[_provider_status(tenant_id, provider, rows.get(provider)) for provider in PROVIDERS],
+    )
+
+
+def _provider_or_default(provider: str | None) -> str:
+    chosen = provider or "razorpay"
+    if chosen not in PROVIDERS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown payment provider: {chosen}")
+    return chosen
 
 
 async def save_settings(
@@ -89,9 +134,11 @@ async def save_settings(
     if not await _plan_allows(session, tenant_id):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Online payments are available on the Pro Max plan")
 
-    row = await get_gateway_row(session, tenant_id)
+    provider = _provider_or_default(req.provider)
+    label = _PROVIDER_LABELS[provider]
+    row = await get_gateway_row(session, tenant_id, provider)
     if row is None:
-        row = TenantPaymentGateway(tenant_id=tenant_id, provider="razorpay", auth_mode="api_keys")
+        row = TenantPaymentGateway(tenant_id=tenant_id, provider=provider, auth_mode="api_keys")
         session.add(row)
 
     if req.key_id is not None and req.key_id.strip():
@@ -100,24 +147,50 @@ async def save_settings(
         row.secret_encrypted = encrypt_secret(req.key_secret.strip())
     if req.webhook_secret is not None and req.webhook_secret.strip():
         row.webhook_secret_encrypted = encrypt_secret(req.webhook_secret.strip())
-    if req.enabled is not None:
-        if req.enabled and not (row.key_id and row.secret_encrypted):
+    if provider == "cashfree" and req.environment is not None and req.environment.strip():
+        environment = req.environment.strip()
+        if environment not in _CASHFREE_ENVIRONMENTS:
             raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "Enter the Razorpay key ID and key secret before enabling"
+                status.HTTP_400_BAD_REQUEST, "Cashfree environment must be sandbox or production"
             )
+        row.environment = environment
+    if req.enabled is not None:
+        if req.enabled:
+            if not (row.key_id and row.secret_encrypted):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, f"Enter the {label} key ID and key secret before enabling"
+                )
+            if provider == "cashfree" and row.environment not in _CASHFREE_ENVIRONMENTS:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, "Choose Sandbox or Production for Cashfree before enabling"
+                )
+            # Switch off every other provider first: the database allows one enabled provider
+            # per tenant, so the old one has to be off (and flushed) before this one turns on.
+            await session.execute(
+                update(TenantPaymentGateway)
+                .where(
+                    TenantPaymentGateway.tenant_id == tenant_id,
+                    TenantPaymentGateway.provider != provider,
+                )
+                .values(is_enabled=False)
+            )
+            await session.flush()
         row.is_enabled = req.enabled
     await session.flush()
     return await get_settings_view(session, tenant_id)
 
 
-async def test_credentials(session: AsyncSession, tenant_id: uuid.UUID) -> bool:
+async def test_credentials(session: AsyncSession, tenant_id: uuid.UUID, provider: str | None = None) -> bool:
     """Makes one cheap authenticated call so a wrong key/secret is caught at setup time,
-    not by the first customer. Returns whether the key is a test-mode key.
+    not by the first customer. Returns whether the credentials are test/sandbox ones.
     """
-    row = await get_gateway_row(session, tenant_id)
-    gateway = build_gateway(row) if row else None
+    chosen = _provider_or_default(provider)
+    gateway = await get_gateway_for_provider(session, tenant_id, chosen)
     if gateway is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Save the Razorpay key ID and key secret first")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Save the {_PROVIDER_LABELS[chosen]} key ID and key secret first",
+        )
     await gateway.check_credentials()
     return gateway.is_test_mode
 
@@ -222,15 +295,22 @@ async def apply_gateway_payments(
 
 
 async def sync_order_attempts(
-    session: AsyncSession, gateway: PaymentGateway, tenant_id: uuid.UUID, order_id: uuid.UUID
+    session: AsyncSession, tenant_id: uuid.UUID, order_id: uuid.UUID
 ) -> PaidNotice | None:
-    """Asks the gateway about the order's recent unpaid attempts. A customer returning
-    from their UPI app slowly, or a missed webhook, is corrected here.
+    """Asks each provider about the order's recent unpaid attempts. A customer returning
+    from their UPI app slowly, or a missed webhook, is corrected here. Each attempt is
+    checked with the provider it was created with, even if the owner has switched since.
     """
     notice: PaidNotice | None = None
+    gateways: dict[str, PaymentGateway | None] = {}
     attempts = await _attempts_for_order(session, tenant_id, order_id)
     for attempt in attempts[:_RECENT_ATTEMPTS_TO_SYNC]:
         if attempt.status == "paid":
+            continue
+        if attempt.provider not in gateways:
+            gateways[attempt.provider] = await get_gateway_for_provider(session, tenant_id, attempt.provider)
+        gateway = gateways[attempt.provider]
+        if gateway is None:
             continue
         payments = await gateway.fetch_order_payments(attempt.provider_order_id)
         notice = await apply_gateway_payments(session, gateway, attempt, payments) or notice
@@ -246,6 +326,7 @@ async def guest_payment_info(
     paid = await find_paid_attempt(session, tenant_id, order_id) if order_id else None
     return GuestOnlinePaymentInfo(
         enabled=True,
+        provider=gateway.provider,
         key_id=gateway.checkout_key,
         is_test_mode=gateway.is_test_mode,
         paid=paid is not None,
@@ -265,7 +346,7 @@ async def create_guest_payment(
 
     # A payment that already went through (slow return from the UPI app) must never be
     # charged twice: settle what the gateway knows before creating anything new.
-    await sync_order_attempts(session, gateway, guest.tenant_id, guest_session.order_id)
+    await sync_order_attempts(session, guest.tenant_id, guest_session.order_id)
     if await find_paid_attempt(session, guest.tenant_id, guest_session.order_id) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "This order has already been paid")
 
@@ -283,6 +364,8 @@ async def create_guest_payment(
         amount_paise,
         receipt=f"KM-{str(attempt_id)[:8]}",
         notes={"tenant_id": str(guest.tenant_id), "order_id": str(guest_session.order_id), "for": label},
+        customer_name=guest_session.customer_name,
+        customer_phone=guest_session.customer_phone,
     )
     session.add(
         PaymentAttempt(
@@ -301,9 +384,15 @@ async def create_guest_payment(
 
     branch = await resolve_branch_header(session, guest_session.location_id)
     tenant = (await session.execute(select(Tenant).where(Tenant.id == guest.tenant_id))).scalar_one()
+    environment = None
+    if gateway.provider == "cashfree":
+        row = await get_gateway_row(session, guest.tenant_id, "cashfree")
+        environment = row.environment if row else None
     return GuestCreatePaymentResponse(
+        provider=gateway.provider,
         provider_order_id=gateway_order["id"],
         key_id=gateway.checkout_key,
+        payment_session_id=gateway_order.get("payment_session_id"),
         amount_paise=amount_paise,
         currency="INR",
         hotel_name=tenant.company_name if branch.name == tenant.company_name else branch.name,
@@ -311,6 +400,7 @@ async def create_guest_payment(
         customer_name=guest_session.customer_name,
         customer_phone=guest_session.customer_phone,
         is_test_mode=gateway.is_test_mode,
+        environment=environment,
     )
 
 
@@ -319,10 +409,7 @@ async def guest_payment_status(
 ) -> tuple[GuestPaymentStatusResponse, PaidNotice | None]:
     if guest_session.order_id is None:
         return GuestPaymentStatusResponse(status="none"), None
-    gateway = await get_gateway(session, guest.tenant_id)
-    notice: PaidNotice | None = None
-    if gateway is not None:
-        notice = await sync_order_attempts(session, gateway, guest.tenant_id, guest_session.order_id)
+    notice = await sync_order_attempts(session, guest.tenant_id, guest_session.order_id)
 
     attempts = await _attempts_for_order(session, guest.tenant_id, guest_session.order_id)
     if not attempts:
@@ -345,15 +432,18 @@ async def guest_payment_status(
 
 
 async def handle_webhook(
-    session: AsyncSession, tenant_id: uuid.UUID, raw_body: bytes, signature: str, payload: dict[str, Any]
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    provider: str,
+    raw_body: bytes,
+    headers: Any,
+    payload: dict[str, Any],
 ) -> PaidNotice | None:
-    row = await get_gateway_row(session, tenant_id)
-    gateway = build_gateway(row) if row else None
-    if gateway is None or not gateway.verify_webhook_signature(raw_body, signature):
+    gateway = await get_gateway_for_provider(session, tenant_id, provider)
+    if gateway is None or not gateway.verify_webhook(raw_body, headers):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid webhook signature")
 
-    entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
-    provider_order_id = entity.get("order_id")
+    provider_order_id = gateway.webhook_order_id(payload)
     if not provider_order_id:
         return None
     attempt = (

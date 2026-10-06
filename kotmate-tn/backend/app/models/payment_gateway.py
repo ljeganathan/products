@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -20,14 +21,17 @@ from app.db.mixins import TimestampMixin, UUIDPKMixin, tenant_composite_index, t
 
 
 class TenantPaymentGateway(UUIDPKMixin, TimestampMixin, Base):
-    """One row per tenant: how that hotel takes online payments (Phase 28). Secrets are
-    stored encrypted (`app/core/secrets.py`) and never returned by any API.
+    """One row per (tenant, provider): that hotel's credentials for each online payment
+    provider (Phase 28 Razorpay, Cashfree later). Secrets are stored encrypted
+    (`app/core/secrets.py`) and never returned by any API. At most one row per tenant is
+    enabled at a time, enforced by the partial unique index below.
 
-    `auth_mode` keeps the credential model swappable without a schema change: today
-    'api_keys' (the hotel's own Razorpay key id + secret); a future Razorpay Partner
-    integration would use 'partner_oauth', storing the sub-merchant's access token in
-    `secret_encrypted` and its account id in `account_ref`. Only
-    `services/payment_gateway.py` interprets these columns.
+    `auth_mode` keeps the Razorpay credential model swappable without a schema change:
+    'api_keys' (the hotel's own key id + secret); a future Razorpay Partner integration
+    would use 'partner_oauth', storing the sub-merchant's access token in
+    `secret_encrypted` and its account id in `account_ref`. `environment` is Cashfree's
+    explicit 'sandbox' | 'production' switch (NULL for Razorpay, which reads it from the
+    key prefix). Only `services/payment_gateway.py` interprets these columns.
     """
 
     __tablename__ = "tenant_payment_gateways"
@@ -39,11 +43,19 @@ class TenantPaymentGateway(UUIDPKMixin, TimestampMixin, Base):
     secret_encrypted: Mapped[str | None] = mapped_column(Text)
     webhook_secret_encrypted: Mapped[str | None] = mapped_column(Text)
     account_ref: Mapped[str | None] = mapped_column(String(100))
+    environment: Mapped[str | None] = mapped_column(String(10))
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         tenant_composite_index("tenant_payment_gateways"),
-        UniqueConstraint("tenant_id", name="uq_tenant_payment_gateways_tenant"),
+        UniqueConstraint("tenant_id", "provider", name="uq_tenant_payment_gateways_tenant_provider"),
+        Index(
+            "uq_tenant_payment_gateways_one_enabled",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("is_enabled"),
+        ),
+        CheckConstraint("provider IN ('razorpay', 'cashfree')", name="ck_tenant_pg_provider_valid"),
     )
 
 

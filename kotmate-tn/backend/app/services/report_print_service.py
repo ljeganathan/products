@@ -64,6 +64,9 @@ REPORT_TITLES = {
 # live POS payment buttons use (CLAUDE.md §9); a printed summary reads top-to-bottom
 # once, so this just follows the literal production-feedback spec.
 _SUMMARY_PAYMENT_METHODS = ("cash", "upi", "card")
+# Printed only when the period actually has such payments, so reports for tenants who never
+# take online payments look exactly as they did before.
+_OPTIONAL_SUMMARY_PAYMENT_METHODS = ("online",)
 
 
 def has_report_printing_feature(plan_features: dict | None) -> bool:
@@ -98,9 +101,12 @@ def _amount(value: float) -> str:
 
 def _payment_pairs(payments: list[PaymentMethodTotal]) -> list[tuple[str, str]]:
     by_method = {p.method: p.amount for p in payments}
+    methods = list(_SUMMARY_PAYMENT_METHODS) + [
+        method for method in _OPTIONAL_SUMMARY_PAYMENT_METHODS if by_method.get(method)
+    ]
     return [
         (f"Payment - {_PAYMENT_LABELS.get(method, method)}", _amount(by_method.get(method, 0.0)))
-        for method in _SUMMARY_PAYMENT_METHODS
+        for method in methods
     ]
 
 

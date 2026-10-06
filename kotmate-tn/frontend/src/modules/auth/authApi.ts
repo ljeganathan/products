@@ -54,7 +54,7 @@ export interface MeResponse {
   // still always show both languages (CLAUDE.md §9). Not plan-gated.
   show_tamil_categories: boolean;
   // Pre-selected payment method on the POS billing screen (tenant-wide, all tiers).
-  default_payment_method: "upi" | "cash" | "card";
+  default_payment_method: "upi" | "cash" | "card" | "online";
   // Effective report-printing state (plan feature AND tenant toggle) — Pro Max only.
   report_printing_enabled: boolean;
   // Whether Item/Category Wise report prints show the Tamil name instead of English —

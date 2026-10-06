@@ -17,6 +17,18 @@ const CUSTOM_SCRIPT = "https://checkout.razorpay.com/v1/razorpay.js";
 const STANDARD_SCRIPT = "https://checkout.razorpay.com/v1/checkout.js";
 // Razorpay wants an email on UPI intent payments; the guest flow never asks for one.
 const PLACEHOLDER_EMAIL = "no-reply@kotmatetn.in";
+// Cashfree's JS SDK. Its checkout lists every UPI app, card and netbanking on one screen, so
+// Cashfree has no separate Google Pay / PhonePe buttons.
+const CASHFREE_SCRIPT = "https://sdk.cashfree.com/js/v3/cashfree.js";
+
+interface CashfreeCheckout {
+  checkout: (options: { paymentSessionId: string; redirectTarget?: string }) => Promise<unknown>;
+}
+type CashfreeFactory = (options: { mode: "sandbox" | "production" }) => CashfreeCheckout;
+
+function cashfreeFactory(): CashfreeFactory {
+  return (window as unknown as { Cashfree: CashfreeFactory }).Cashfree;
+}
 
 interface RazorpayInstance {
   open?: () => void;
@@ -145,6 +157,22 @@ export function OnlinePayCard({
     const contact = created.customer_phone ? `+91${created.customer_phone}` : undefined;
     startedAt.current = Date.now();
     try {
+      if (created.provider === "cashfree") {
+        if (!created.payment_session_id) throw new Error("Couldn't start the payment — please try again.");
+        await loadScript(CASHFREE_SCRIPT);
+        const cashfree = cashfreeFactory()({
+          mode: created.environment === "production" ? "production" : "sandbox",
+        });
+        setPhase("waiting");
+        // Cashfree's checkout resolves when the guest closes it or finishes. Either way the
+        // status poll is what confirms the payment, so re-check with our own server.
+        void cashfree
+          .checkout({ paymentSessionId: created.payment_session_id, redirectTarget: "_modal" })
+          .catch(() => undefined)
+          .then(() => checkStatus());
+        return;
+      }
+
       if (method === "standard") {
         await loadScript(STANDARD_SCRIPT);
         const checkout = new (razorpayCtor())({
@@ -257,7 +285,7 @@ export function OnlinePayCard({
               {refundNote && " If money was deducted, your bank refunds it automatically."}
             </p>
           )}
-          {isMobile && (
+          {isMobile && info.provider !== "cashfree" && (
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -289,7 +317,9 @@ export function OnlinePayCard({
           >
             {phase === "starting" ? "Starting…" : isMobile ? "Other UPI app, card or netbanking" : `Pay ${formatINR(total)}`}
           </button>
-          <p className="text-center text-[11px] text-ink-faint">🔒 Secured by Razorpay</p>
+          <p className="text-center text-[11px] text-ink-faint">
+            🔒 Secured by {info.provider === "cashfree" ? "Cashfree" : "Razorpay"}
+          </p>
         </div>
       )}
     </div>

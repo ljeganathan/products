@@ -236,7 +236,7 @@ class BillRenderData:
         return line_chars_for_paper_width(self.paper_width_mm)
 
 
-_PAYMENT_LABELS = {"upi": "UPI", "cash": "Cash", "card": "Card"}
+_PAYMENT_LABELS = {"upi": "UPI", "cash": "Cash", "card": "Card", "online": "Online"}
 
 
 def two_column_lines(left: str, right: str, line_width: int) -> list[str]:

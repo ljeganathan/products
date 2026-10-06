@@ -3,7 +3,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -455,6 +455,10 @@ async def list_active_tickets(
             # it was auto-sent on a verified online payment) the real ticket above shows it;
             # listing it here too would show the same order twice.
             ~Order.id.in_(select(KotTicket.order_id).where(KotTicket.tenant_id == tenant_id)),
+            # A takeaway guest who chose to pay online has no ticket and nothing for the counter
+            # to confirm until the payment is verified (the auto-KOT then creates the ticket).
+            # NULL (older sessions, and anything not yet placed) keeps the previous behaviour.
+            or_(GuestSession.takeaway_payment.is_(None), GuestSession.takeaway_payment == "cash"),
         )
     )
     if location_id is not None:
