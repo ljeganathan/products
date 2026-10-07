@@ -61,17 +61,22 @@ export function POSLayoutRouter() {
   return (
     <>
       {page}
-      <div className="fixed bottom-3 left-3 z-40 flex max-w-[calc(100vw-1.5rem)] flex-wrap items-center gap-2">
+      <div
+        className="fixed left-3 z-50 flex max-w-[calc(100vw-1.5rem)] flex-wrap items-center gap-2"
+        style={{ bottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+      >
         <button
           type="button"
           onClick={() => setPrintStation(!printStation)}
           aria-pressed={printStation}
           title="Print kitchen tickets from this device (turn on only at the device with the kitchen printer)"
-          className={`rounded-full border px-2.5 py-1 text-[11px] font-bold shadow-pos ${
-            printStation ? "border-veg bg-veg/15 text-veg" : "border-border bg-surface text-ink-faint"
+          className={`rounded-full border-2 px-3 py-1.5 text-xs font-extrabold shadow-pos ${
+            printStation
+              ? "border-veg bg-veg text-white"
+              : "border-chili bg-surface text-chili"
           }`}
         >
-          🖨️ Kitchen printing {printStation ? "on" : "off"}
+          🖨️ Kitchen printing {printStation ? "ON" : "OFF"}
         </button>
         {printing.notice && (
           <button
