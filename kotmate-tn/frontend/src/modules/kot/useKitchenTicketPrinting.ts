@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { printKotTicketFromServer } from "@/lib/printDispatch";
@@ -20,6 +20,7 @@ export function useKitchenTicketPrinting({
   locationId: string | undefined;
   enabled: boolean;
 }): { notice: string | null; dismiss: () => void } {
+  const queryClient = useQueryClient();
   const [notice, setNotice] = useState<string | null>(null);
   const seen = useRef<{ locationId: string; ticketIds: Set<string> } | null>(null);
 
@@ -52,7 +53,11 @@ export function useKitchenTicketPrinting({
   }, [tickets, isSuccess, locationId, enabled]);
 
   useLocationSocket(locationId, (msg) => {
-    if (msg.type !== "kot_ticket" || !enabled || !msg.print_job || typeof msg.id !== "string") return;
+    if (msg.type !== "kot_ticket") return;
+    // Every ticket list on this POS (KOT Tickets popup, Guided POS, the printing refresh above)
+    // refreshes at once, so a mobile order appears without reloading the page.
+    void queryClient.invalidateQueries({ queryKey: ["kot-tickets-active"] });
+    if (!enabled || !msg.print_job || typeof msg.id !== "string") return;
     print(msg.id);
   });
 

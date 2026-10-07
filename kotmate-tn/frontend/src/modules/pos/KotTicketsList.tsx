@@ -89,6 +89,9 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
     queryKey: ["kot-tickets-active"],
     queryFn: () => listActiveKotTickets(),
     retry: false,
+    // Live updates arrive through the POS socket (see useKitchenTicketPrinting); this is the
+    // fallback for a missed message, so the list never sits stale for long.
+    refetchInterval: 15_000,
   });
   const grouped = useMemo(() => (data ? groupTicketsByOrder(data) : undefined), [data]);
 
