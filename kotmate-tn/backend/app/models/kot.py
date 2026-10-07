@@ -1,6 +1,7 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, String
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +24,10 @@ class KotTicket(UUIDPKMixin, TimestampMixin, Base):
     # order is billed the instant it's fired to the kitchen, but the kitchen still needs
     # to see the ticket until it's actually ready.
     order_billed_via_kot: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Set once a screen has claimed this ticket for printing from its own browser (the
+    # Bluetooth/USB/RawBT kitchen printer case). Only the first claim gets the print job, so
+    # several open screens at one location never print the same ticket twice.
+    print_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         tenant_composite_index("kot_tickets"),

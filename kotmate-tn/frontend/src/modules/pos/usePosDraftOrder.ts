@@ -176,6 +176,8 @@ export function usePosDraftOrder() {
   function handleLocationChange(nextId: string) {
     localStorage.setItem("pos-location-id", nextId);
     setSelectedLocationId(nextId);
+    // Lets the POS layout (which prints kitchen tickets for this location) follow the change.
+    window.dispatchEvent(new Event("pos-location-changed"));
     resetDraft();
   }
 

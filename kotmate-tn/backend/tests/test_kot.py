@@ -438,3 +438,38 @@ async def test_print_job_endpoint_rebuilds_ticket_for_handheld_printer(
     assert job["connection_type"] == "bluetooth"
     assert job["connection_details"] == {"device_name": "KOT-BT"}
     assert job["data_base64"] == sent["print_job"]["data_base64"]
+
+
+async def test_only_the_first_screen_to_claim_a_ticket_gets_the_print_job(
+    client: AsyncClient, pro_max_tenant_admin: dict
+):
+    # Several open screens at one location can all hear the ticket, but only one may print it.
+    headers = pro_max_tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "AC")
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=30)
+    await client.post(
+        "/api/v1/printers",
+        json={
+            "location_id": location_id,
+            "name": "Kitchen Printer",
+            "target": "kot",
+            "printer_type": "thermal",
+            "connection_type": "bluetooth",
+            "connection_details": {"device_name": "KOT-BT"},
+        },
+        headers=headers,
+    )
+    order = await _create_order(
+        client, headers, location_id, section_id, [{"item_id": item["id"], "quantity": 1}]
+    )
+    sent = (await client.post("/api/v1/kot", json={"order_id": order["id"]}, headers=headers)).json()
+
+    first = await client.post(f"/api/v1/kot/tickets/{sent['id']}/claim-print", headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["data_base64"] == sent["print_job"]["data_base64"]
+
+    second = await client.post(f"/api/v1/kot/tickets/{sent['id']}/claim-print", headers=headers)
+    assert second.status_code == 200
+    assert second.json() is None

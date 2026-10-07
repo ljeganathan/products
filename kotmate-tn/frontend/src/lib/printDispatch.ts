@@ -31,26 +31,21 @@ export async function dispatchPrintJob(job: BillPrintJob | null): Promise<string
   }
 }
 
-// Kitchen tickets for Bluetooth/USB/RawBT kitchen printers arrive over the live location
-// socket, and the open Kitchen Display prints them. A ticket is printed at most once per
-// page session, so a reconnect or a second message for the same ticket never reprints.
+// Kitchen tickets for Bluetooth/USB/RawBT kitchen printers are printed by the open screen on
+// the device that has the printer. A ticket is printed at most once per page session here, and
+// the server hands out the print job to only one screen (see claim-print), so a second screen
+// or a second message never reprints it.
 const printedKotTickets = new Set<string>();
 
-// Claims a ticket for this page session. Returns false when it was already claimed, so
-// the live message and the 15s refresh can never both print the same ticket.
+// Claims a ticket for this page session. Returns false when it was already claimed.
 function claimKotTicket(ticketId: string): boolean {
   if (printedKotTickets.has(ticketId)) return false;
   printedKotTickets.add(ticketId);
   return true;
 }
 
-export async function printKotTicketOnce(ticketId: string, job: BillPrintJob): Promise<string | null> {
-  if (!claimKotTicket(ticketId)) return null;
-  return dispatchPrintJob(job);
-}
-
-// The catch-up path: a ticket seen in the refresh but never printed. `fetchJob` runs only
-// after the claim, so a second caller never fetches or prints it again.
+// `fetchJob` asks the server for the job (it returns null if another screen already got it).
+// It runs only after the local claim, so a second call for the same ticket never fetches again.
 export async function printKotTicketFromServer(
   ticketId: string,
   fetchJob: () => Promise<BillPrintJob | null>,

@@ -3,7 +3,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -166,6 +166,32 @@ async def build_kot_reprint_job(
     ]
     content = await _render_kot_content(session, printer, order, table, section, ticket, render_lines)
     return _handheld_print_job(printer, content)
+
+
+async def claim_kot_print(
+    session: AsyncSession, tenant: Tenant, ticket_id: uuid.UUID
+) -> PrintJobPayload | None:
+    """Gives one screen the print job for a ticket that its own browser must print (a
+    Bluetooth/USB/RawBT kitchen printer). Only the first claim gets the job: the claim is a
+    single conditional UPDATE, so two open screens at one location can't both print it.
+    Returns None when the ticket has no browser-printed job, or someone already claimed it.
+    """
+    job = await build_kot_reprint_job(session, tenant, ticket_id)
+    if job is None:
+        return None
+    claimed = (
+        await session.execute(
+            update(KotTicket)
+            .where(
+                KotTicket.id == ticket_id,
+                KotTicket.tenant_id == tenant.id,
+                KotTicket.print_claimed_at.is_(None),
+            )
+            .values(print_claimed_at=func.now())
+            .returning(KotTicket.id)
+        )
+    ).first()
+    return job if claimed is not None else None
 
 
 async def send_kot(

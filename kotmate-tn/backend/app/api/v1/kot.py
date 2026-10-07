@@ -14,6 +14,7 @@ from app.services.kot_service import (
     build_kot_reprint_job,
     build_kot_ticket_broadcast,
     cancel_pending_takeaway_order,
+    claim_kot_print,
     clear_billed_ticket,
     get_ticket_or_404,
     has_kds_feature,
@@ -84,6 +85,22 @@ async def get_ticket_print_job(
     await _require_kds_feature(db, current_user.tenant_id)
     tenant = await _get_tenant(db, current_user)
     return await build_kot_reprint_job(db, tenant, ticket_id)
+
+
+@router.post("/tickets/{ticket_id}/claim-print", response_model=PrintJobPayload | None)
+async def claim_ticket_print(
+    ticket_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PrintJobPayload | None:
+    """A kitchen screen asks to print a ticket from its own browser. Only the first screen
+    to ask gets the job (see claim_kot_print), so several open screens never double-print.
+    """
+    await _require_kds_feature(db, current_user.tenant_id)
+    tenant = await _get_tenant(db, current_user)
+    job = await claim_kot_print(db, tenant, ticket_id)
+    await db.commit()
+    return job
 
 
 @router.get("/tickets/active", response_model=list[ActiveKotTicketResponse])

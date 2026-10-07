@@ -63,10 +63,10 @@ export async function listActiveKotTickets(locationId?: string): Promise<ActiveK
   ).data;
 }
 
-// The Kitchen Display's catch-up print for a ticket whose live message never arrived.
-// Null when the location's kitchen printer is one the server prints to itself (or none).
-export async function getKotTicketPrintJob(ticketId: string): Promise<BillPrintJob | null> {
-  return (await api.get<BillPrintJob | null>(`/api/v1/kot/tickets/${ticketId}/print-job`)).data;
+// A kitchen screen asks to print a ticket from its own browser (Bluetooth/USB/RawBT kitchen
+// printer). Only the first screen to ask gets the job; everyone else gets null.
+export async function claimKotTicketPrint(ticketId: string): Promise<BillPrintJob | null> {
+  return (await api.post<BillPrintJob | null>(`/api/v1/kot/tickets/${ticketId}/claim-print`)).data;
 }
 
 export async function updateKotTicketStatus(
