@@ -66,6 +66,37 @@ type Method = "gpay" | "phonepe" | "standard";
 const POLL_MS = 2500;
 const POLL_GIVE_UP_MS = 4 * 60 * 1000;
 
+// One payment button for every provider. The badge is a generic "UPI" mark rather than an app
+// logo (see CLAUDE.md §9), and the caption names what the button does.
+function UpiButton({
+  caption,
+  amount,
+  disabled,
+  onClick,
+}: {
+  caption: string;
+  amount?: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="flex w-full items-center justify-center gap-2.5 rounded-xl bg-accent px-3 py-3 text-accent-foreground hover:opacity-90 disabled:opacity-50"
+    >
+      <span className="rounded bg-accent-foreground px-1.5 py-0.5 text-[10px] font-black tracking-wide text-accent">
+        UPI
+      </span>
+      <span className="flex flex-col items-start leading-tight">
+        <span className="text-sm font-extrabold">{amount ? `Pay ${amount}` : "Pay"}</span>
+        <span className="text-[11px] font-semibold opacity-80">{caption}</span>
+      </span>
+    </button>
+  );
+}
+
 function errorMessage(err: unknown, fallback: string): string {
   if (axios.isAxiosError(err) && typeof err.response?.data?.detail === "string") return err.response.data.detail;
   if (err instanceof Error && err.message) return err.message;
@@ -287,36 +318,30 @@ export function OnlinePayCard({
           )}
           {isMobile && info.provider !== "cashfree" && (
             <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
+              <UpiButton
                 disabled={busy}
+                caption="Google Pay"
                 onClick={() => void pay("gpay")}
-                className="rounded-xl bg-accent py-3.5 text-sm font-extrabold text-accent-foreground disabled:opacity-50"
-              >
-                Google Pay
-              </button>
-              <button
-                type="button"
+              />
+              <UpiButton
                 disabled={busy}
+                caption="PhonePe"
                 onClick={() => void pay("phonepe")}
-                className="rounded-xl bg-accent py-3.5 text-sm font-extrabold text-accent-foreground disabled:opacity-50"
-              >
-                PhonePe
-              </button>
+              />
             </div>
           )}
-          <button
-            type="button"
+          <UpiButton
             disabled={busy}
-            onClick={() => void pay("standard")}
-            className={
-              isMobile
-                ? "rounded-xl border border-border py-3 text-sm font-bold hover:bg-surface-2 disabled:opacity-50"
-                : "rounded-xl bg-accent py-3.5 text-sm font-extrabold text-accent-foreground disabled:opacity-50"
+            caption={
+              phase === "starting"
+                ? "Starting…"
+                : isMobile && info.provider !== "cashfree"
+                  ? "Other UPI app, card or netbanking"
+                  : "UPI apps, cards & netbanking"
             }
-          >
-            {phase === "starting" ? "Starting…" : isMobile ? "Other UPI app, card or netbanking" : `Pay ${formatINR(total)}`}
-          </button>
+            amount={isMobile ? undefined : formatINR(total)}
+            onClick={() => void pay("standard")}
+          />
           <p className="text-center text-[11px] text-ink-faint">
             🔒 Secured by {info.provider === "cashfree" ? "Cashfree" : "Razorpay"}
           </p>
