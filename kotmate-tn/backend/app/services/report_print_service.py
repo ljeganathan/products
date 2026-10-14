@@ -20,6 +20,8 @@ from app.schemas.reports import (
     ItemListRow,
     ItemWiseSalesResponse,
     ItemWiseSalesRow,
+    LowMovingItemRow,
+    LowMovingItemsResponse,
     OrderTypeSalesResponse,
     PaymentMethodTotal,
     PosOperatorIncentiveResponse,
@@ -28,6 +30,8 @@ from app.schemas.reports import (
     SalesSummaryResponse,
     TaxSummaryResponse,
     WaiterIncentiveResponse,
+    WaiterItemWiseSalesResponse,
+    WaiterItemWiseSalesRow,
     WaiterSalesResponse,
     ZReportResponse,
 )
@@ -58,6 +62,8 @@ REPORT_TITLES = {
     "order-type-wise": "Order Type Wise Sales",
     "discount-summary": "Discount Summary",
     "discount-detail": "Discount Detail",
+    "waiter-item-wise": "Waiter Wise Item Sales",
+    "low-moving-items": "Low Moving Items",
 }
 
 # Order the user asked for — Cash, then UPI, then Card — not the UPI-first order the
@@ -207,6 +213,77 @@ def _item_wise_body(
         rows=rows,
         bold_rows=bold_rows,
         big_rows={total_idx},
+        tamil_names=tamil_names,
+    )
+
+
+def _waiter_item_wise_body(
+    rows_data: list[WaiterItemWiseSalesRow], tamil_names_enabled: bool, total_revenue: float
+) -> ReportBody:
+    """Waiter Wise Item Sales — same Name/Qty/Sales grid and bold-group-header idiom as
+    `_item_wise_body`, grouped by waiter instead of category. `report_service.
+    waiter_item_wise_sales` already returns `rows_data` pre-ordered waiter-major (waiters
+    by their own total revenue descending, items within a waiter by their own revenue
+    descending), so this only has to notice where one waiter's run of rows ends.
+    """
+    headers = ["Name", "Qty", "Sales"]
+    rows: list[list[str]] = []
+    bold_rows: set[int] = set()
+    tamil_names: dict[int, str] = {}
+    current_waiter_id = None
+    for r in rows_data:
+        if r.waiter_id != current_waiter_id:
+            current_waiter_id = r.waiter_id
+            header_idx = len(rows)
+            rows.append([r.waiter_name, "", ""])
+            bold_rows.add(header_idx)
+        idx = len(rows)
+        rows.append([r.name_en, str(r.quantity_sold), _amount(r.revenue)])
+        if tamil_names_enabled and r.name_ta:
+            tamil_names[idx] = r.name_ta
+    total_idx = len(rows)
+    bold_rows.add(total_idx)
+    rows.append(["TOTAL", "", _amount(total_revenue)])
+    return ReportBody(
+        kind="grid",
+        headers=headers,
+        rows=rows,
+        bold_rows=bold_rows,
+        big_rows={total_idx},
+        tamil_names=tamil_names,
+    )
+
+
+def _low_moving_items_body(rows_data: list[LowMovingItemRow], tamil_names_enabled: bool) -> ReportBody:
+    """Low Moving Items — a plain Code/Name list (no Qty/Sales columns, every row is
+    zero by definition) grouped by category with a bold header row per category, same
+    grouping idiom as `item_list_print_body`/`_item_wise_body`.
+    """
+    headers = ["Code", "Name"]
+    rows: list[list[str]] = []
+    bold_rows: set[int] = set()
+    tamil_names: dict[int, str] = {}
+    current_category_id = None
+    for r in rows_data:
+        if r.category_id != current_category_id:
+            current_category_id = r.category_id
+            header_idx = len(rows)
+            rows.append(["", r.category_name_en])
+            bold_rows.add(header_idx)
+            if tamil_names_enabled and r.category_name_ta:
+                tamil_names[header_idx] = r.category_name_ta
+        idx = len(rows)
+        rows.append([r.item_code or "", r.name_en])
+        if tamil_names_enabled and r.name_ta:
+            tamil_names[idx] = r.name_ta
+    return ReportBody(
+        kind="grid",
+        headers=headers,
+        rows=rows,
+        bold_rows=bold_rows,
+        left_align_columns={0, 1},
+        expand_column=1,
+        column_max_widths={0: 4},
         tamil_names=tamil_names,
     )
 
@@ -525,6 +602,12 @@ def build_report_body(report_type: str, result: object, tamil_names_enabled: boo
         ))
     if report_type == "discount-summary":
         return _discount_summary_body(cast(DiscountSummaryResponse, result))
+    if report_type == "waiter-item-wise":
+        result = cast(WaiterItemWiseSalesResponse, result)
+        return _waiter_item_wise_body(result.rows, tamil_names_enabled, result.total_revenue)
+    if report_type == "low-moving-items":
+        result = cast(LowMovingItemsResponse, result)
+        return _low_moving_items_body(result.rows, tamil_names_enabled)
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown report_type: {report_type}")
 
 
@@ -627,6 +710,10 @@ async def render_report_print_bytes(
             result = await report_service.discount_summary(session, tenant.id, params)
         elif req.report_type == "discount-detail":
             result = await report_service.discount_detail(session, tenant.id, params)
+        elif req.report_type == "waiter-item-wise":
+            result = await report_service.waiter_item_wise_sales(session, tenant.id, params)
+        elif req.report_type == "low-moving-items":
+            result = await report_service.low_moving_items(session, tenant.id, params)
         else:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown report_type: {req.report_type}")
 

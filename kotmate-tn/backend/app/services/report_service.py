@@ -33,6 +33,8 @@ from app.schemas.reports import (
     ItemListRow,
     ItemWiseSalesResponse,
     ItemWiseSalesRow,
+    LowMovingItemRow,
+    LowMovingItemsResponse,
     OrderTypeSalesResponse,
     OrderTypeSalesRow,
     PaymentMethodTotal,
@@ -45,6 +47,8 @@ from app.schemas.reports import (
     TaxSummaryResponse,
     WaiterIncentiveResponse,
     WaiterIncentiveRow,
+    WaiterItemWiseSalesResponse,
+    WaiterItemWiseSalesRow,
     WaiterSalesResponse,
     WaiterSalesRow,
     ZReportResponse,
@@ -203,6 +207,104 @@ async def item_wise_sales(
     return ItemWiseSalesResponse(
         rows=result_rows, total_revenue=round(sum(r.revenue for r in result_rows), 2)
     )
+
+
+async def waiter_item_wise_sales(
+    session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
+) -> WaiterItemWiseSalesResponse:
+    """Same shape/grouping algorithm as `item_wise_sales` (group-major by revenue
+    descending, items within a group by their own revenue descending), just grouped by
+    waiter instead of category. Bills with no waiter assigned are excluded, same
+    `Bill.waiter_id.isnot(None)` filter `waiter_wise_sales` already uses — there's no
+    "unassigned" bucket to fall into.
+    """
+    rows = (
+        await session.execute(
+            select(
+                BillItem.item_id,
+                BillItem.name_en_snapshot,
+                BillItem.name_ta_snapshot,
+                Waiter.id,
+                Waiter.name,
+                func.sum(BillItem.quantity),
+                func.sum(BillItem.line_total),
+            )
+            .join(Bill, Bill.id == BillItem.bill_id)
+            .join(Waiter, Waiter.id == Bill.waiter_id)
+            .where(*_bill_filters(tenant_id, params), Bill.waiter_id.isnot(None))
+            .group_by(
+                BillItem.item_id, BillItem.name_en_snapshot, BillItem.name_ta_snapshot, Waiter.id, Waiter.name
+            )
+            .order_by(func.sum(BillItem.line_total).desc())
+        )
+    ).all()
+    flat_rows = [
+        WaiterItemWiseSalesRow(
+            item_id=item_id,
+            name_en=name_en,
+            name_ta=name_ta,
+            waiter_id=waiter_id,
+            waiter_name=waiter_name,
+            quantity_sold=int(qty),
+            revenue=float(revenue),
+        )
+        for item_id, name_en, name_ta, waiter_id, waiter_name, qty, revenue in rows
+    ]
+
+    waiter_totals: dict[uuid.UUID, float] = {}
+    items_by_waiter: dict[uuid.UUID, list[WaiterItemWiseSalesRow]] = {}
+    for r in flat_rows:
+        waiter_totals[r.waiter_id] = waiter_totals.get(r.waiter_id, 0.0) + r.revenue
+        items_by_waiter.setdefault(r.waiter_id, []).append(r)
+    ordered_waiter_ids = sorted(waiter_totals, key=lambda wid: waiter_totals[wid], reverse=True)
+    result_rows = [r for wid in ordered_waiter_ids for r in items_by_waiter[wid]]
+
+    return WaiterItemWiseSalesResponse(
+        rows=result_rows, total_revenue=round(sum(r.revenue for r in result_rows), 2)
+    )
+
+
+async def low_moving_items(
+    session: AsyncSession, tenant_id: uuid.UUID, params: ReportQueryParams
+) -> LowMovingItemsResponse:
+    """Every active item that sold zero quantity in the report's date range/location —
+    the complement of `item_wise_sales`, not a threshold on a small-but-nonzero figure.
+    Grouped category-major by name (no revenue to sort by, since every row is zero),
+    same grouping idiom `item_list`/`item_wise_sales` already use.
+    """
+    sold_item_ids = (
+        select(BillItem.item_id)
+        .join(Bill, Bill.id == BillItem.bill_id)
+        .where(*_bill_filters(tenant_id, params))
+    )
+    rows = (
+        await session.execute(
+            select(
+                Item.id, Item.item_code, Item.name_en, Item.name_ta,
+                Category.id, Category.name_en, Category.name_ta,
+            )
+            .join(Category, Category.id == Item.category_id)
+            .where(
+                Item.tenant_id == tenant_id,
+                Item.is_active.is_(True),
+                Item.id.notin_(sold_item_ids),
+            )
+            .order_by(Category.name_en, Item.name_en)
+        )
+    ).all()
+    result_rows = [
+        LowMovingItemRow(
+            item_id=item_id,
+            item_code=item_code,
+            name_en=name_en,
+            name_ta=name_ta,
+            category_id=cat_id,
+            category_name_en=cat_name_en,
+            category_name_ta=cat_name_ta,
+        )
+        for item_id, item_code, name_en, name_ta, cat_id, cat_name_en, cat_name_ta in rows
+    ]
+    return LowMovingItemsResponse(rows=result_rows, total_items=len(result_rows))
 
 
 async def category_wise_sales(

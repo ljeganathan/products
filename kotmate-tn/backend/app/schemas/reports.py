@@ -59,6 +59,52 @@ class ItemWiseSalesResponse(BaseModel):
     total_revenue: float
 
 
+class WaiterItemWiseSalesRow(BaseModel):
+    """Same per-item shape as `ItemWiseSalesRow`, grouped by waiter instead of category
+    — see `report_service.waiter_item_wise_sales`. Name is snapshotted
+    (`BillItem.name_en_snapshot`) the same way item_wise_sales already does; waiter name
+    is a live join (waiters aren't versioned anywhere in this schema either).
+    """
+
+    item_id: uuid.UUID
+    name_en: str
+    name_ta: str | None
+    waiter_id: uuid.UUID
+    waiter_name: str
+    quantity_sold: int
+    revenue: float
+
+
+class WaiterItemWiseSalesResponse(BaseModel):
+    # Pre-grouped: waiters ordered by their own total revenue descending, items within
+    # each waiter ordered by their own revenue descending — same contract
+    # ItemWiseSalesResponse already guarantees for its category grouping.
+    rows: list[WaiterItemWiseSalesRow]
+    total_revenue: float
+
+
+class LowMovingItemRow(BaseModel):
+    """An active item with zero sales in the report's date range/location — see
+    `report_service.low_moving_items`. Category is a live join, same "live reference
+    data" treatment every other item-list-shaped report already gives categories.
+    """
+
+    item_id: uuid.UUID
+    item_code: str | None
+    name_en: str
+    name_ta: str | None
+    category_id: uuid.UUID
+    category_name_en: str
+    category_name_ta: str | None
+
+
+class LowMovingItemsResponse(BaseModel):
+    # Pre-grouped category-major (category name, then item name) — same "caller never
+    # re-sorts" contract item_wise_sales guarantees for its own grouping.
+    rows: list[LowMovingItemRow]
+    total_items: int
+
+
 class CategoryWiseSalesRow(BaseModel):
     category_id: uuid.UUID
     name_en: str

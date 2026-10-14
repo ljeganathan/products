@@ -19,6 +19,8 @@ REPORT_PRINT_TYPES = [
     "z-report",
     "item-list",
     "order-type-wise",
+    "waiter-item-wise",
+    "low-moving-items",
 ]
 
 

@@ -16,12 +16,14 @@ import {
   getDiscountSummary,
   getItemList,
   getItemWiseSales,
+  getLowMovingItems,
   getOrderTypeWiseSales,
   getPosOperatorIncentive,
   getPosOperatorWiseSales,
   getSalesSummary,
   getTaxSummary,
   getWaiterIncentive,
+  getWaiterItemWiseSales,
   getWaiterWiseSales,
   getZReport,
   printReport,
@@ -39,10 +41,12 @@ const REPORTS = [
   { key: "item-list", label: "Item List" },
   { key: "item-wise", label: "Item-wise Sales" },
   { key: "category-wise", label: "Category-wise Sales" },
+  { key: "low-moving-items", label: "Low Moving Items (No Sales)" },
   { key: "discount-summary", label: "Discount Summary" },
   { key: "discount-detail", label: "Discount Detail" },
   { key: "tax-summary", label: "Tax Summary" },
   { key: "waiter-wise", label: "Waiter-wise Sales" },
+  { key: "waiter-item-wise", label: "Waiter-wise Item Sales" },
   { key: "cashier-wise", label: "Cashier-wise Sales" },
   { key: "waiter-incentive", label: "Waiter Incentive" },
   { key: "cashier-incentive", label: "Cashier Incentive" },
@@ -96,6 +100,10 @@ export function ReportsPage() {
           return getDiscountDetail(params);
         case "waiter-wise":
           return getWaiterWiseSales(params);
+        case "waiter-item-wise":
+          return getWaiterItemWiseSales(params);
+        case "low-moving-items":
+          return getLowMovingItems(params);
         case "cashier-wise":
           return getCashierWiseSales(params);
         case "waiter-incentive":
@@ -470,6 +478,124 @@ function ReportTable({ reportKey, data }: { reportKey: ReportKey; data: any }) {
                 <td className={tdClass} />
                 <td className={`${tdClass} text-right tabular-nums`}>{formatINR(data.total_revenue)}</td>
               </tr>
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    case "waiter-item-wise": {
+      // Same waiter-major grouping (waiters by own total revenue descending, items
+      // within a waiter by their own revenue descending) as item-wise's category
+      // grouping above — render a bold group header wherever the waiter changes.
+      let lastWaiterId: string | null = null;
+      return (
+        <div className={tableWrapClass}>
+          <table className={tableClass}>
+            <thead className={theadClass}>
+              <tr>
+                <th className={thClass}>Item</th>
+                <th className={`${thClass} text-right`}>Qty Sold</th>
+                <th className={`${thClass} text-right`}>Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map(
+                (r: {
+                  item_id: string;
+                  name_en: string;
+                  name_ta: string | null;
+                  waiter_id: string;
+                  waiter_name: string;
+                  quantity_sold: number;
+                  revenue: number;
+                }) => {
+                  const showWaiterHeader = r.waiter_id !== lastWaiterId;
+                  lastWaiterId = r.waiter_id;
+                  return (
+                    <Fragment key={r.item_id}>
+                      {showWaiterHeader && (
+                        <tr className="border-t border-border bg-foreground/5">
+                          <td className={`${tdClass} font-semibold`} colSpan={3}>
+                            {r.waiter_name}
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="border-t border-border">
+                        <td className={tdClass}>
+                          {r.name_en}
+                          {r.name_ta && <span className="ml-1.5 text-foreground/50">/ {r.name_ta}</span>}
+                        </td>
+                        <td className={`${tdClass} text-right tabular-nums`}>{r.quantity_sold}</td>
+                        <td className={`${tdClass} text-right tabular-nums`}>{formatINR(r.revenue)}</td>
+                      </tr>
+                    </Fragment>
+                  );
+                },
+              )}
+              <tr className={totalRowClass}>
+                <td className={tdClass}>TOTAL</td>
+                <td className={tdClass} />
+                <td className={`${tdClass} text-right tabular-nums`}>{formatINR(data.total_revenue)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    case "low-moving-items": {
+      // Every active item with zero sales in the window — grouped by category like
+      // item-wise/item-list, but no Qty/Sales columns at all since every row is zero.
+      let lastCategoryId: string | null = null;
+      return (
+        <div className={tableWrapClass}>
+          <table className={tableClass}>
+            <thead className={theadClass}>
+              <tr>
+                <th className={thClass}>Code</th>
+                <th className={thClass}>Item</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.length === 0 && (
+                <tr>
+                  <td className={`${tdClass} text-center text-foreground/50`} colSpan={2}>
+                    Every active item sold at least once in this period.
+                  </td>
+                </tr>
+              )}
+              {data.rows.map(
+                (r: {
+                  item_id: string;
+                  item_code: string | null;
+                  name_en: string;
+                  name_ta: string | null;
+                  category_id: string;
+                  category_name_en: string;
+                }) => {
+                  const showCategoryHeader = r.category_id !== lastCategoryId;
+                  lastCategoryId = r.category_id;
+                  return (
+                    <Fragment key={r.item_id}>
+                      {showCategoryHeader && (
+                        <tr className="border-t border-border bg-foreground/5">
+                          <td className={`${tdClass} font-semibold`} colSpan={2}>
+                            {r.category_name_en}
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="border-t border-border">
+                        <td className={`${tdClass} font-mono text-xs text-foreground/60`}>{r.item_code ?? "—"}</td>
+                        <td className={tdClass}>
+                          {r.name_en}
+                          {r.name_ta && <span className="ml-1.5 text-foreground/50">/ {r.name_ta}</span>}
+                        </td>
+                      </tr>
+                    </Fragment>
+                  );
+                },
+              )}
             </tbody>
           </table>
         </div>

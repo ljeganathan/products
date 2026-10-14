@@ -52,6 +52,36 @@ export interface CategoryWiseSales {
   total_revenue: number;
 }
 
+export interface WaiterItemWiseSalesRow {
+  item_id: string;
+  name_en: string;
+  name_ta: string | null;
+  // Rows arrive pre-grouped waiter-major (waiters by total revenue descending, items
+  // within a waiter by their own revenue descending).
+  waiter_id: string;
+  waiter_name: string;
+  quantity_sold: number;
+  revenue: number;
+}
+export interface WaiterItemWiseSales {
+  rows: WaiterItemWiseSalesRow[];
+  total_revenue: number;
+}
+
+export interface LowMovingItemRow {
+  item_id: string;
+  item_code: string | null;
+  name_en: string;
+  name_ta: string | null;
+  category_id: string;
+  category_name_en: string;
+  category_name_ta: string | null;
+}
+export interface LowMovingItems {
+  rows: LowMovingItemRow[];
+  total_items: number;
+}
+
 export interface OrderTypeSalesRow {
   section_id: string;
   label: string;
@@ -211,6 +241,10 @@ export const getSalesSummary = (params: ReportFilterParams) => getReport<SalesSu
 export const getItemWiseSales = (params: ReportFilterParams) => getReport<ItemWiseSales>("item-wise", params);
 export const getCategoryWiseSales = (params: ReportFilterParams) =>
   getReport<CategoryWiseSales>("category-wise", params);
+export const getWaiterItemWiseSales = (params: ReportFilterParams) =>
+  getReport<WaiterItemWiseSales>("waiter-item-wise", params);
+export const getLowMovingItems = (params: ReportFilterParams) =>
+  getReport<LowMovingItems>("low-moving-items", params);
 export const getTaxSummary = (params: ReportFilterParams) => getReport<TaxSummary>("tax-summary", params);
 export const getOrderTypeWiseSales = (params: ReportFilterParams) =>
   getReport<OrderTypeSales>("order-type-wise", params);

@@ -20,6 +20,7 @@ from app.schemas.reports import (
     DiscountSummaryResponse,
     ItemListResponse,
     ItemWiseSalesResponse,
+    LowMovingItemsResponse,
     OrderTypeSalesResponse,
     PosOperatorIncentiveResponse,
     PosOperatorSalesResponse,
@@ -27,6 +28,7 @@ from app.schemas.reports import (
     SalesSummaryResponse,
     TaxSummaryResponse,
     WaiterIncentiveResponse,
+    WaiterItemWiseSalesResponse,
     WaiterSalesResponse,
     ZReportResponse,
 )
@@ -118,6 +120,42 @@ async def get_item_wise_sales(
     if export:
         await _require_export_format(db, current_user.tenant_id, export)
         return _export_response("item-wise", result, export)
+    return result
+
+
+@router.get("/waiter-item-wise", response_model=WaiterItemWiseSalesResponse)
+async def get_waiter_item_wise_sales(
+    date_from: date,
+    date_to: date,
+    location_id: uuid.UUID | None = None,
+    export: str | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> WaiterItemWiseSalesResponse | Response:
+    result = await report_service.waiter_item_wise_sales(
+        db, current_user.tenant_id, _params(date_from, date_to, location_id)
+    )
+    if export:
+        await _require_export_format(db, current_user.tenant_id, export)
+        return _export_response("waiter-item-wise", result, export)
+    return result
+
+
+@router.get("/low-moving-items", response_model=LowMovingItemsResponse)
+async def get_low_moving_items(
+    date_from: date,
+    date_to: date,
+    location_id: uuid.UUID | None = None,
+    export: str | None = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> LowMovingItemsResponse | Response:
+    result = await report_service.low_moving_items(
+        db, current_user.tenant_id, _params(date_from, date_to, location_id)
+    )
+    if export:
+        await _require_export_format(db, current_user.tenant_id, export)
+        return _export_response("low-moving-items", result, export)
     return result
 
 
