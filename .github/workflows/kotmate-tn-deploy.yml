@@ -92,6 +92,12 @@ jobs:
           host: ${{ secrets.KOTMATE_DEPLOY_HOST }}
           username: ${{ secrets.KOTMATE_DEPLOY_USER }}
           key: ${{ secrets.KOTMATE_DEPLOY_SSH_KEY }}
+          # Default command_timeout is 10m — too short for the rare occasion the
+          # backend's unpinned python:3.11-slim base image gets a Debian update
+          # upstream, which busts the whole Docker layer cache and forces a full
+          # apt-get/pip reinstall during the build (seen 2026-10-14: the deploy was
+          # killed mid-rebuild with "Run Command Timeout", not an actual failure).
+          command_timeout: 30m
           script: |
             cd ${{ secrets.KOTMATE_DEPLOY_PATH }}
             bash scripts/deploy.sh
