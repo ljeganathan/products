@@ -26,9 +26,10 @@ interface GroupedTicket {
   // ticket" action is replaced by a plain status pill.
   billedViaKot: boolean;
   billNumber: string | null;
-  // "guest" once any ticket in the group came from a QR self-order (Phase 25) — every
-  // ticket in one order shares the same source, so the first one seen is authoritative.
-  source: "staff" | "guest";
+  // "guest" once any ticket in the group came from a QR self-order (Phase 25), "kiosk"
+  // from the self-order kiosk — every ticket in one order shares the same source, so
+  // the first one seen is authoritative.
+  source: "staff" | "guest" | "kiosk";
   // True once the guest has tapped "Request Bill" on their own phone — every ticket in
   // the order shares the same guest_sessions row, so the first one seen is authoritative.
   paymentClaimed: boolean;
