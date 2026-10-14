@@ -1,0 +1,8 @@
+{
+  "api_base": "https://app.kotmatetn.in",
+  "user_id": "HTL1KITCHEN01",
+  "password": "replace-with-a-real-password",
+  "agent_url": "http://127.0.0.1:9123",
+  "poll_seconds": 5,
+  "location_id": null
+}
