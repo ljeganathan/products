@@ -399,6 +399,7 @@ async def create_guest_payment(
         notes={"tenant_id": str(guest.tenant_id), "order_id": str(guest_session.order_id), "for": label},
         customer_name=guest_session.customer_name,
         customer_phone=guest_session.customer_phone,
+        upi_only=guest_session.is_kiosk,
     )
     session.add(
         PaymentAttempt(

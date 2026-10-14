@@ -149,6 +149,15 @@ export function OnlinePayCard({
     }
   }, [onPaid, onSessionEnded]);
 
+  // Kiosk only — opens the (UPI-restricted) checkout itself, the instant this card
+  // appears, instead of waiting for a tap: nobody's there to read a row of payment
+  // buttons on an unattended screen, so the only thing shown is the QR once the
+  // checkout opens (see the `kioskMode` config.display/order_meta restrictions below).
+  useEffect(() => {
+    if (kioskMode && phase === "idle") void pay("standard");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kioskMode, phase]);
+
   // While waiting, ask our own server (which asks Razorpay) — never trust the browser's
   // "success" callback on its own — and re-check the moment the customer returns from
   // their UPI app.
@@ -223,6 +232,23 @@ export function OnlinePayCard({
           theme: { color: "#1f7a55" },
           handler: () => void checkStatus(),
           modal: { ondismiss: () => void checkStatus() },
+          // Kiosk only — restricts Razorpay's own checkout to a single UPI block,
+          // hiding cards/netbanking/wallets entirely (documented `config.display`
+          // customization: a lone block with show_default_blocks off). Nobody's
+          // standing at a kiosk to tap through payment methods it can't actually use.
+          ...(kioskMode
+            ? {
+                config: {
+                  display: {
+                    blocks: {
+                      upi_only: { name: "Pay via UPI", instruments: [{ method: "upi" }] },
+                    },
+                    sequence: ["block.upi_only"],
+                    preferences: { show_default_blocks: false },
+                  },
+                },
+              }
+            : {}),
         });
         checkout.open?.();
         setPhase("waiting");
@@ -295,7 +321,11 @@ export function OnlinePayCard({
         <div className="flex flex-col items-center gap-2 py-3 text-center" role="status">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-surface-3 border-t-accent" />
           <p className="text-sm font-bold">Confirming your payment…</p>
-          <p className="text-xs text-ink-faint">Finish paying in your UPI app, then come back to this page.</p>
+          <p className="text-xs text-ink-faint">
+            {kioskMode
+              ? "Scan the QR code on screen with any UPI app."
+              : "Finish paying in your UPI app, then come back to this page."}
+          </p>
           {gaveUp && (
             <button
               type="button"
@@ -305,16 +335,45 @@ export function OnlinePayCard({
               Check payment status
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              setPhase("idle");
-              setMessage(null);
-            }}
-            className="text-xs text-ink-faint underline"
-          >
-            Cancel and choose another way
-          </button>
+          {/* Kiosk has no "another way" to fall back to — it always pays by QR. */}
+          {!kioskMode && (
+            <button
+              type="button"
+              onClick={() => {
+                setPhase("idle");
+                setMessage(null);
+              }}
+              className="text-xs text-ink-faint underline"
+            >
+              Cancel and choose another way
+            </button>
+          )}
+        </div>
+      ) : kioskMode ? (
+        // Kiosk shows no buttons at all — payment starts itself (the effect above) and
+        // the QR appears inside the checkout it opens; this only ever renders for a
+        // moment before that, or if opening it failed.
+        <div className="flex flex-col items-center gap-2 py-3 text-center">
+          {phase === "failed" && message ? (
+            <>
+              <p role="alert" className="rounded-lg bg-chili-soft px-3 py-2 text-xs font-semibold text-chili">
+                {message}
+                {refundNote && " If money was deducted, your bank refunds it automatically."}
+              </p>
+              <button
+                type="button"
+                onClick={() => void pay("standard")}
+                className="rounded-lg border border-border px-4 py-2 text-xs font-bold hover:bg-surface-2"
+              >
+                Try again
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="h-6 w-6 animate-spin rounded-full border-4 border-surface-3 border-t-accent" />
+              <p className="text-xs text-ink-faint">Preparing your QR code…</p>
+            </>
+          )}
         </div>
       ) : (
         <div className="flex flex-col gap-2">

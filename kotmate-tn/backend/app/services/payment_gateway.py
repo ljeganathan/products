@@ -65,9 +65,19 @@ class PaymentGateway(Protocol):
         notes: dict[str, str],
         customer_name: str | None,
         customer_phone: str | None,
+        upi_only: bool = False,
     ) -> dict[str, Any]:
         """Returns at least `id` (the provider's order id). Cashfree also returns
-        `payment_session_id`, which the guest checkout needs."""
+        `payment_session_id`, which the guest checkout needs.
+
+        `upi_only` is the self-order kiosk's "just show the QR code, not every payment
+        method" request — nobody's standing at a kiosk to tap through a cards/netbanking
+        tab. Only Cashfree needs to know this at order-creation time (its drop-in
+        checkout has no client-side method filter, so the restriction has to be baked
+        into the order via `order_meta.payment_methods`); Razorpay's equivalent is a
+        Checkout.js `config.display` option passed client-side instead (OnlinePayCard.tsx),
+        so `RazorpayGateway` below simply ignores this flag.
+        """
         ...
 
     async def fetch_order_payments(self, provider_order_id: str) -> list[dict[str, Any]]:
@@ -159,7 +169,10 @@ class RazorpayGateway:
         notes: dict[str, str],
         customer_name: str | None,
         customer_phone: str | None,
+        upi_only: bool = False,
     ) -> dict[str, Any]:
+        # upi_only is irrelevant here — Razorpay's restriction is a Checkout.js client
+        # option (OnlinePayCard.tsx), not an order-creation one.
         return await self._request(
             "POST",
             "/orders",
@@ -237,27 +250,31 @@ class CashfreeGateway:
         notes: dict[str, str],
         customer_name: str | None,
         customer_phone: str | None,
+        upi_only: bool = False,
     ) -> dict[str, Any]:
         digits = "".join(ch for ch in (customer_phone or "") if ch.isdigit())[-10:]
         if len(digits) != 10:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "A 10-digit phone number is needed to pay online"
             )
-        answer = await self._request(
-            "POST",
-            "/orders",
-            {
-                "order_id": receipt,
-                "order_amount": f"{amount_paise / 100:.2f}",
-                "order_currency": "INR",
-                "order_note": notes.get("for", "")[:100],
-                "customer_details": {
-                    "customer_id": f"cust_{receipt}".replace("-", "_")[:50],
-                    "customer_phone": digits,
-                    "customer_name": (customer_name or "Guest")[:100],
-                },
+        body: dict[str, Any] = {
+            "order_id": receipt,
+            "order_amount": f"{amount_paise / 100:.2f}",
+            "order_currency": "INR",
+            "order_note": notes.get("for", "")[:100],
+            "customer_details": {
+                "customer_id": f"cust_{receipt}".replace("-", "_")[:50],
+                "customer_phone": digits,
+                "customer_name": (customer_name or "Guest")[:100],
             },
-        )
+        }
+        if upi_only:
+            # Restricts Cashfree's own hosted checkout to UPI only (QR/collect/apps),
+            # hiding cards/netbanking/wallets entirely — documented `order_meta.
+            # payment_methods` field (comma-separated mode codes). The kiosk has no
+            # cardholder standing there to use those anyway.
+            body["order_meta"] = {"payment_methods": "upi"}
+        answer = await self._request("POST", "/orders", body)
         return {"id": answer["order_id"], "payment_session_id": answer["payment_session_id"]}
 
     async def fetch_order_payments(self, provider_order_id: str) -> list[dict[str, Any]]:
