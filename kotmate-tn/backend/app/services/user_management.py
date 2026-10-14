@@ -19,6 +19,10 @@ _ROLE_PLAN_FEATURE_GATES = {
         "pos_operator_role",
         "POS Operator accounts are only available on Pro Max. Upgrade to add one.",
     ),
+    "kiosk": (
+        "qr_self_order",
+        "Kiosk accounts need the Pro Max plan's QR self-order feature. Upgrade to add one.",
+    ),
 }
 
 

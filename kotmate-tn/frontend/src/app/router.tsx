@@ -16,6 +16,7 @@ import { ProtectedRoute } from "@/modules/auth/ProtectedRoute";
 import { roleHomePath, useAuthStore } from "@/modules/auth/authStore";
 import { BillHistoryPage } from "@/modules/billing/BillHistoryPage";
 import { GuestOrderApp } from "@/modules/guest/GuestOrderApp";
+import { KioskOrderApp } from "@/modules/guest/KioskOrderApp";
 import { KotDisplayPage } from "@/modules/kot/KotDisplayPage";
 import { POSLayoutRouter } from "@/modules/pos/POSLayoutRouter";
 import { ContentPage } from "@/modules/product-owner/ContentPage";
@@ -62,6 +63,12 @@ export const router = createBrowserRouter([
   {
     element: <ProtectedRoute roles={["tenant_admin", "kitchen"]} />,
     children: [{ path: "/kot", element: <KotDisplayPage /> }],
+  },
+  {
+    // Kiosk (CLAUDE.md §5-adjacent) — a login confined to this one screen, same
+    // treatment as KOT User's /kot above. It never sees POS/reports/admin.
+    element: <ProtectedRoute roles={["tenant_admin", "kiosk"]} />,
+    children: [{ path: "/kiosk", element: <KioskOrderApp /> }],
   },
   {
     // Bill history/reprint (Phase 09), Dashboard + Reports (Phase 11) — cashier +

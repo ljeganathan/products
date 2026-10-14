@@ -31,7 +31,7 @@ import {
 
 type Tab = "menu" | "status" | "bill";
 
-function toLineInputs(order: Order | null): OrderLineInput[] {
+export function toLineInputs(order: Order | null): OrderLineInput[] {
   if (!order) return [];
   return order.items.map((line) => ({ id: line.id, item_id: line.item_id, quantity: line.quantity, notes: line.notes }));
 }
@@ -370,12 +370,17 @@ export function GuestOrderApp() {
   );
 }
 
-function RequiredProfileScreen({
+export function RequiredProfileScreen({
   onSaved,
   onSessionEnded,
+  topRight,
 }: {
   onSaved: (updated: GuestSession) => void;
   onSessionEnded: () => void;
+  // Kiosk only — a logged-in staff Kiosk session needs a way to log out even from this
+  // first screen; a real guest on their own phone has no staff session to log out of,
+  // so GuestOrderApp never passes this.
+  topRight?: React.ReactNode;
 }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -401,7 +406,8 @@ function RequiredProfileScreen({
   }
 
   return (
-    <div className="flex h-dvh w-screen flex-col items-center justify-center bg-background p-6 text-foreground">
+    <div className="relative flex h-dvh w-screen flex-col items-center justify-center bg-background p-6 text-foreground">
+      {topRight && <div className="absolute right-3 top-3">{topRight}</div>}
       <img src={logoMark} alt="" className="mb-4 h-12 w-12 object-contain" />
       <h1 className="mb-1 text-lg font-extrabold">Welcome!</h1>
       <p className="mb-5 max-w-xs text-center text-sm text-ink-faint">
@@ -443,7 +449,7 @@ function RequiredProfileScreen({
   );
 }
 
-function CenteredMessage({ children }: { children: React.ReactNode }) {
+export function CenteredMessage({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-dvh w-screen items-center justify-center bg-background p-6 text-center text-foreground">
       <div className="text-sm font-semibold text-ink-soft">{children}</div>
@@ -451,7 +457,7 @@ function CenteredMessage({ children }: { children: React.ReactNode }) {
   );
 }
 
-function MenuTab({
+export function MenuTab({
   hotelName,
   branchName,
   items,
@@ -527,11 +533,12 @@ function MenuTab({
   );
 }
 
-function CartSheet({
+export function CartSheet({
   order,
   busy,
   takeaway,
   onlineAvailable,
+  kioskMode = false,
   onQuantityChange,
   onSend,
   onClose,
@@ -540,6 +547,9 @@ function CartSheet({
   busy: boolean;
   takeaway: boolean;
   onlineAvailable: boolean;
+  // No cash-at-the-counter option — nobody is there to collect it (CLAUDE.md
+  // kiosk-ordering note). The kiosk always pays online.
+  kioskMode?: boolean;
   onQuantityChange: (lineId: string, qty: number) => void;
   onSend: (paymentMethod?: "online" | "cash") => void;
   onClose: () => void;
@@ -604,27 +614,42 @@ function CartSheet({
 
         {takeaway ? (
           <div className="flex flex-col gap-2">
-            <p className="text-sm font-extrabold">How would you like to pay?</p>
-            {onlineAvailable && (
+            {kioskMode ? (
               <button
                 type="button"
                 onClick={() => onSend("online")}
                 disabled={unsent.length === 0 || busy}
                 className="rounded-lg bg-accent py-3 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
               >
-                💳 Pay online now
+                {busy ? "Placing…" : "💳 Pay to place your order"}
               </button>
+            ) : (
+              <>
+                <p className="text-sm font-extrabold">How would you like to pay?</p>
+                {onlineAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => onSend("online")}
+                    disabled={unsent.length === 0 || busy}
+                    className="rounded-lg bg-accent py-3 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
+                  >
+                    💳 Pay online now
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onSend("cash")}
+                  disabled={unsent.length === 0 || busy}
+                  className={`rounded-lg py-3 text-sm font-extrabold disabled:opacity-40 ${
+                    onlineAvailable
+                      ? "border border-border hover:bg-surface-2"
+                      : "bg-accent text-accent-foreground"
+                  }`}
+                >
+                  {busy ? "Placing…" : "💵 Pay by cash at the counter"}
+                </button>
+              </>
             )}
-            <button
-              type="button"
-              onClick={() => onSend("cash")}
-              disabled={unsent.length === 0 || busy}
-              className={`rounded-lg py-3 text-sm font-extrabold disabled:opacity-40 ${
-                onlineAvailable ? "border border-border hover:bg-surface-2" : "bg-accent text-accent-foreground"
-              }`}
-            >
-              {busy ? "Placing…" : "💵 Pay by cash at the counter"}
-            </button>
             <button
               type="button"
               onClick={onClose}
@@ -737,7 +762,7 @@ function ProfileSheet({
   );
 }
 
-function StatusTab({
+export function StatusTab({
   takeaway,
   onSessionEnded,
   onGoToBill,
@@ -806,14 +831,18 @@ function StatusTab({
   );
 }
 
-function BillTab({
+export function BillTab({
   tokenLabel,
   payAtCounter,
+  kioskMode = false,
   onSessionEnded,
+  onPaid,
 }: {
   tokenLabel: string;
   payAtCounter: boolean;
+  kioskMode?: boolean;
   onSessionEnded: () => void;
+  onPaid?: () => void;
 }) {
   const queryClient = useQueryClient();
   const { data, isLoading, isError, error } = useQuery<GuestBillPreview>({
@@ -870,18 +899,29 @@ function BillTab({
           info={data.online_payment}
           total={data.grand_total}
           tokenLabel={tokenLabel}
-          onPaid={() => void queryClient.invalidateQueries({ queryKey: ["guest-bill-preview"] })}
+          kioskMode={kioskMode}
+          onPaid={() => {
+            void queryClient.invalidateQueries({ queryKey: ["guest-bill-preview"] });
+            onPaid?.();
+          }}
           onSessionEnded={onSessionEnded}
         />
       )}
 
-      {!payAtCounter && !data.online_payment.enabled && data.upi_link && (
+      {/* The plain VPA-deep-link QR has no gateway behind it, so nothing would ever
+          confirm the payment automatically — never shown on an unattended kiosk. */}
+      {!payAtCounter && !kioskMode && !data.online_payment.enabled && data.upi_link && (
         <div className="mt-4 rounded-xl border border-border bg-surface p-4 text-center shadow-pos">
           <h2 className="mb-1 text-sm font-extrabold uppercase tracking-wide text-ink-faint">
             💳 Scan to Pay via UPI
           </h2>
           <p className="mb-1 text-xs text-ink-faint">Scan with any UPI app, or download and pay from another device.</p>
           <QrCodeImage value={data.upi_link} downloadName={`upi-payment-${Math.round(data.grand_total)}`} />
+        </div>
+      )}
+      {!payAtCounter && kioskMode && !data.online_payment.enabled && (
+        <div className="mt-4 rounded-xl border border-border bg-chili-soft p-4 text-center text-chili shadow-pos">
+          <p className="text-sm font-bold">Online payment isn&apos;t set up for this kiosk — please ask staff.</p>
         </div>
       )}
     </div>

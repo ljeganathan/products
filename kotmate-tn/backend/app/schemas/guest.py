@@ -125,6 +125,16 @@ class SectionQrCodeResponse(BaseModel):
     is_active: bool
 
 
+class KioskSessionRequest(BaseModel):
+    """Which counter this kiosk screen is for — picked once on the device itself (not
+    stored server-side) and sent on every "start a fresh order" call, same as a kiosk
+    re-scanning its own section's QR each time.
+    """
+
+    location_id: uuid.UUID
+    section_id: uuid.UUID
+
+
 class QrSelfOrderSettingsRequest(BaseModel):
     enabled: bool
 

@@ -68,6 +68,14 @@ class GuestSession(UUIDPKMixin, TimestampMixin, Base):
     # POS list until the payment is verified; 'cash' puts it there for the counter to confirm.
     # NULL for dine-in and for takeaway sessions placed before this column existed.
     takeaway_payment: Mapped[str | None] = mapped_column(String(10))
+    # Set only for a session minted by a "Kiosk" role login (app/api/v1/kiosk.py), never
+    # by a real QR scan — an unattended on-premise ordering screen. Otherwise an ordinary
+    # Takeaway/section session in every respect (always table_id=None); this flag only
+    # changes two things: the order it creates is tagged source="kiosk" instead of
+    # "guest" (orders.py), and a verified online payment auto-finalizes the bill together
+    # with the kitchen ticket (online_payment_service.py) instead of just firing the
+    # ticket and waiting for staff to pick it up — nobody is there to do that for a kiosk.
+    is_kiosk: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         tenant_composite_index("guest_sessions"),

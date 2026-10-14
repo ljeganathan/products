@@ -21,15 +21,17 @@ const inputClass =
   "min-h-10 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-accent";
 const labelClass = "text-xs font-medium text-foreground/70";
 
-const STAFF_ROLES: StaffRole[] = ["tenant_admin", "pos_user", "waiter", "kitchen", "pos_operator"];
+const STAFF_ROLES: StaffRole[] = ["tenant_admin", "pos_user", "waiter", "kitchen", "pos_operator", "kiosk"];
 const BILLABLE_ROLES: StaffRole[] = ["tenant_admin", "pos_user", "pos_operator"];
 const INCENTIVE_ROLES: StaffRole[] = ["pos_user", "pos_operator"];
-// Both Pro Max only (production feedback round 2) — hidden from the role dropdown
-// entirely rather than shown-then-rejected, same pattern as other plan-gated options
-// elsewhere in Settings/Printers.
+// All Pro Max only — hidden from the role dropdown entirely rather than
+// shown-then-rejected, same pattern as other plan-gated options elsewhere in
+// Settings/Printers. "kiosk" rides on the QR self-order feature (it only ever mints a
+// guest session for an unattended ordering screen).
 const PLAN_GATED_ROLES: Partial<Record<StaffRole, string>> = {
   kitchen: "kds",
   pos_operator: "pos_operator_role",
+  kiosk: "qr_self_order",
 };
 
 function apiErrorMessage(err: unknown, fallback: string): string {
@@ -46,6 +48,7 @@ function RoleBadge({ role }: { role: StaffRole }) {
     waiter: "bg-gold/15 text-gold",
     kitchen: "bg-foreground/10 text-foreground/70",
     pos_operator: "bg-veg/15 text-veg",
+    kiosk: "bg-gold/15 text-gold",
   };
   return (
     <span

@@ -86,15 +86,19 @@ GST_STATE_CODES = {
     "38": "Ladakh",
 }
 
-ROLE_CODES = ["product_owner", "tenant_admin", "pos_user", "waiter", "kitchen", "pos_operator"]
+ROLE_CODES = ["product_owner", "tenant_admin", "pos_user", "waiter", "kitchen", "pos_operator", "kiosk"]
 
 # Roles a tenant_admin can assign in User Management (Phase 04) — product_owner is
 # platform-only and never appears here. "kitchen" is labeled "KOT User" in all UI copy
 # (CLAUDE.md §5) but keeps its backend role code for RLS/API continuity. "pos_operator"
 # is POS-screen-only (Pro Max only, plan-gated via features.pos_operator_role) —
 # identical POS billing capability to pos_user/Cashier, but no Reports/Dashboard/Bill
-# History/Admin access at all.
-TENANT_STAFF_ROLE_CODES = ["tenant_admin", "pos_user", "waiter", "kitchen", "pos_operator"]
+# History/Admin access at all. "kiosk" is narrower still — its login only mints a fresh
+# QR-self-order guest session for an unattended on-premise ordering screen (Pro Max
+# only, gated via features.qr_self_order like the rest of that feature); it never
+# touches POS/orders/bills/reports itself — the actual ordering happens over a guest
+# JWT the same way a scanned table/Takeaway QR already works.
+TENANT_STAFF_ROLE_CODES = ["tenant_admin", "pos_user", "waiter", "kitchen", "pos_operator", "kiosk"]
 
 # Roles counted against plans.max_users (CLAUDE.md §6: "Users (Admin + POS)") — waiter
 # and kitchen seats are uncapped by the seat limit. pos_operator counts the same as

@@ -152,6 +152,14 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
                           📱 Self-order
                         </span>
                       )}
+                      {group.source === "kiosk" && (
+                        <span
+                          className="ml-1.5 rounded-full bg-surface-3 px-2 py-0.5 text-[10px] font-extrabold text-ink-soft"
+                          title="Placed by the customer via the self-order kiosk"
+                        >
+                          🖥️ Kiosk
+                        </span>
+                      )}
                       {group.isPendingTakeaway && (
                         <span
                           className="ml-1.5 rounded-full bg-chili-soft px-2 py-0.5 text-[10px] font-extrabold text-chili"

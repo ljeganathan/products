@@ -107,12 +107,18 @@ export function OnlinePayCard({
   info,
   total,
   tokenLabel,
+  kioskMode = false,
   onPaid,
   onSessionEnded,
 }: {
   info: GuestOnlinePaymentInfo;
   total: number;
   tokenLabel: string;
+  // An unattended kiosk screen is never the customer's own phone, so it must never try
+  // to open an app-intent payment on itself — always the one checkout button that shows
+  // a scannable QR (Razorpay/Cashfree's own checkout already does this by default on a
+  // non-mobile-UA browser), never the Google Pay/PhonePe intent buttons below.
+  kioskMode?: boolean;
   onPaid: () => void;
   onSessionEnded: () => void;
 }) {
@@ -124,7 +130,7 @@ export function OnlinePayCard({
   const [refundNote, setRefundNote] = useState(false);
   const [reference, setReference] = useState<string | null>(info.reference);
   const startedAt = useRef(0);
-  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const isMobile = !kioskMode && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
   const checkStatus = useCallback(async () => {
     try {
@@ -264,7 +270,9 @@ export function OnlinePayCard({
         <p className="mt-2 text-[11px] font-bold uppercase tracking-wide text-ink-faint">Your order</p>
         <p className="font-mono text-4xl font-black leading-none">{tokenLabel}</p>
         <p className="mt-1 rounded-lg bg-surface-2 px-3 py-2 text-xs text-ink-soft">
-          Show this at the counter when your order is ready.
+          {kioskMode
+            ? "Sent to the kitchen — remember your number and collect it when ready."
+            : "Show this at the counter when your order is ready."}
         </p>
       </div>
     );

@@ -2,8 +2,9 @@ import { api } from "@/lib/api";
 
 // CLAUDE.md §5 — "kitchen" is labeled "KOT User" everywhere in UI copy; role code
 // stays `kitchen` for backend/API/RLS continuity. "pos_operator" ("POS Operator") is
-// POS-screen-only, Pro Max only — production feedback round 2.
-export type StaffRole = "tenant_admin" | "pos_user" | "waiter" | "kitchen" | "pos_operator";
+// POS-screen-only, Pro Max only — production feedback round 2. "kiosk" ("Kiosk") only
+// starts a fresh QR self-order session for an unattended ordering screen.
+export type StaffRole = "tenant_admin" | "pos_user" | "waiter" | "kitchen" | "pos_operator" | "kiosk";
 
 export const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
   tenant_admin: "Admin",
@@ -11,6 +12,7 @@ export const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
   waiter: "Waiter",
   kitchen: "KOT User",
   pos_operator: "POS Operator",
+  kiosk: "Kiosk",
 };
 
 export interface TenantUser {

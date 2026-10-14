@@ -8,6 +8,7 @@ from app.api.v1.discount_rules import router as discount_rules_router
 from app.api.v1.guest import router as guest_router
 from app.api.v1.health import router as health_router
 from app.api.v1.items import router as items_router
+from app.api.v1.kiosk import router as kiosk_router
 from app.api.v1.kot import router as kot_router
 from app.api.v1.locations import router as locations_router
 from app.api.v1.orders import router as orders_router
@@ -57,5 +58,6 @@ api_router.include_router(stock_router)
 api_router.include_router(reports_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(guest_router)
+api_router.include_router(kiosk_router)
 api_router.include_router(webhooks_router)
 api_router.include_router(public_router)

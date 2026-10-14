@@ -25,8 +25,9 @@ export interface ActiveKotTicket {
   order_billed_via_kot: boolean;
   // The finalized bill's number, set whenever order_billed_via_kot is true.
   bill_number: string | null;
-  // "staff" or "guest" (Phase 25 QR self-order) — drives the "📱 Self-order" badge.
-  source: "staff" | "guest";
+  // "staff", "guest" (Phase 25 QR self-order), or "kiosk" — drives the
+  // "📱 Self-order"/"🖥️ Kiosk" badge.
+  source: "staff" | "guest" | "kiosk";
   // True once the guest has tapped "Request Bill" on their own phone for this order —
   // drives a "💳 Customer marked as paid" badge so whoever bills/prints the ticket
   // sees it even if they missed the transient payment_claimed toast.

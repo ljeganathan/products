@@ -21,10 +21,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.deps import CurrentGuest
+from app.core.deps import CurrentGuest, CurrentUser
 from app.core.secrets import encrypt_secret
-from app.models import GuestSession, PaymentAttempt, Tenant, TenantPaymentGateway
-from app.schemas.bills import BillPreviewRequest
+from app.models import GuestSession, Order, PaymentAttempt, Tenant, TenantPaymentGateway, User
+from app.schemas.bills import BillCreateRequest, BillPaymentInput, BillPreviewRequest
 from app.schemas.online_payments import (
     GuestCreatePaymentResponse,
     GuestOnlinePaymentInfo,
@@ -35,6 +35,7 @@ from app.schemas.online_payments import (
 )
 from app.services.bill_service import preview_bill
 from app.services.branch_header import resolve_branch_header
+from app.services.kot_and_bill_service import send_kot_and_finalize_bill
 from app.services.kot_service import KotSendResult, build_kot_ticket_broadcast, send_kot
 from app.services.payment_gateway import (
     PROVIDERS,
@@ -235,6 +236,33 @@ async def _auto_send_takeaway_kot(
         return None
 
 
+async def _auto_finalize_kiosk_order(
+    session: AsyncSession, tenant_id: uuid.UUID, order_id: uuid.UUID, amount: float
+) -> KotSendResult | None:
+    """A Kiosk session's order is unattended — nobody is there to pick it up from the
+    KOT Tickets screen and bill it the way a regular Takeaway order waits for staff to
+    — so a verified payment fires the kitchen ticket AND finalizes the bill together, in
+    one call (`send_kot_and_finalize_bill`, the same combined action Guided POS's own
+    "KOT + Print Bill" button uses for a non-seating order), bill printing included.
+    Returns None on any failure (e.g. already billed) rather than raising, same
+    never-breaks-the-webhook contract as `_auto_send_takeaway_kot`.
+    """
+    order = (await session.execute(select(Order).where(Order.id == order_id))).scalar_one_or_none()
+    if order is None or order.status == "billed":
+        return None
+    tenant = (await session.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one()
+    biller = (await session.execute(select(User).where(User.id == order.pos_user_id))).scalar_one()
+    current_user = CurrentUser(
+        id=biller.id, login_id=biller.user_id, role="pos_user", tenant_id=tenant_id, location_ids=[]
+    )
+    req = BillCreateRequest(order_id=order_id, payments=[BillPaymentInput(method="online", amount=amount)])
+    try:
+        _, kot_result = await send_kot_and_finalize_bill(session, tenant, current_user, req)
+    except HTTPException:
+        return None
+    return kot_result
+
+
 async def apply_gateway_payments(
     session: AsyncSession,
     gateway: PaymentGateway,
@@ -281,7 +309,12 @@ async def apply_gateway_payments(
             return None
         kot_result = None
         if guest_session.table_id is None and guest_session.order_id is not None:
-            kot_result = await _auto_send_takeaway_kot(session, attempt.tenant_id, guest_session.order_id)
+            if guest_session.is_kiosk:
+                kot_result = await _auto_finalize_kiosk_order(
+                    session, attempt.tenant_id, guest_session.order_id, attempt.amount
+                )
+            else:
+                kot_result = await _auto_send_takeaway_kot(session, attempt.tenant_id, guest_session.order_id)
         return PaidNotice(
             guest_session.location_id, guest_session.table_id, guest_session.pickup_token, kot_result
         )

@@ -52,6 +52,14 @@ export function KotTicketCard({ ticket, canAdvance, advancing, onAdvance }: KotT
               📱
             </span>
           )}
+          {ticket.source === "kiosk" && (
+            <span
+              className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] font-extrabold text-ink-soft"
+              title="Placed by the customer via the self-order kiosk"
+            >
+              🖥️
+            </span>
+          )}
         </div>
         <span className="text-[11px] font-semibold text-ink-faint">{createdTime}</span>
       </div>

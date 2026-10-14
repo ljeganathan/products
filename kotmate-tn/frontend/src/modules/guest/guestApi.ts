@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import { API_BASE_URL } from "@/lib/api";
+import { api, API_BASE_URL } from "@/lib/api";
 import type { Category } from "@/modules/admin/categoriesApi";
 import type { Order, OrderLineInput } from "@/modules/pos/posApi";
 
@@ -66,6 +66,19 @@ export function isTakeawaySession(session: GuestSession): boolean {
 
 export async function startGuestSession(qrToken: string): Promise<GuestSession> {
   const { data } = await guestApi.post<GuestSession>(`/api/v1/guest/sessions/${qrToken}`);
+  setGuestToken(data.guest_token);
+  return data;
+}
+
+// Kiosk only (app/api/v1/kiosk.py) — this one call is made with the Kiosk login's own
+// *staff* access token (the `api` client, not `guestApi`), since nothing else exists
+// yet to authenticate with. Its response is the same shape a QR scan returns; from here
+// on the kiosk talks to every other /guest/* route exactly like a scanned Takeaway QR.
+export async function startKioskSession(locationId: string, sectionId: string): Promise<GuestSession> {
+  const { data } = await api.post<GuestSession>("/api/v1/kiosk/session", {
+    location_id: locationId,
+    section_id: sectionId,
+  });
   setGuestToken(data.guest_token);
   return data;
 }

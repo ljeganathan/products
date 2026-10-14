@@ -1,10 +1,18 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-// CLAUDE.md §5 — the six RBAC roles, product_owner included (never a separate app).
+// CLAUDE.md §5 — the RBAC roles, product_owner included (never a separate app).
 // "pos_operator" (POS Operator) is POS-screen-only, Pro Max only — production feedback
-// round 2.
-export type Role = "product_owner" | "tenant_admin" | "pos_user" | "waiter" | "kitchen" | "pos_operator";
+// round 2. "kiosk" (Kiosk) is narrower still — its login only starts a fresh QR
+// self-order session for an unattended ordering screen; see constants.py's ROLE_CODES.
+export type Role =
+  | "product_owner"
+  | "tenant_admin"
+  | "pos_user"
+  | "waiter"
+  | "kitchen"
+  | "pos_operator"
+  | "kiosk";
 
 export interface Session {
   accessToken: string;
@@ -55,5 +63,7 @@ export function roleHomePath(role: Role): string {
       return "/pos";
     case "kitchen":
       return "/kot";
+    case "kiosk":
+      return "/kiosk";
   }
 }

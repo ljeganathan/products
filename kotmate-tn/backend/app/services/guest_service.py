@@ -19,6 +19,7 @@ from app.models import (
     Table,
     TableQrCode,
     Tenant,
+    TenantLocation,
     User,
 )
 from app.schemas.bills import BillPreviewRequest
@@ -365,7 +366,9 @@ async def update_cart(
             items=items,
             party_label=None,
         )
-        order = await create_order(session, tenant.id, fake_current_user, req, source="guest")
+        order = await create_order(
+            session, tenant.id, fake_current_user, req, source="kiosk" if guest_session.is_kiosk else "guest"
+        )
         guest_session.order_id = order.id
         await session.flush()
         return order
@@ -593,3 +596,41 @@ async def get_qr_code_for_section(
             )
         )
     ).scalar_one_or_none()
+
+
+async def start_kiosk_session(
+    session: AsyncSession, current_user: CurrentUser, location_id: uuid.UUID, section_id: uuid.UUID
+) -> tuple[GuestSession, Tenant]:
+    """A Kiosk-role login's equivalent of scanning a counter's Takeaway QR — reuses the
+    exact same section-QR session creation (`create_or_resume_session`'s SectionQrCode
+    branch, including its `_reject_if_ordering_unavailable` check), just triggered by an
+    authenticated staff token instead of a `qr_token` in the URL, and always mints a
+    fresh session (a kiosk never resumes one, same as any other Takeaway scan).
+    """
+    location = (
+        await session.execute(
+            select(TenantLocation).where(
+                TenantLocation.id == location_id, TenantLocation.tenant_id == current_user.tenant_id
+            )
+        )
+    ).scalar_one_or_none()
+    if location is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Location not found")
+
+    section = (
+        await session.execute(
+            select(SeatingSection).where(
+                SeatingSection.id == section_id, SeatingSection.tenant_id == current_user.tenant_id
+            )
+        )
+    ).scalar_one_or_none()
+    if section is None or section.is_seating:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Choose a non-seating section (e.g. Takeaway) for the kiosk"
+        )
+
+    qr = await get_or_create_qr_code_for_section(session, current_user.tenant_id, section, location_id)
+    guest_session, tenant = await create_or_resume_session(session, qr.qr_token)
+    guest_session.is_kiosk = True
+    await session.flush()
+    return guest_session, tenant
