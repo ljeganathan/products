@@ -59,6 +59,14 @@ class FakeCashfree:
             }
         if method == "GET" and path.startswith("/orders/") and path.endswith("/payments"):
             return self.payments.get(path.split("/")[2], [])
+        if method == "POST" and path == "/orders/sessions":
+            # Real sandbox shape, confirmed 2026-10-27 against an actual Cashfree test
+            # account: a base64 PNG data URI lives at data.payload.qrcode.
+            return {
+                "action": "custom",
+                "channel": "qrcode",
+                "data": {"payload": {"qrcode": "data:image/png;base64,FAKE_QR=="}},
+            }
         raise AssertionError(f"unexpected Cashfree call {method} {path}")
 
     def pay(self, order_id: str, amount_rupees: float, status: str = "SUCCESS") -> str:
@@ -150,6 +158,50 @@ async def _guest_with_order(client: AsyncClient, headers: dict, price: int = 100
     )
     assert cart.status_code == 200, cart.text
     return guest, cart.json()
+
+
+async def _start_kiosk(client: AsyncClient, headers: dict, location_id: str, section_id: str) -> dict:
+    resp = await client.post(
+        "/api/v1/kiosk/session",
+        json={"location_id": location_id, "section_id": section_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def test_kiosk_cashfree_order_pay_returns_qr_image_not_inline_checkout(
+    client: AsyncClient, pro_max_tenant_admin: dict, fakes
+):
+    """Kiosk + Cashfree: the extra best-effort Order Pay call (channel=qrcode) hands back
+    a ready-made QR image, so the kiosk can show it full-screen the same way it does for
+    Razorpay's standalone QR code, instead of falling back to Cashfree's inline Drop-in
+    checkout widget.
+    """
+    cashfree, _ = fakes
+    headers = pro_max_tenant_admin["headers"]
+    await _save_provider(client, headers, "cashfree", enabled=True)
+    await _enable_qr_self_order(client, headers)
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "Takeaway")
+    guest = _guest_headers(await _start_kiosk(client, headers, location_id, section_id))
+    await _set_guest_profile(client, guest)
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=70)
+    cart = await client.post(
+        "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
+    )
+    assert cart.status_code == 200, cart.text
+
+    created = await client.post("/api/v1/guest/payments/create", headers=guest)
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["provider"] == "cashfree"
+    assert body["qr_image_url"] == "data:image/png;base64,FAKE_QR=="
+
+    cf_id = cashfree.pay(body["provider_order_id"], 70.00)
+    status = await client.get("/api/v1/guest/payments/status", headers=guest)
+    assert status.json()["status"] == "paid" and status.json()["reference"] == cf_id
 
 
 async def test_settings_list_both_providers_and_only_one_enabled(

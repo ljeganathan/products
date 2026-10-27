@@ -72,14 +72,22 @@ class PaymentGateway(Protocol):
 
         `upi_only` is the self-order kiosk's "just show the QR code, not every payment
         method" request — nobody's standing at a kiosk to tap through a cards/netbanking
-        tab. Cashfree bakes the restriction into the order via `order_meta.
-        payment_methods` (its drop-in checkout has no client-side method filter).
-        Razorpay instead creates a standalone UPI QR code (its QR Codes API, a different
-        endpoint from Orders) and returns `qr_image_url` — a direct, full-screen-able QR
-        image the kiosk renders itself instead of ever opening Razorpay's own checkout
-        widget, whose fixed-size modal can't be stretched to fill a kiosk screen. The
-        returned `id` is then a `qr_`-prefixed id rather than an `order_`-prefixed one;
-        `fetch_order_payments`/`webhook_order_id` below both know to treat it differently.
+        tab. Both providers also return `qr_image_url` in this case — a direct,
+        full-screen-able QR image the kiosk renders itself instead of ever opening the
+        provider's own checkout widget, whose fixed-size modal/iframe can't be stretched
+        to fill a kiosk screen:
+          * Razorpay creates a standalone UPI QR code (its QR Codes API, a different
+            endpoint from Orders); the returned `id` is then a `qr_`-prefixed id rather
+            than an `order_`-prefixed one — `fetch_order_payments`/`webhook_order_id`
+            below both know to treat it differently.
+          * Cashfree still creates a normal Order (`order_meta.payment_methods` already
+            restricts its checkout to UPI as a fallback), then makes one extra, best-effort
+            call to its Order Pay API with `payment_method.upi.channel: "qrcode"`, whose
+            response hands back a ready-made `data:image/png;base64,...` QR in
+            `data.payload.qrcode` — undocumented beyond a one-line mention in Cashfree's
+            API reference, so a failure there is swallowed and `qr_image_url` is simply
+            left unset; the kiosk falls back to Cashfree's inline Drop-in checkout
+            (`OnlinePayCard.tsx`) exactly as it did before this existed.
         """
         ...
 
@@ -306,7 +314,31 @@ class CashfreeGateway:
             # cardholder standing there to use those anyway.
             body["order_meta"] = {"payment_methods": "upi"}
         answer = await self._request("POST", "/orders", body)
-        return {"id": answer["order_id"], "payment_session_id": answer["payment_session_id"]}
+        result = {"id": answer["order_id"], "payment_session_id": answer["payment_session_id"]}
+        if upi_only:
+            qr_image_url = await self._create_qr_image(answer["payment_session_id"])
+            if qr_image_url:
+                result["qr_image_url"] = qr_image_url
+        return result
+
+    async def _create_qr_image(self, payment_session_id: str) -> str | None:
+        """Kiosk only — see `create_order`'s docstring. Best-effort: any failure (older
+        API version, feature not enabled on a given merchant's account, unexpected
+        response shape) just returns None so the caller falls back to the inline
+        Drop-in checkout instead of breaking the kiosk's payment flow outright."""
+        try:
+            answer = await self._request(
+                "POST",
+                "/orders/sessions",
+                {
+                    "payment_session_id": payment_session_id,
+                    "payment_method": {"upi": {"channel": "qrcode"}},
+                },
+            )
+        except HTTPException:
+            return None
+        qr = answer.get("data", {}).get("payload", {}).get("qrcode")
+        return qr if isinstance(qr, str) and qr.startswith("data:image") else None
 
     async def fetch_order_payments(self, provider_order_id: str) -> list[dict[str, Any]]:
         answer = await self._request("GET", f"/orders/{provider_order_id}/payments")

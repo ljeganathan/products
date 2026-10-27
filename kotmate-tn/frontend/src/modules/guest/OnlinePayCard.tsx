@@ -131,14 +131,15 @@ export function OnlinePayCard({
   // creating the order (network, bad configuration) must not mention refunds.
   const [refundNote, setRefundNote] = useState(false);
   const [reference, setReference] = useState<string | null>(info.reference);
-  // Kiosk + Razorpay only: the hosted QR image returned directly by our own backend, shown
-  // full-screen with no checkout widget at all (see `pay()` below).
+  // Kiosk only: the QR image handed back directly by our own backend (either provider,
+  // see `pay()` below), shown full-screen with no checkout widget at all.
   const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
   const startedAt = useRef(0);
-  // Kiosk + Cashfree only: Cashfree's inline checkout renders itself into this element
-  // instead of a modal, when `redirectTarget` is a DOM node rather than "_modal". Must
-  // already be mounted before `pay()` runs, which it is — the kiosk render branch below
-  // returns this container unconditionally, before the auto-pay effect ever fires.
+  // Kiosk + Cashfree fallback only (its best-effort QR-channel call failed): Cashfree's
+  // inline checkout renders itself into this element instead of a modal, when
+  // `redirectTarget` is a DOM node rather than "_modal". Must already be mounted before
+  // `pay()` runs, which it is — the kiosk render branch below returns this container
+  // unconditionally, before the auto-pay effect ever fires.
   const cashfreeContainerRef = useRef<HTMLDivElement>(null);
   const isMobile = !kioskMode && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
@@ -214,6 +215,15 @@ export function OnlinePayCard({
     const contact = created.customer_phone ? `+91${created.customer_phone}` : undefined;
     startedAt.current = Date.now();
     try {
+      if (kioskMode && created.qr_image_url) {
+        // Kiosk, either provider: our backend already has a ready-made QR image (Razorpay's
+        // own standalone QR code, or Cashfree's best-effort QR-channel call) — no checkout
+        // widget to open at all, just show the image itself, full screen (render branch below).
+        setQrImageUrl(created.qr_image_url);
+        setPhase("waiting");
+        return;
+      }
+
       if (created.provider === "cashfree") {
         if (!created.payment_session_id) throw new Error("Couldn't start the payment — please try again.");
         await loadScript(CASHFREE_SCRIPT);
@@ -233,15 +243,6 @@ export function OnlinePayCard({
           })
           .catch(() => undefined)
           .then(() => checkStatus());
-        return;
-      }
-
-      if (kioskMode && created.qr_image_url) {
-        // Kiosk + Razorpay: our backend already created a standalone QR code (not an
-        // Order) and handed back its hosted image directly — no checkout widget to open
-        // at all, just show the image itself, full screen (see the render branch below).
-        setQrImageUrl(created.qr_image_url);
-        setPhase("waiting");
         return;
       }
 
@@ -360,9 +361,10 @@ export function OnlinePayCard({
             className="h-[min(70vw,60vh)] w-[min(70vw,60vh)] object-contain"
           />
         ) : (
-          // Razorpay before its QR image arrives, or Cashfree's inline checkout — Cashfree
-          // injects its own UI straight into this element (`redirectTarget` in `pay()`
-          // above), already restricted server-side to UPI/QR only.
+          // Razorpay before its QR image arrives, or Cashfree's inline-checkout fallback
+          // (its QR-channel call failed) — Cashfree injects its own UI straight into this
+          // element (`redirectTarget` in `pay()` above), already restricted server-side to
+          // UPI/QR only.
           <div
             ref={cashfreeContainerRef}
             className="flex h-[min(70vw,60vh)] w-[min(70vw,60vh)] items-center justify-center"
