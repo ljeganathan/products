@@ -20,6 +20,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import urllib.error
 import urllib.request
 import uuid
@@ -33,6 +34,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.secrets import decrypt_secret
 from app.models import TenantPaymentGateway
+
+_logger = logging.getLogger("kotmate.payments")
 
 PROVIDERS = ("razorpay", "cashfree")
 
@@ -325,7 +328,9 @@ class CashfreeGateway:
         """Kiosk only — see `create_order`'s docstring. Best-effort: any failure (older
         API version, feature not enabled on a given merchant's account, unexpected
         response shape) just returns None so the caller falls back to the inline
-        Drop-in checkout instead of breaking the kiosk's payment flow outright."""
+        Drop-in checkout instead of breaking the kiosk's payment flow outright. Logs why,
+        since this endpoint's response shape for `channel=qrcode` is undocumented and the
+        failure mode on a given merchant's real account may differ from sandbox."""
         try:
             answer = await self._request(
                 "POST",
@@ -335,10 +340,19 @@ class CashfreeGateway:
                     "payment_method": {"upi": {"channel": "qrcode"}},
                 },
             )
-        except HTTPException:
+        except HTTPException as exc:
+            _logger.warning("Cashfree QR-channel call failed: %s", exc.detail)
             return None
         qr = answer.get("data", {}).get("payload", {}).get("qrcode")
-        return qr if isinstance(qr, str) and qr.startswith("data:image") else None
+        if isinstance(qr, str) and qr.startswith("data:image"):
+            return qr
+        _logger.warning(
+            "Cashfree QR-channel call returned an unexpected shape: action=%r channel=%r data_keys=%r",
+            answer.get("action"),
+            answer.get("channel"),
+            sorted((answer.get("data") or {}).keys()),
+        )
+        return None
 
     async def fetch_order_payments(self, provider_order_id: str) -> list[dict[str, Any]]:
         answer = await self._request("GET", f"/orders/{provider_order_id}/payments")
