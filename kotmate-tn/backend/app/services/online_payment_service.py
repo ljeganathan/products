@@ -435,6 +435,7 @@ async def create_guest_payment(
         customer_phone=guest_session.customer_phone,
         is_test_mode=gateway.is_test_mode,
         environment=environment,
+        qr_image_url=gateway_order.get("qr_image_url"),
     )
 
 

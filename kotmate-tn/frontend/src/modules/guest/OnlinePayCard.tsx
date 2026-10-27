@@ -22,7 +22,9 @@ const PLACEHOLDER_EMAIL = "no-reply@kotmatetn.in";
 const CASHFREE_SCRIPT = "https://sdk.cashfree.com/js/v3/cashfree.js";
 
 interface CashfreeCheckout {
-  checkout: (options: { paymentSessionId: string; redirectTarget?: string }) => Promise<unknown>;
+  // `redirectTarget` is "_modal" / "_self" / "_blank", or a DOM element for inline
+  // rendering (kiosk, see below) — Cashfree's own SDK accepts all four.
+  checkout: (options: { paymentSessionId: string; redirectTarget?: string | HTMLElement }) => Promise<unknown>;
 }
 type CashfreeFactory = (options: { mode: "sandbox" | "production" }) => CashfreeCheckout;
 
@@ -129,7 +131,15 @@ export function OnlinePayCard({
   // creating the order (network, bad configuration) must not mention refunds.
   const [refundNote, setRefundNote] = useState(false);
   const [reference, setReference] = useState<string | null>(info.reference);
+  // Kiosk + Razorpay only: the hosted QR image returned directly by our own backend, shown
+  // full-screen with no checkout widget at all (see `pay()` below).
+  const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
   const startedAt = useRef(0);
+  // Kiosk + Cashfree only: Cashfree's inline checkout renders itself into this element
+  // instead of a modal, when `redirectTarget` is a DOM node rather than "_modal". Must
+  // already be mounted before `pay()` runs, which it is — the kiosk render branch below
+  // returns this container unconditionally, before the auto-pay effect ever fires.
+  const cashfreeContainerRef = useRef<HTMLDivElement>(null);
   const isMobile = !kioskMode && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
   const checkStatus = useCallback(async () => {
@@ -185,6 +195,7 @@ export function OnlinePayCard({
     setMessage(null);
     setRefundNote(false);
     setGaveUp(false);
+    setQrImageUrl(null);
     setPhase("starting");
     let created: GuestCreatedPayment;
     try {
@@ -213,9 +224,24 @@ export function OnlinePayCard({
         // Cashfree's checkout resolves when the guest closes it or finishes. Either way the
         // status poll is what confirms the payment, so re-check with our own server.
         void cashfree
-          .checkout({ paymentSessionId: created.payment_session_id, redirectTarget: "_modal" })
+          .checkout({
+            paymentSessionId: created.payment_session_id,
+            // Kiosk: render inline into our own full-screen container instead of
+            // Cashfree's fixed-size modal (order_meta already restricts this to UPI/QR —
+            // see payment_gateway.py — so it's effectively just the QR, full screen).
+            redirectTarget: kioskMode ? cashfreeContainerRef.current ?? "_modal" : "_modal",
+          })
           .catch(() => undefined)
           .then(() => checkStatus());
+        return;
+      }
+
+      if (kioskMode && created.qr_image_url) {
+        // Kiosk + Razorpay: our backend already created a standalone QR code (not an
+        // Order) and handed back its hosted image directly — no checkout widget to open
+        // at all, just show the image itself, full screen (see the render branch below).
+        setQrImageUrl(created.qr_image_url);
+        setPhase("waiting");
         return;
       }
 
@@ -304,6 +330,63 @@ export function OnlinePayCard({
     );
   }
 
+  // Kiosk's entire pre-paid flow is a full-screen takeover, not the small card below — an
+  // unattended screen needs the QR itself big enough to scan from arm's length, not a
+  // card-sized image inside a payment-methods layout nobody there can even tap through.
+  if (kioskMode) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-5 bg-white p-6 text-center">
+        <h2 className="text-base font-extrabold uppercase tracking-wide text-ink-faint">
+          Scan to pay {formatINR(total)}
+        </h2>
+        {phase === "failed" && message ? (
+          <>
+            <p role="alert" className="max-w-sm rounded-lg bg-chili-soft px-4 py-3 text-sm font-semibold text-chili">
+              {message}
+              {refundNote && " If money was deducted, your bank refunds it automatically."}
+            </p>
+            <button
+              type="button"
+              onClick={() => void pay("standard")}
+              className="rounded-lg border border-border px-5 py-2.5 text-sm font-bold hover:bg-surface-2"
+            >
+              Try again
+            </button>
+          </>
+        ) : qrImageUrl ? (
+          <img
+            src={qrImageUrl}
+            alt="Scan this QR code with any UPI app to pay"
+            className="h-[min(70vw,60vh)] w-[min(70vw,60vh)] object-contain"
+          />
+        ) : (
+          // Razorpay before its QR image arrives, or Cashfree's inline checkout — Cashfree
+          // injects its own UI straight into this element (`redirectTarget` in `pay()`
+          // above), already restricted server-side to UPI/QR only.
+          <div
+            ref={cashfreeContainerRef}
+            className="flex h-[min(70vw,60vh)] w-[min(70vw,60vh)] items-center justify-center"
+          >
+            {info.provider !== "cashfree" && (
+              <div className="h-10 w-10 animate-spin rounded-full border-4 border-surface-3 border-t-accent" />
+            )}
+          </div>
+        )}
+        {phase !== "failed" && (
+          <p className="flex items-center gap-2 text-sm text-ink-faint">
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-surface-3 border-t-accent" />
+            Scan with any UPI app — the kitchen gets your order the moment it's paid.
+          </p>
+        )}
+        {info.is_test_mode && (
+          <span className="rounded-full bg-gold-soft px-2 py-0.5 text-[10px] font-extrabold uppercase text-gold">
+            Test mode · no real money
+          </span>
+        )}
+      </div>
+    );
+  }
+
   const busy = phase === "starting" || phase === "waiting";
 
   return (
@@ -321,11 +404,7 @@ export function OnlinePayCard({
         <div className="flex flex-col items-center gap-2 py-3 text-center" role="status">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-surface-3 border-t-accent" />
           <p className="text-sm font-bold">Confirming your payment…</p>
-          <p className="text-xs text-ink-faint">
-            {kioskMode
-              ? "Scan the QR code on screen with any UPI app."
-              : "Finish paying in your UPI app, then come back to this page."}
-          </p>
+          <p className="text-xs text-ink-faint">Finish paying in your UPI app, then come back to this page.</p>
           {gaveUp && (
             <button
               type="button"
@@ -335,45 +414,16 @@ export function OnlinePayCard({
               Check payment status
             </button>
           )}
-          {/* Kiosk has no "another way" to fall back to — it always pays by QR. */}
-          {!kioskMode && (
-            <button
-              type="button"
-              onClick={() => {
-                setPhase("idle");
-                setMessage(null);
-              }}
-              className="text-xs text-ink-faint underline"
-            >
-              Cancel and choose another way
-            </button>
-          )}
-        </div>
-      ) : kioskMode ? (
-        // Kiosk shows no buttons at all — payment starts itself (the effect above) and
-        // the QR appears inside the checkout it opens; this only ever renders for a
-        // moment before that, or if opening it failed.
-        <div className="flex flex-col items-center gap-2 py-3 text-center">
-          {phase === "failed" && message ? (
-            <>
-              <p role="alert" className="rounded-lg bg-chili-soft px-3 py-2 text-xs font-semibold text-chili">
-                {message}
-                {refundNote && " If money was deducted, your bank refunds it automatically."}
-              </p>
-              <button
-                type="button"
-                onClick={() => void pay("standard")}
-                className="rounded-lg border border-border px-4 py-2 text-xs font-bold hover:bg-surface-2"
-              >
-                Try again
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="h-6 w-6 animate-spin rounded-full border-4 border-surface-3 border-t-accent" />
-              <p className="text-xs text-ink-faint">Preparing your QR code…</p>
-            </>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              setPhase("idle");
+              setMessage(null);
+            }}
+            className="text-xs text-ink-faint underline"
+          >
+            Cancel and choose another way
+          </button>
         </div>
       ) : (
         <div className="flex flex-col gap-2">

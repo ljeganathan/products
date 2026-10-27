@@ -183,6 +183,8 @@ export interface GuestCreatedPayment {
   customer_phone: string | null;
   is_test_mode: boolean;
   environment: "sandbox" | "production" | null;
+  // Kiosk + Razorpay only: a direct QR image shown full-screen, no checkout widget.
+  qr_image_url: string | null;
 }
 
 export interface GuestPaymentStatus {

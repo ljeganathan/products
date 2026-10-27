@@ -81,6 +81,9 @@ class GuestCreatePaymentResponse(BaseModel):
     is_test_mode: bool
     # Cashfree only: 'sandbox' | 'production', so the guest page loads the matching SDK mode.
     environment: str | None = None
+    # Kiosk + Razorpay only: a direct, hosted QR image the kiosk screen shows full-screen,
+    # bypassing Razorpay's own checkout widget entirely.
+    qr_image_url: str | None = None
 
 
 class GuestPaymentStatusResponse(BaseModel):

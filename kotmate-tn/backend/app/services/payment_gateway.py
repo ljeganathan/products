@@ -72,11 +72,14 @@ class PaymentGateway(Protocol):
 
         `upi_only` is the self-order kiosk's "just show the QR code, not every payment
         method" request — nobody's standing at a kiosk to tap through a cards/netbanking
-        tab. Only Cashfree needs to know this at order-creation time (its drop-in
-        checkout has no client-side method filter, so the restriction has to be baked
-        into the order via `order_meta.payment_methods`); Razorpay's equivalent is a
-        Checkout.js `config.display` option passed client-side instead (OnlinePayCard.tsx),
-        so `RazorpayGateway` below simply ignores this flag.
+        tab. Cashfree bakes the restriction into the order via `order_meta.
+        payment_methods` (its drop-in checkout has no client-side method filter).
+        Razorpay instead creates a standalone UPI QR code (its QR Codes API, a different
+        endpoint from Orders) and returns `qr_image_url` — a direct, full-screen-able QR
+        image the kiosk renders itself instead of ever opening Razorpay's own checkout
+        widget, whose fixed-size modal can't be stretched to fill a kiosk screen. The
+        returned `id` is then a `qr_`-prefixed id rather than an `order_`-prefixed one;
+        `fetch_order_payments`/`webhook_order_id` below both know to treat it differently.
         """
         ...
 
@@ -171,8 +174,24 @@ class RazorpayGateway:
         customer_phone: str | None,
         upi_only: bool = False,
     ) -> dict[str, Any]:
-        # upi_only is irrelevant here — Razorpay's restriction is a Checkout.js client
-        # option (OnlinePayCard.tsx), not an order-creation one.
+        if upi_only:
+            # Kiosk: a standalone, fixed-amount, single-use UPI QR code rather than an
+            # Order — returns a hosted `image_url` the kiosk screen shows directly, full
+            # screen, with no checkout widget involved at all.
+            answer = await self._request(
+                "POST",
+                "/payments/qr_codes",
+                {
+                    "type": "upi_qr",
+                    "name": "KOTMate Kiosk",
+                    "usage": "single_use",
+                    "fixed_amount": True,
+                    "payment_amount": amount_paise,
+                    "description": (notes.get("for") or "Order")[:255],
+                    "notes": notes,
+                },
+            )
+            return {"id": answer["id"], "qr_image_url": answer.get("image_url")}
         return await self._request(
             "POST",
             "/orders",
@@ -180,7 +199,14 @@ class RazorpayGateway:
         )
 
     async def fetch_order_payments(self, provider_order_id: str) -> list[dict[str, Any]]:
-        result = await self._request("GET", f"/orders/{provider_order_id}/payments")
+        # A kiosk QR code's id (`qr_...`) is looked up through its own payments endpoint —
+        # it was never an Order, so `/orders/{id}/payments` would just 404.
+        path = (
+            f"/payments/qr_codes/{provider_order_id}/payments"
+            if provider_order_id.startswith("qr_")
+            else f"/orders/{provider_order_id}/payments"
+        )
+        result = await self._request("GET", path)
         return list(result.get("items", []))
 
     async def capture_payment(self, provider_payment_id: str, amount_paise: int) -> dict[str, Any]:
@@ -199,7 +225,12 @@ class RazorpayGateway:
         return hmac.compare_digest(expected, signature)
 
     def webhook_order_id(self, payload: dict[str, Any]) -> str | None:
-        return payload.get("payload", {}).get("payment", {}).get("entity", {}).get("order_id")
+        order_id = payload.get("payload", {}).get("payment", {}).get("entity", {}).get("order_id")
+        if order_id:
+            return order_id
+        # A kiosk QR code payment (`qr_code.credited`) has no order — match on the qr_code's
+        # own id instead, which is what was stored as provider_order_id for that attempt.
+        return payload.get("payload", {}).get("qr_code", {}).get("entity", {}).get("id")
 
 
 _CASHFREE_STATUS = {"SUCCESS": "captured", "FAILED": "failed"}

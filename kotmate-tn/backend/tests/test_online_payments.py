@@ -46,6 +46,13 @@ class FakeRazorpay:
             return {"items": self.payments.get(path.split("/")[2], [])}
         if method == "GET" and path.startswith("/orders"):
             return {"items": []}
+        if method == "POST" and path == "/payments/qr_codes":
+            qr_id = f"qr_{uuid.uuid4().hex[:12]}"
+            self.created.append({"id": qr_id, **(body or {})})
+            self.payments[qr_id] = []
+            return {"id": qr_id, "image_url": f"https://rzp.io/i/{qr_id}", "status": "active"}
+        if method == "GET" and path.startswith("/payments/qr_codes/") and path.endswith("/payments"):
+            return {"items": self.payments.get(path.split("/")[3], [])}
         if method == "POST" and path.endswith("/capture"):
             pay_id = path.split("/")[2]
             for items in self.payments.values():
@@ -326,6 +333,96 @@ async def test_takeaway_kot_fires_automatically_once_paid_online(
     await client.get("/api/v1/guest/payments/status", headers=guest)
     again = await client.get("/api/v1/kot/tickets/active", headers=headers)
     assert len([t for t in again.json() if t["order_id"] == order_id]) == 1
+
+
+async def _start_kiosk(client: AsyncClient, headers: dict, location_id: str, section_id: str) -> dict:
+    resp = await client.post(
+        "/api/v1/kiosk/session",
+        json={"location_id": location_id, "section_id": section_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def test_kiosk_razorpay_payment_is_a_standalone_qr_code_not_an_order(
+    client: AsyncClient, pro_max_tenant_admin: dict, fake_gateway
+):
+    """Kiosk never opens Razorpay's own checkout widget — it shows a QR image straight
+    from a standalone QR code (Razorpay's QR Codes API, not Orders), full screen on the
+    kiosk itself. Confirms the right endpoint was called and the right id shape (`qr_`)
+    comes back, not an `order_`-prefixed Orders API id.
+    """
+    headers = pro_max_tenant_admin["headers"]
+    await _configure(client, headers)
+    await _enable_qr_self_order(client, headers)
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "Takeaway")
+    guest = _guest_headers(await _start_kiosk(client, headers, location_id, section_id))
+    await _set_guest_profile(client, guest)
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=90)
+    cart = await client.post(
+        "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
+    )
+    assert cart.status_code == 200, cart.text
+
+    created = await client.post("/api/v1/guest/payments/create", headers=guest)
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["provider_order_id"].startswith("qr_")
+    assert body["qr_image_url"]
+    assert fake_gateway.created[-1]["type"] == "upi_qr"
+
+    pay_id = fake_gateway.pay(body["provider_order_id"], 9000)
+    status = await client.get("/api/v1/guest/payments/status", headers=guest)
+    assert status.json()["status"] == "paid" and status.json()["reference"] == pay_id
+
+
+async def test_kiosk_qr_code_webhook_matches_by_qr_code_id(
+    client: AsyncClient, pro_max_tenant_admin: dict, fake_gateway
+):
+    """A standalone QR code's payment webhook (`qr_code.credited`) has no order_id at
+    all — the gateway has to fall back to matching on the qr_code entity's own id.
+    """
+    headers = pro_max_tenant_admin["headers"]
+    settings = await _configure(client, headers)
+    tenant_id = settings["webhook_url"].rsplit("/", 1)[1]
+    await _enable_qr_self_order(client, headers)
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "Takeaway")
+    guest = _guest_headers(await _start_kiosk(client, headers, location_id, section_id))
+    await _set_guest_profile(client, guest)
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=55)
+    cart = await client.post(
+        "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
+    )
+    order_id = cart.json()["id"]
+    body = (await client.post("/api/v1/guest/payments/create", headers=guest)).json()
+    fake_gateway.pay(body["provider_order_id"], 5500)
+
+    payload = json.dumps(
+        {
+            "event": "qr_code.credited",
+            "payload": {
+                "payment": {"entity": {}},
+                "qr_code": {"entity": {"id": body["provider_order_id"]}},
+            },
+        }
+    ).encode()
+    url = f"/api/v1/webhooks/razorpay/{tenant_id}"
+    signature = hmac.new(WEBHOOK_SECRET.encode(), payload, hashlib.sha256).hexdigest()
+    ok = await client.post(url, content=payload, headers={"X-Razorpay-Signature": signature})
+    assert ok.status_code == 200, ok.text
+
+    # The webhook carried no order_id at all (only the qr_code's own id) — a verified
+    # kiosk payment still fired the kitchen ticket AND finalized the bill in one go.
+    bills = await client.get("/api/v1/bills", headers=headers)
+    [bill] = [b for b in bills.json() if b["order_id"] == order_id]
+    assert bill["grand_total"] == 55.0
+    detail = await client.get(f"/api/v1/bills/{bill['id']}", headers=headers)
+    assert [(p["method"], p["amount"]) for p in detail.json()["payments"]] == [("online", 55.0)]
 
 
 async def test_dine_in_send_to_kitchen_prints_on_network_kot_printer(
