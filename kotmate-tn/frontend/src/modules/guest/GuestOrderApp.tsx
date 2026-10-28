@@ -438,9 +438,8 @@ export function RequiredProfileScreen({
     <div className="relative flex h-dvh w-screen flex-col items-center justify-center bg-background p-6 text-foreground">
       {topRight && <div className="absolute right-3 top-3">{topRight}</div>}
       <img src={logoMark} alt="" className="mb-4 h-12 w-12 object-contain" />
-      <h1 className="mb-1 text-lg font-extrabold">Welcome!</h1>
-      <p className="mb-5 max-w-xs text-center text-sm text-ink-faint">
-        Please enter your name and phone number to start ordering.
+      <p className="mb-5 max-w-xs text-center text-base font-extrabold text-foreground">
+        Please enter your name and phone number
       </p>
       <form
         className="w-full max-w-xs"
@@ -471,7 +470,7 @@ export function RequiredProfileScreen({
           disabled={!canContinue || saving}
           className="w-full rounded-lg bg-accent py-3 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
         >
-          {saving ? "Saving…" : "Continue to Menu"}
+          {saving ? "Saving…" : "OK"}
         </button>
       </form>
     </div>
@@ -908,7 +907,7 @@ export function BillTab({
               disabled={busy}
               className="rounded-lg bg-accent py-3 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
             >
-              {busy ? "Placing…" : "💳 Pay by Payment Gateway"}
+              {busy ? "Placing…" : "💳 Pay by Online/UPI"}
             </button>
           )}
           <button
@@ -946,7 +945,11 @@ export function BillTab({
           tokenLabel={tokenLabel}
           kioskMode={kioskMode}
           onPaid={() => {
-            void queryClient.invalidateQueries({ queryKey: ["guest-bill-preview"] });
+            // Kiosk only: the guest session closes the instant a kiosk-online bill
+            // finalizes, so refetching the bill preview here would just 404 and bounce
+            // this screen to "session ended" before OnlinePayCard's own "Payment
+            // received" confirmation (and the auto-reset timer below) ever gets shown.
+            if (!kioskMode) void queryClient.invalidateQueries({ queryKey: ["guest-bill-preview"] });
             onPaid?.();
           }}
           onSessionEnded={onSessionEnded}
