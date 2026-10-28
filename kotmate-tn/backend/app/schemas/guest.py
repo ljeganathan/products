@@ -40,6 +40,11 @@ class GuestSessionResponse(BaseModel):
     status: str
     # Takeaway only: 'online' | 'cash' once the guest has chosen how to pay; null otherwise.
     takeaway_payment: str | None = None
+    # Kiosk only — this location's `hotel_master.kiosk_welcome_image_url` (Settings
+    # upload), shown full-screen on the idle "Order here" screen between customers.
+    # Null means no custom image uploaded; the kiosk frontend falls back to a built-in
+    # default design rather than a blank screen.
+    kiosk_welcome_image_url: str | None = None
 
 
 class GuestSendKotRequest(BaseModel):

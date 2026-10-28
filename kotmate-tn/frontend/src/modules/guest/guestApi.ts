@@ -56,6 +56,9 @@ export interface GuestSession {
   status: "active" | "payment_claimed" | "closed";
   // Takeaway only: how the guest chose to pay when placing the order. Null until chosen.
   takeaway_payment?: "online" | "cash" | null;
+  // Kiosk only — this location's Settings-uploaded idle-screen image. Null falls back
+  // to a built-in default design.
+  kiosk_welcome_image_url?: string | null;
 }
 
 // True for a Takeaway/non-seating session — every scan is its own independent order
@@ -130,8 +133,13 @@ export interface GuestKotSendResponse {
   id: string;
   ticket_number: string;
   order_id: string;
-  // Takeaway: "pending" (cash, waiting for the counter) or "awaiting_payment" (pay online first).
+  // Takeaway: "pending" (cash, waiting for the counter), "awaiting_payment" (pay online
+  // first), or "paid_cash" (Kiosk cash only — bill already finalized and printed,
+  // kitchen ticket awaits a POS operator's approval).
   status: string;
+  // Kiosk cash only — the bill that was just finalized.
+  bill_number?: string | null;
+  grand_total?: number | null;
 }
 
 // Takeaway orders pass how the guest pays. Dine-in orders pass nothing.

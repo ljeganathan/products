@@ -22,11 +22,11 @@ from app.models import (
     TenantLocation,
     User,
 )
-from app.schemas.bills import BillPreviewRequest
+from app.schemas.bills import BillCreateRequest, BillPaymentInput, BillPreviewRequest, BillResponse
 from app.schemas.guest import GuestBillPreviewResponse, GuestProfileUpdateRequest, GuestSessionResponse
 from app.schemas.kot import ActiveKotTicketResponse
 from app.schemas.orders import OrderCreateRequest, OrderLineInput, OrderResponse, OrderUpdateRequest
-from app.services.bill_service import preview_bill
+from app.services.bill_service import finalize_bill, preview_bill
 from app.services.branch_header import resolve_branch_header
 from app.services.item_service import list_items, list_top_sellers
 from app.services.kot_service import KotSendResult, list_active_tickets
@@ -149,6 +149,14 @@ async def to_session_response(session: AsyncSession, guest_session: GuestSession
     tenant = (
         await session.execute(select(Tenant).where(Tenant.id == guest_session.tenant_id))
     ).scalar_one()
+    kiosk_welcome_image_url = None
+    if guest_session.is_kiosk:
+        hotel = (
+            await session.execute(
+                select(HotelMaster).where(HotelMaster.location_id == guest_session.location_id)
+            )
+        ).scalar_one_or_none()
+        kiosk_welcome_image_url = hotel.kiosk_welcome_image_url if hotel else None
     return GuestSessionResponse(
         guest_token="",  # filled in by the caller, which alone knows the JWT
         tenant_id=guest_session.tenant_id,
@@ -164,6 +172,7 @@ async def to_session_response(session: AsyncSession, guest_session: GuestSession
         order_id=guest_session.order_id,
         status=guest_session.status,
         takeaway_payment=guest_session.takeaway_payment,
+        kiosk_welcome_image_url=kiosk_welcome_image_url,
     )
 
 
@@ -334,14 +343,16 @@ async def update_cart(
         raise HTTPException(
             status.HTTP_409_CONFLICT, "This order has been paid — please ask staff to add more items"
         )
-    if not guest_session.customer_name or not guest_session.customer_phone:
-        # Backend enforcement for the mandatory name/phone capture (Phase 27) — the
-        # frontend already blocks the whole menu behind this same requirement (a
-        # full-screen prompt shown before anything else renders), so this only ever
-        # fires against a stale page or a direct API call, never the normal flow. This
-        # single check is enough to gate every ordering action: send-to-kitchen/
-        # place-order/request-bill all require `guest_session.order_id`, which only
-        # `update_cart` itself ever sets.
+    if guest_session.table_id is not None and (
+        not guest_session.customer_name or not guest_session.customer_phone
+    ):
+        # Dine-in only (Phase 27) — the frontend still blocks a dine-in table's whole
+        # menu behind this same requirement (a full-screen prompt shown before anything
+        # else renders), so this only ever fires against a stale page or a direct API
+        # call there, never the normal flow. Takeaway/Kiosk guests (table_id is null)
+        # deliberately browse and build a cart with no profile at all — the menu is the
+        # first screen for them (production request) — and only have to share their
+        # name/phone once they actually choose how to pay (place_takeaway_order).
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Please share your name and phone number before ordering"
         )
@@ -403,9 +414,36 @@ async def send_kot_for_guest(session: AsyncSession, guest: CurrentGuest) -> KotS
     return await _send_kot(session, tenant, guest_session.order_id)
 
 
+async def _finalize_kiosk_cash_order(
+    session: AsyncSession, guest: CurrentGuest, guest_session: GuestSession
+) -> BillResponse:
+    """A Kiosk guest choosing "Pay by Cash" pays nobody online and nobody's there to
+    collect cash before the fact, so — unlike a plain Takeaway QR cash order, which
+    stays unbilled until staff confirms it — the bill finalizes and prints immediately
+    (production request: "bill has to print"), the same way a Lite/Pro tenant's "no
+    kitchen ticket step" sale always has. The kitchen ticket itself is deliberately
+    held back: `send_kot`'s own guard lets a POS operator fire it later for this exact
+    shape of order (billed, source="kiosk", no ticket yet) from the KOT Tickets screen's
+    "Approve & Send to Kitchen" action — see `kot_service.list_active_tickets`'s kiosk
+    pending-approval rows. On a plan with no KDS feature this is simply a normal direct
+    bill with no kitchen-ticket concept at all, same as any other Lite/Pro sale.
+    """
+    tenant = (await session.execute(select(Tenant).where(Tenant.id == guest.tenant_id))).scalar_one()
+    system_user = await get_or_create_system_account(session, tenant)
+    fake_current_user = _system_current_user(system_user, tenant.id)
+    preview = await preview_bill(
+        session, guest.tenant_id, BillPreviewRequest(order_id=guest_session.order_id)
+    )
+    req = BillCreateRequest(
+        order_id=guest_session.order_id,
+        payments=[BillPaymentInput(method="cash", amount=preview.grand_total)],
+    )
+    return await finalize_bill(session, guest.tenant_id, fake_current_user, req)
+
+
 async def place_takeaway_order(
     session: AsyncSession, guest: CurrentGuest, payment_method: str | None = None
-) -> GuestSession:
+) -> tuple[GuestSession, BillResponse | None]:
     """A Takeaway guest's equivalent of "Send to Kitchen" — deliberately does almost
     nothing server-side (production decision): no `KotTicket` is created, no stock is
     deducted, and nothing is sent to the kitchen printer yet. The items are already
@@ -417,12 +455,26 @@ async def place_takeaway_order(
     visible to staff as a pending, unconfirmed Takeaway order
     (`kot_service.list_active_tickets`'s pending-Takeaway rows), never visible to the
     kitchen itself.
+
+    Exception: a Kiosk guest paying cash gets its bill finalized right here instead —
+    see `_finalize_kiosk_cash_order`. The second tuple element is that finalized bill,
+    None for every other case (including a Kiosk guest paying online, which still
+    finalizes later via the verified-payment webhook as before).
     """
     guest_session = await _get_active_session_or_404(session, guest)
     if guest_session.order_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add an item before placing your order")
     if payment_method is None:
-        return guest_session
+        return guest_session, None
+
+    # Takeaway/Kiosk guests only have to share their name/phone once they actually
+    # choose how to pay (the menu/cart stayed open with no profile at all until now,
+    # production request) — dine-in's own requirement is enforced earlier, in
+    # update_cart, since a dine-in table never reaches this function at all.
+    if not guest_session.customer_name or not guest_session.customer_phone:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Please share your name and phone number before paying"
+        )
 
     if payment_method == "online":
         if guest_session.takeaway_payment == "cash":
@@ -434,7 +486,12 @@ async def place_takeaway_order(
         if await find_paid_attempt(session, guest.tenant_id, guest_session.order_id) is not None:
             raise HTTPException(status.HTTP_409_CONFLICT, "This order has already been paid")
     guest_session.takeaway_payment = payment_method
-    return guest_session
+
+    if payment_method == "cash" and guest_session.is_kiosk:
+        bill = await _finalize_kiosk_cash_order(session, guest, guest_session)
+        return guest_session, bill
+
+    return guest_session, None
 
 
 async def get_order_status(session: AsyncSession, guest: CurrentGuest) -> list[ActiveKotTicketResponse]:

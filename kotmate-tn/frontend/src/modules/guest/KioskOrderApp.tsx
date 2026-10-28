@@ -3,6 +3,7 @@ import axios from "axios";
 import { useEffect, useState } from "react";
 
 import logoMark from "@/assets/logo-mark.png";
+import { formatINR } from "@/lib/utils";
 import { listLocations } from "@/modules/admin/locationsApi";
 import { listSections } from "@/modules/admin/sectionsApi";
 import { UserMenu } from "@/modules/auth/UserMenu";
@@ -18,7 +19,6 @@ import {
 import {
   type GuestMenuItem,
   type GuestSession,
-  getGuestBillPreview,
   getGuestCart,
   getGuestCategories,
   getGuestMenu,
@@ -69,9 +69,11 @@ function isSessionEndedError(err: unknown): boolean {
 // with its own staff login, which is used for exactly one call (startKioskSession) to
 // mint a guest session; from then on this behaves exactly like the QR self-order app
 // (GuestOrderApp.tsx) talking over that guest token, reusing its same sub-components,
-// just without a table/QR to scan and with a few kiosk-only differences: no cash
-// option (nobody's there to collect it), a scannable QR instead of an app-intent
-// button, and an automatic reset back to a blank cart once an order is paid for.
+// just without a table/QR to scan and with a few kiosk-only differences: both Payment
+// Gateway and Cash are offered (production request — cash prints the bill immediately
+// and waits for a POS operator to approve the kitchen ticket), a scannable QR instead
+// of an app-intent button for online payment, and an automatic reset back to the idle
+// "Order Here" screen once an order is paid for.
 export function KioskOrderApp() {
   const [setup, setSetup] = useState<KioskSetup | null>(() => readKioskSetup());
 
@@ -154,6 +156,48 @@ function KioskSetupScreen({ onSaved }: { onSaved: (setup: KioskSetup) => void })
   );
 }
 
+// Shown before the first order and again after every reset (production request: a
+// "fancy" idle screen with a big "Order Here" button rather than jumping straight to
+// the menu) — the kiosk session itself is already minted in the background by the time
+// this renders (KioskOrderFlow starts it unconditionally), so tapping through has no
+// extra latency. `welcomeImageUrl` is this location's Settings upload (Hotel Master);
+// null falls back to a built-in gradient + logo + hotel name design rather than a
+// blank screen.
+function KioskIdleScreen({
+  hotelName,
+  welcomeImageUrl,
+  onStart,
+}: {
+  hotelName: string | undefined;
+  welcomeImageUrl: string | null | undefined;
+  onStart: () => void;
+}) {
+  return (
+    <div className="relative flex h-dvh w-screen flex-col items-center justify-center overflow-hidden bg-background text-foreground">
+      <div className="absolute right-3 top-3 z-10">
+        <UserMenu />
+      </div>
+      {welcomeImageUrl ? (
+        <img src={welcomeImageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-accent via-gold to-chili" />
+      )}
+      <div className="relative z-[1] flex flex-col items-center gap-3 rounded-3xl bg-background/90 px-10 py-12 text-center shadow-pos backdrop-blur-sm">
+        <img src={logoMark} alt="" className="h-16 w-16 object-contain" />
+        {hotelName && <h1 className="text-2xl font-extrabold">{hotelName}</h1>}
+        {!welcomeImageUrl && <p className="text-4xl">🍽️ 🍛 🥤 🍜</p>}
+        <button
+          type="button"
+          onClick={onStart}
+          className="mt-3 rounded-full bg-accent px-12 py-4 text-xl font-extrabold text-accent-foreground shadow-pos"
+        >
+          Order Here
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Remounted with a new `epoch` to start a fresh order for the next customer — plain
 // state reset, not a page reload, so the kiosk never shows a browser chrome flash.
 function KioskSession({ locationId, sectionId }: { locationId: string; sectionId: string }) {
@@ -161,6 +205,7 @@ function KioskSession({ locationId, sectionId }: { locationId: string; sectionId
   return (
     <KioskOrderFlow
       key={epoch}
+      epoch={epoch}
       locationId={locationId}
       sectionId={sectionId}
       onDone={() => setEpoch((e) => e + 1)}
@@ -169,21 +214,31 @@ function KioskSession({ locationId, sectionId }: { locationId: string; sectionId
 }
 
 function KioskOrderFlow({
+  epoch,
   locationId,
   sectionId,
   onDone,
 }: {
+  epoch: number;
   locationId: string;
   sectionId: string;
   onDone: () => void;
 }) {
   const queryClient = useQueryClient();
+  const [started, setStarted] = useState(false);
   const [tab, setTab] = useState<Tab>("menu");
   const [order, setOrder] = useState<Order | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sessionEnded, setSessionEnded] = useState(false);
+  const [profileRequired, setProfileRequired] = useState(false);
+  const [pendingPayment, setPendingPayment] = useState<"online" | "cash" | null>(null);
+  // Set once a Kiosk cash order's bill finalizes immediately (production request) —
+  // shown instead of the Bill tab, then auto-resets like a successful online payment.
+  const [cashPaidInfo, setCashPaidInfo] = useState<{ billNumber: string | null; grandTotal: number | null } | null>(
+    null,
+  );
 
   function handleError(err: unknown, fallback: string) {
     if (isSessionEndedError(err)) {
@@ -194,7 +249,7 @@ function KioskOrderFlow({
   }
 
   const sessionQuery = useQuery({
-    queryKey: ["kiosk-session", locationId, sectionId],
+    queryKey: ["kiosk-session", locationId, sectionId, epoch],
     queryFn: () => startKioskSession(locationId, sectionId),
     retry: false,
     staleTime: Infinity,
@@ -215,14 +270,6 @@ function KioskOrderFlow({
     enabled: sessionQuery.isSuccess,
   });
   const [activeCategoryId, setActiveCategoryId] = useState<string>(TOP_SELLING_ID);
-
-  const hasUnsentItems = order?.items.some((l) => !l.is_kot_sent) ?? false;
-  const onlinePreviewQuery = useQuery({
-    queryKey: ["guest-bill-preview"],
-    queryFn: getGuestBillPreview,
-    enabled: sessionQuery.isSuccess && hasUnsentItems,
-  });
-  const onlineAvailable = onlinePreviewQuery.data?.online_payment.enabled ?? false;
 
   useEffect(() => {
     if (!sessionQuery.isSuccess || !sessionQuery.data.order_id) return;
@@ -265,20 +312,6 @@ function KioskOrderFlow({
     }
   }
 
-  async function handlePayOnline() {
-    setBusy(true);
-    try {
-      await sendGuestOrderToKitchen("online");
-      setOrder(await getGuestCart());
-      setCartOpen(false);
-      setTab("bill");
-    } catch (err) {
-      handleError(err, "Couldn't place your order — please try again");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   if (sessionQuery.isLoading) return <CenteredMessage>Loading…</CenteredMessage>;
   if (sessionQuery.isError) {
     return (
@@ -313,16 +346,84 @@ function KioskOrderFlow({
   }
 
   const session = sessionQuery.data as GuestSession;
-  if (!session.customer_name || !session.customer_phone) {
+
+  if (!started) {
+    return (
+      <KioskIdleScreen
+        hotelName={session.hotel_name}
+        welcomeImageUrl={session.kiosk_welcome_image_url}
+        onStart={() => setStarted(true)}
+      />
+    );
+  }
+
+  if (profileRequired) {
     return (
       <RequiredProfileScreen
-        onSaved={(updated) => queryClient.setQueryData(["kiosk-session", locationId, sectionId], updated)}
-        onSessionEnded={() => setSessionEnded(true)}
+        onSaved={(updated) => {
+          queryClient.setQueryData(["kiosk-session", locationId, sectionId, epoch], updated);
+          setProfileRequired(false);
+          const method = pendingPayment;
+          setPendingPayment(null);
+          if (method) void handleChoosePayment(method);
+        }}
+        onSessionEnded={() => {
+          setProfileRequired(false);
+          setSessionEnded(true);
+        }}
         topRight={<UserMenu />}
       />
     );
   }
+
+  if (cashPaidInfo) {
+    return (
+      <div className="relative">
+        <div className="absolute right-3 top-3">
+          <UserMenu />
+        </div>
+        <CenteredMessage>
+          <p className="mb-1 text-lg font-extrabold">✅ Paid — thank you!</p>
+          <p className="mb-1 text-2xl font-black">{session.pickup_token}</p>
+          {cashPaidInfo.billNumber && (
+            <p className="text-sm text-ink-faint">
+              Bill #{cashPaidInfo.billNumber}
+              {cashPaidInfo.grandTotal != null ? ` — ${formatINR(cashPaidInfo.grandTotal)}` : ""}
+            </p>
+          )}
+        </CenteredMessage>
+      </div>
+    );
+  }
+
   const unsentCount = order?.items.filter((l) => !l.is_kot_sent).length ?? 0;
+
+  async function handleChoosePayment(method: "online" | "cash") {
+    if (!session.customer_name || !session.customer_phone) {
+      setPendingPayment(method);
+      setProfileRequired(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await sendGuestOrderToKitchen(method);
+      if (result.status === "paid_cash") {
+        setCashPaidInfo({ billNumber: result.bill_number ?? null, grandTotal: result.grand_total ?? null });
+        setTimeout(onDone, AUTO_RESET_MS);
+        return;
+      }
+      queryClient.setQueryData<GuestSession>(["kiosk-session", locationId, sectionId, epoch], (prev) =>
+        prev ? { ...prev, takeaway_payment: method } : prev,
+      );
+      setOrder(await getGuestCart());
+      setCartOpen(false);
+      setTab("bill");
+    } catch (err) {
+      handleError(err, "Couldn't place your order — please try again");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="flex h-dvh w-screen flex-col overflow-hidden bg-background text-foreground">
@@ -364,8 +465,10 @@ function KioskOrderFlow({
         {tab === "bill" && (
           <BillTab
             tokenLabel={session.pickup_token ?? ""}
-            payAtCounter={false}
+            paymentMethod={session.takeaway_payment ?? null}
+            busy={busy}
             kioskMode
+            onChoosePayment={(method) => void handleChoosePayment(method)}
             onSessionEnded={() => setSessionEnded(true)}
             onPaid={() => {
               setTimeout(onDone, AUTO_RESET_MS);
@@ -395,7 +498,7 @@ function KioskOrderFlow({
           onClick={() => setCartOpen(true)}
           className="fixed bottom-16 right-4 flex items-center gap-2 rounded-full bg-accent px-4 py-3 text-sm font-extrabold text-accent-foreground shadow-pos"
         >
-          🛒 {unsentCount} item{unsentCount === 1 ? "" : "s"} · Checkout
+          🛒 {unsentCount} item{unsentCount === 1 ? "" : "s"} · Pay Bill
         </button>
       )}
 
@@ -404,10 +507,12 @@ function KioskOrderFlow({
           order={order}
           busy={busy}
           takeaway
-          onlineAvailable={onlineAvailable}
-          kioskMode
           onQuantityChange={(id, qty) => void handleQuantityChange(id, qty)}
-          onSend={() => void handlePayOnline()}
+          onSend={() => {}}
+          onGoToBill={() => {
+            setCartOpen(false);
+            setTab("bill");
+          }}
           onClose={() => setCartOpen(false)}
         />
       )}

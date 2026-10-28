@@ -203,7 +203,15 @@ async def send_kot(
     """
     order = await get_order_or_404(session, tenant.id, order_id)
     if order.status == "billed":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This order has already been billed")
+        # Narrow exception: a Kiosk cash order's bill finalizes immediately, before the
+        # kitchen ticket — a POS operator fires this ticket afterward, as a one-time
+        # approval (guest_service._finalize_kiosk_cash_order). Any other already-billed
+        # order (or a kiosk order that already got its ticket) is still rejected.
+        existing_ticket = (
+            await session.execute(select(KotTicket.id).where(KotTicket.order_id == order.id))
+        ).first()
+        if existing_ticket is not None or order.source != "kiosk":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "This order has already been billed")
 
     unsent = (
         await session.execute(
@@ -221,7 +229,18 @@ async def send_kot(
     stock_tracking = is_stock_tracking_enabled(tenant, plan.features if plan else None)
 
     ticket_number = await _next_ticket_number(session, tenant.id)
-    ticket = KotTicket(tenant_id=tenant.id, order_id=order.id, ticket_number=ticket_number, status="new")
+    ticket = KotTicket(
+        tenant_id=tenant.id,
+        order_id=order.id,
+        ticket_number=ticket_number,
+        status="new",
+        # Already billed means this is the Kiosk-cash-approval case (the one shape the
+        # guard above lets through) — flag it the same way Guided POS's combined
+        # "KOT + Bill" route does, so it stays visible to the Kitchen Display/KOT
+        # Tickets screen until marked ready, instead of vanishing the instant it's
+        # created just because its order is already billed (list_active_tickets).
+        order_billed_via_kot=order.status == "billed",
+    )
     session.add(ticket)
     await session.flush()
 
@@ -433,6 +452,49 @@ async def build_pending_takeaway_response(
     )
 
 
+async def build_pending_kiosk_approval_response(
+    session: AsyncSession, order: Order, guest_session: GuestSession
+) -> ActiveKotTicketResponse:
+    """A Kiosk cash order whose bill is already finalized (printed immediately,
+    production request) but has no KotTicket yet — synthesized the same way as
+    `build_pending_takeaway_response`, except the order is already `billed` and
+    `bill_number` is set. Staff approve it with a plain "Send to Kitchen" tap (see
+    `send_kot`'s already-billed guard and `list_active_tickets` below).
+    """
+    section = (
+        await session.execute(select(SeatingSection).where(SeatingSection.id == order.section_id))
+    ).scalar_one()
+    rows = (
+        await session.execute(
+            select(OrderItem, Item)
+            .join(Item, Item.id == OrderItem.item_id)
+            .where(OrderItem.order_id == order.id)
+        )
+    ).all()
+    items = [
+        ActiveKotTicketItem(name_en=item.name_en, name_ta=item.name_ta, quantity=oi.quantity)
+        for oi, item in rows
+    ]
+    bill = (
+        await session.execute(select(Bill.bill_number).where(Bill.order_id == order.id))
+    ).scalar_one_or_none()
+    return ActiveKotTicketResponse(
+        id=order.id,
+        ticket_number=guest_session.pickup_token or "—",
+        order_id=order.id,
+        table_number=None,
+        party_label=None,
+        section_name_en=section.name_en,
+        status="pending",
+        created_at=order.created_at,
+        items=items,
+        bill_number=bill,
+        source="kiosk",
+        pickup_token=guest_session.pickup_token,
+        is_pending_kitchen_approval=True,
+    )
+
+
 async def list_active_tickets(
     session: AsyncSession, tenant_id: uuid.UUID, location_id: uuid.UUID | None
 ) -> list[ActiveKotTicketResponse]:
@@ -492,6 +554,26 @@ async def list_active_tickets(
     pending_rows = (await session.execute(pending_query.order_by(Order.created_at.desc()))).all()
     for order, guest_session in pending_rows:
         responses.append(await build_pending_takeaway_response(session, order, guest_session))
+
+    kiosk_pending_query = (
+        select(Order, GuestSession)
+        .join(GuestSession, GuestSession.order_id == Order.id)
+        .where(
+            Order.tenant_id == tenant_id,
+            Order.source == "kiosk",
+            Order.status == "billed",
+            GuestSession.takeaway_payment == "cash",
+            ~Order.id.in_(select(KotTicket.order_id).where(KotTicket.tenant_id == tenant_id)),
+        )
+    )
+    if location_id is not None:
+        kiosk_pending_query = kiosk_pending_query.where(Order.location_id == location_id)
+    kiosk_pending_rows = (
+        await session.execute(kiosk_pending_query.order_by(Order.created_at.desc()))
+    ).all()
+    for order, guest_session in kiosk_pending_rows:
+        responses.append(await build_pending_kiosk_approval_response(session, order, guest_session))
+
     return responses
 
 

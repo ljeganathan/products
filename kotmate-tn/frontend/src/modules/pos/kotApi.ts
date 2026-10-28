@@ -40,6 +40,12 @@ export interface ActiveKotTicket {
   // ticket, and `status` is the fixed value "pending". Never appears on the Kitchen
   // Display; only on the KOT Tickets screen, awaiting staff confirmation or "Clear".
   is_pending_takeaway: boolean;
+  // True for a synthetic row representing a Kiosk cash order whose bill is already
+  // finalized (printed immediately) but has no KotTicket yet — `bill_number` is
+  // already set here (unlike is_pending_takeaway, which is always pre-bill). A POS
+  // operator approves it with a plain "Send to Kitchen" tap (sendOrderToKot), which
+  // just fires the ticket.
+  is_pending_kitchen_approval: boolean;
 }
 
 export interface KotSendResult {

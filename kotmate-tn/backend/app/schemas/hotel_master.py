@@ -65,6 +65,7 @@ class HotelMasterResponse(BaseModel):
     upi_id: str | None = None
     show_tamil_names: bool = True
     receipt_footer_message: str | None = None
+    kiosk_welcome_image_url: str | None = None
     # Non-blocking (CLAUDE.md Phase 10 acceptance criteria: "warn, don't hard-block") —
     # None when there's nothing to flag (no GSTIN, no state, or they already agree).
     gstin_state_warning: str | None = None

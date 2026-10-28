@@ -34,7 +34,9 @@ from app.schemas.stock import StockManagementSettingsRequest, StockManagementSet
 from app.services.hotel_master_service import (
     get_hotel_master,
     remove_hotel_master_logo,
+    remove_kiosk_welcome_image,
     upload_hotel_master_logo,
+    upload_kiosk_welcome_image,
     upsert_hotel_master,
 )
 from app.services.online_payment_service import get_settings_view, save_settings, test_credentials
@@ -302,6 +304,38 @@ async def delete_tenant_hotel_master_logo(
     db: AsyncSession = Depends(get_db),
 ) -> HotelMasterResponse:
     result = await remove_hotel_master_logo(db, current_user.tenant_id, location_id)
+    await db.commit()
+    return result
+
+
+@router.post(
+    "/hotel-master/{location_id}/kiosk-image",
+    response_model=HotelMasterResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def upload_tenant_kiosk_welcome_image(
+    location_id: uuid.UUID,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> HotelMasterResponse:
+    tenant = await _get_tenant(db, current_user)
+    result = await upload_kiosk_welcome_image(db, tenant, location_id, file)
+    await db.commit()
+    return result
+
+
+@router.delete(
+    "/hotel-master/{location_id}/kiosk-image",
+    response_model=HotelMasterResponse,
+    dependencies=[Depends(require_role("tenant_admin"))],
+)
+async def delete_tenant_kiosk_welcome_image(
+    location_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> HotelMasterResponse:
+    result = await remove_kiosk_welcome_image(db, current_user.tenant_id, location_id)
     await db.commit()
     return result
 

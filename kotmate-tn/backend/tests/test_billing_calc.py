@@ -135,6 +135,52 @@ def test_bill_formatter_hides_tamil_when_toggled_off():
     assert not any("சாப்பாடு" in line for line in lines)
 
 
+def _paid_bill(is_online_paid: bool) -> BillRenderData:
+    return BillRenderData(
+        bill_number="B1",
+        table_number="T5",
+        section_name_en="AC",
+        created_at=datetime.now(),
+        lines=[BillLine(name_en="Meals", name_ta=None, quantity=1, unit_price=100.0, line_total=100.0)],
+        subtotal=100.0,
+        discount_amount=0,
+        discount_note=None,
+        cgst_amount=0,
+        sgst_amount=0,
+        round_off_amount=0,
+        grand_total=100.0,
+        payments=[("online", 100.0)] if is_online_paid else [("cash", 100.0)],
+        hotel_name="Test Hotel",
+        hotel_address_lines=[],
+        gstin=None,
+        upi_id=None,
+        qr_payload=None,
+        show_tamil_names=False,
+        is_online_paid=is_online_paid,
+    )
+
+
+def test_dot_matrix_bill_prints_paid_online_banner_above_grand_total():
+    lines = format_bill_text_lines(_paid_bill(is_online_paid=True))
+    banner_idx = next(i for i, line in enumerate(lines) if "PAID ONLINE" in line)
+    grand_total_idx = next(i for i, line in enumerate(lines) if line.startswith("Grand Total"))
+    assert banner_idx == grand_total_idx - 1
+
+
+def test_dot_matrix_bill_omits_paid_online_banner_for_cash():
+    lines = format_bill_text_lines(_paid_bill(is_online_paid=False))
+    assert not any("PAID ONLINE" in line for line in lines)
+
+
+def test_thermal_bill_prints_paid_online_banner_for_online_not_cash():
+    from app.printing.escpos_thermal import render_bill
+
+    online_bytes = render_bill(_paid_bill(is_online_paid=True))
+    cash_bytes = render_bill(_paid_bill(is_online_paid=False))
+    assert b"PAID ONLINE" in online_bytes
+    assert b"PAID ONLINE" not in cash_bytes
+
+
 def test_bill_formatter_prints_one_line_per_discount_note_segment():
     """Phase 23: each auto-applied discount rule's name+amount prints as its own line
     instead of a single bare "Discount" label.

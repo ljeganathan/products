@@ -24,6 +24,10 @@ class KotSendResponse(BaseModel):
     printed: bool
     print_job: PrintJobPayload | None = None
     print_error: str | None = None
+    # Set only for a Kiosk cash order, whose bill is finalized immediately (status
+    # "paid_cash") — the pickup confirmation screen shows it alongside the pickup token.
+    bill_number: str | None = None
+    grand_total: float | None = None
 
 
 class KotTicketStatusUpdate(BaseModel):
@@ -82,3 +86,11 @@ class ActiveKotTicketResponse(BaseModel):
     # Print Bill" action) or cancel it if nobody shows up to pay — see
     # `kot_service.list_active_tickets`/`cancel_pending_takeaway_order`.
     is_pending_takeaway: bool = False
+    # True for a synthetic row representing a Kiosk cash order whose bill is already
+    # finalized (printed immediately, production request) but has no KotTicket yet —
+    # `id` is the order's id, `status` is the fixed value "pending", and `bill_number`
+    # is already set (unlike is_pending_takeaway, which is always pre-bill). Staff
+    # (POS operator) approve it with a plain "Send to Kitchen" tap, which just fires
+    # the ticket (`send_kot`'s already-billed guard allows this one shape through) —
+    # see `kot_service.list_active_tickets`.
+    is_pending_kitchen_approval: bool = False

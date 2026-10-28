@@ -12,8 +12,10 @@ import {
   type HotelMasterUpdatePayload,
   getHotelMaster,
   removeHotelMasterLogo,
+  removeKioskWelcomeImage,
   saveHotelMaster,
   uploadHotelMasterLogo,
+  uploadKioskWelcomeImage,
 } from "@/modules/admin/hotelMasterApi";
 import {
   type LocationCreatePayload,
@@ -522,6 +524,18 @@ function GeneralTab({ locationId }: { locationId: string }) {
     onError: (err) => setError(apiErrorMessage(err, "Failed to remove logo.")),
   });
 
+  const kioskImageMutation = useMutation({
+    mutationFn: (file: File) => uploadKioskWelcomeImage(locationId, file),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["hotel-master", locationId] }),
+    onError: (err) => setError(apiErrorMessage(err, "Failed to upload kiosk image.")),
+  });
+
+  const removeKioskImageMutation = useMutation({
+    mutationFn: () => removeKioskWelcomeImage(locationId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["hotel-master", locationId] }),
+    onError: (err) => setError(apiErrorMessage(err, "Failed to remove kiosk image.")),
+  });
+
   function update<K extends keyof HotelMasterUpdatePayload>(key: K, value: HotelMasterUpdatePayload[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
   }
@@ -695,6 +709,41 @@ function GeneralTab({ locationId }: { locationId: string }) {
               >
                 {removeLogoMutation.isPending ? "Removing…" : "Remove logo"}
               </button>
+            )}
+          </div>
+
+          <div className="mt-2 flex flex-col gap-1.5">
+            <label className={labelClass}>Kiosk Welcome Image</label>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) kioskImageMutation.mutate(file);
+              }}
+              className="text-xs"
+            />
+            <p className="text-xs text-foreground/50">
+              Shown full-screen on this location&apos;s Kiosk idle screen between customers. Leave unset
+              to use the default design.
+            </p>
+            {kioskImageMutation.isPending && <p className="text-xs text-foreground/50">Uploading…</p>}
+            {hotel?.kiosk_welcome_image_url && (
+              <div className="flex items-center gap-3">
+                <img
+                  src={resolveAssetUrl(hotel.kiosk_welcome_image_url)}
+                  alt="Kiosk welcome"
+                  className="h-14 w-24 rounded border border-border object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeKioskImageMutation.mutate()}
+                  disabled={removeKioskImageMutation.isPending}
+                  className="text-xs font-semibold text-chili hover:underline disabled:opacity-60"
+                >
+                  {removeKioskImageMutation.isPending ? "Removing…" : "Remove image"}
+                </button>
+              </div>
             )}
           </div>
         </fieldset>

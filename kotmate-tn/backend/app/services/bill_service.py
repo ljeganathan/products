@@ -576,6 +576,7 @@ async def _dispatch_print_for_bill(
         paper_width_mm=printer.paper_width_mm,
         logo_image_bytes=_read_uploaded_file(hotel.logo_url) if hotel else None,
         footer_message=(hotel.receipt_footer_message if hotel else None) or _DEFAULT_RECEIPT_FOOTER_MESSAGE,
+        is_online_paid=any(p.method in ("online", "upi") for p in payments),
     )
     content = dispatch_bill_print(printer, render_data)
     # "usb", "local_agent", "bluetooth" and "rawbt" printers are physically attached to

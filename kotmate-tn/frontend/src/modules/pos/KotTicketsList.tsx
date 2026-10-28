@@ -8,6 +8,7 @@ import {
   clearBilledKotTicket,
   clearPendingTakeawayOrder,
   listActiveKotTickets,
+  sendOrderToKot,
 } from "@/modules/pos/kotApi";
 
 interface KotTicketsListProps {
@@ -40,6 +41,9 @@ interface GroupedTicket {
   // real KOT ticket yet — that pending row is always the only one in its group (a real
   // ticket can't coexist with it, since sending one is what turns it into a real one).
   isPendingTakeaway: boolean;
+  // True for a synthetic row representing a Kiosk cash order whose bill is already
+  // printed but whose kitchen ticket is awaiting a POS operator's approval.
+  isPendingKitchenApproval: boolean;
 }
 
 // A single table+customer can have multiple KOT tickets (repeat-KOT — add-on items sent
@@ -60,11 +64,12 @@ function groupTicketsByOrder(tickets: ActiveKotTicket[]): GroupedTicket[] {
         statuses: [],
         tickets: [],
         billedViaKot: false,
-        billNumber: null,
+        billNumber: ticket.is_pending_kitchen_approval ? ticket.bill_number : null,
         source: ticket.source,
         paymentClaimed: ticket.guest_payment_claimed,
         pickupToken: ticket.pickup_token,
         isPendingTakeaway: ticket.is_pending_takeaway,
+        isPendingKitchenApproval: ticket.is_pending_kitchen_approval,
       };
       byOrder.set(ticket.order_id, group);
     }
@@ -107,6 +112,13 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
   // Deletes a pending, unconfirmed Takeaway order outright — nobody showed up to pay.
   const clearPendingMutation = useMutation({
     mutationFn: (orderId: string) => clearPendingTakeawayOrder(orderId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["kot-tickets-active"] }),
+  });
+
+  // A Kiosk cash order's bill is already printed — this just fires the kitchen ticket,
+  // no separate "pick up and bill" step needed (unlike a plain pending-Takeaway row).
+  const approveKioskMutation = useMutation({
+    mutationFn: (orderId: string) => sendOrderToKot(orderId),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["kot-tickets-active"] }),
   });
 
@@ -169,6 +181,14 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
                           ⏳ Awaiting confirmation
                         </span>
                       )}
+                      {group.isPendingKitchenApproval && (
+                        <span
+                          className="ml-1.5 rounded-full bg-chili-soft px-2 py-0.5 text-[10px] font-extrabold text-chili"
+                          title="Bill already paid and printed — approve to send to the kitchen"
+                        >
+                          ⏳ Awaiting kitchen approval
+                        </span>
+                      )}
                       {group.paymentClaimed && (
                         <span
                           className="ml-1.5 rounded-full bg-gold-soft px-2 py-0.5 text-[10px] font-extrabold text-gold"
@@ -212,7 +232,16 @@ export function KotTicketsList({ onSelectOrder }: KotTicketsListProps) {
                       </div>
                     ))}
                   </div>
-                  {group.isPendingTakeaway ? (
+                  {group.isPendingKitchenApproval ? (
+                    <button
+                      type="button"
+                      onClick={() => approveKioskMutation.mutate(group.orderId)}
+                      disabled={approveKioskMutation.isPending}
+                      className="w-full rounded-md border border-accent bg-accent-soft py-1.5 text-xs font-bold text-accent hover:bg-accent hover:text-accent-foreground disabled:opacity-40"
+                    >
+                      {group.billNumber ? `✅ Bill #${group.billNumber} paid — ` : ""}Approve &amp; Send to Kitchen
+                    </button>
+                  ) : group.isPendingTakeaway ? (
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"

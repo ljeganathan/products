@@ -72,6 +72,12 @@ export function GuestOrderApp() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sessionEnded, setSessionEnded] = useState(false);
+  // Takeaway only — set the moment the guest taps a payment button in the Bill tab with
+  // no name/phone on file yet (dine-in still requires it up front, below). Deliberately
+  // not used to gate the menu itself any more (production request: "first page should
+  // be the item menu").
+  const [profileRequired, setProfileRequired] = useState(false);
+  const [pendingPayment, setPendingPayment] = useState<"online" | "cash" | null>(null);
 
   function handleGuestError(err: unknown, fallback: string) {
     if (isSessionEndedError(err)) {
@@ -115,16 +121,6 @@ export function GuestOrderApp() {
     enabled: sessionQuery.isSuccess,
   });
   const [activeCategoryId, setActiveCategoryId] = useState<string>(TOP_SELLING_ID);
-
-  // Takeaway only: whether the "pay online" choice is offered in the cart — the same answer
-  // the Bill tab gets. Asked only once there's something in the cart to pay for.
-  const hasUnsentItems = order?.items.some((l) => !l.is_kot_sent) ?? false;
-  const onlinePreviewQuery = useQuery({
-    queryKey: ["guest-bill-preview"],
-    queryFn: getGuestBillPreview,
-    enabled: sessionQuery.isSuccess && sessionQuery.data?.table_id === null && hasUnsentItems,
-  });
-  const onlineAvailable = onlinePreviewQuery.data?.online_payment.enabled ?? false;
 
   // Rehydrates the draft cart on load — without this a guest who added items but
   // hasn't sent them to the kitchen yet would lose sight of their own cart on refresh.
@@ -236,9 +232,12 @@ export function GuestOrderApp() {
   }
 
   const session = sessionQuery.data as GuestSession;
-  if (!session.customer_name || !session.customer_phone) {
-    // Name + phone are mandatory before anything else on a QR order (also enforced
-    // server-side in guest_service.update_cart).
+  const takeaway = isTakeawaySession(session);
+  // Dine-in only — a shared table order still asks up front, since a waiter/table
+  // context makes the friction worth it. Takeaway browses the whole menu with no
+  // profile at all (also enforced server-side in guest_service.update_cart) and only
+  // has to share it once they actually choose how to pay, below.
+  if (!takeaway && (!session.customer_name || !session.customer_phone)) {
     return (
       <RequiredProfileScreen
         onSaved={(updated) => queryClient.setQueryData(["guest-session", qrToken], updated)}
@@ -246,8 +245,33 @@ export function GuestOrderApp() {
       />
     );
   }
-  const takeaway = isTakeawaySession(session);
+  if (profileRequired) {
+    return (
+      <RequiredProfileScreen
+        onSaved={(updated) => {
+          queryClient.setQueryData(["guest-session", qrToken], updated);
+          setProfileRequired(false);
+          const method = pendingPayment;
+          setPendingPayment(null);
+          if (method) void handleSendToKitchen(method);
+        }}
+        onSessionEnded={() => {
+          setProfileRequired(false);
+          setSessionEnded(true);
+        }}
+      />
+    );
+  }
   const unsentCount = order?.items.filter((l) => !l.is_kot_sent).length ?? 0;
+
+  function handleChoosePayment(method: "online" | "cash") {
+    if (!session.customer_name || !session.customer_phone) {
+      setPendingPayment(method);
+      setProfileRequired(true);
+      return;
+    }
+    void handleSendToKitchen(method);
+  }
 
   return (
     <div className="flex h-dvh w-screen flex-col overflow-hidden bg-background text-foreground">
@@ -308,7 +332,9 @@ export function GuestOrderApp() {
         {tab === "bill" && (
           <BillTab
             tokenLabel={takeaway ? (session.pickup_token ?? "") : `Table ${session.table_number}`}
-            payAtCounter={takeaway && session.takeaway_payment === "cash"}
+            paymentMethod={takeaway ? (session.takeaway_payment ?? null) : undefined}
+            busy={busy}
+            onChoosePayment={takeaway ? handleChoosePayment : undefined}
             onSessionEnded={() => setSessionEnded(true)}
           />
         )}
@@ -335,7 +361,7 @@ export function GuestOrderApp() {
           onClick={() => setCartOpen(true)}
           className="fixed bottom-16 right-4 flex items-center gap-2 rounded-full bg-accent px-4 py-3 text-sm font-extrabold text-accent-foreground shadow-pos"
         >
-          🛒 {unsentCount} item{unsentCount === 1 ? "" : "s"} · {takeaway ? "Place order" : "Send to kitchen"}
+          🛒 {unsentCount} item{unsentCount === 1 ? "" : "s"} · {takeaway ? "Pay Bill" : "Send to kitchen"}
         </button>
       )}
 
@@ -344,9 +370,12 @@ export function GuestOrderApp() {
           order={order}
           busy={busy}
           takeaway={takeaway}
-          onlineAvailable={onlineAvailable}
           onQuantityChange={(id, qty) => void handleQuantityChange(id, qty)}
-          onSend={(paymentMethod) => void handleSendToKitchen(paymentMethod)}
+          onSend={() => void handleSendToKitchen()}
+          onGoToBill={() => {
+            setCartOpen(false);
+            setTab("bill");
+          }}
           onClose={() => setCartOpen(false)}
         />
       )}
@@ -537,21 +566,21 @@ export function CartSheet({
   order,
   busy,
   takeaway,
-  onlineAvailable,
-  kioskMode = false,
   onQuantityChange,
   onSend,
+  onGoToBill,
   onClose,
 }: {
   order: Order | null;
   busy: boolean;
   takeaway: boolean;
-  onlineAvailable: boolean;
-  // No cash-at-the-counter option — nobody is there to collect it (CLAUDE.md
-  // kiosk-ordering note). The kiosk always pays online.
-  kioskMode?: boolean;
   onQuantityChange: (lineId: string, qty: number) => void;
-  onSend: (paymentMethod?: "online" | "cash") => void;
+  // Dine-in only — sends straight to the kitchen, no payment step here.
+  onSend: () => void;
+  // Takeaway/Kiosk only — switches to the Bill tab, where the actual payment choice
+  // (Payment Gateway or Cash) lives (production request: cart's only action is a single
+  // "Pay Bill" that opens the itemized bill).
+  onGoToBill: () => void;
   onClose: () => void;
 }) {
   const unsent = order?.items.filter((l) => !l.is_kot_sent) ?? [];
@@ -614,42 +643,14 @@ export function CartSheet({
 
         {takeaway ? (
           <div className="flex flex-col gap-2">
-            {kioskMode ? (
-              <button
-                type="button"
-                onClick={() => onSend("online")}
-                disabled={unsent.length === 0 || busy}
-                className="rounded-lg bg-accent py-3 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
-              >
-                {busy ? "Placing…" : "💳 Pay to place your order"}
-              </button>
-            ) : (
-              <>
-                <p className="text-sm font-extrabold">How would you like to pay?</p>
-                {onlineAvailable && (
-                  <button
-                    type="button"
-                    onClick={() => onSend("online")}
-                    disabled={unsent.length === 0 || busy}
-                    className="rounded-lg bg-accent py-3 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
-                  >
-                    💳 Pay online now
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => onSend("cash")}
-                  disabled={unsent.length === 0 || busy}
-                  className={`rounded-lg py-3 text-sm font-extrabold disabled:opacity-40 ${
-                    onlineAvailable
-                      ? "border border-border hover:bg-surface-2"
-                      : "bg-accent text-accent-foreground"
-                  }`}
-                >
-                  {busy ? "Placing…" : "💵 Pay by cash at the counter"}
-                </button>
-              </>
-            )}
+            <button
+              type="button"
+              onClick={onGoToBill}
+              disabled={unsent.length === 0}
+              className="rounded-lg bg-accent py-3 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
+            >
+              🧾 Pay Bill
+            </button>
             <button
               type="button"
               onClick={onClose}
@@ -669,7 +670,7 @@ export function CartSheet({
             </button>
             <button
               type="button"
-              onClick={() => onSend()}
+              onClick={onSend}
               disabled={unsent.length === 0 || busy}
               className="flex-1 rounded-lg bg-accent py-2.5 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
             >
@@ -833,14 +834,24 @@ export function StatusTab({
 
 export function BillTab({
   tokenLabel,
-  payAtCounter,
+  paymentMethod,
+  busy = false,
   kioskMode = false,
+  onChoosePayment,
   onSessionEnded,
   onPaid,
 }: {
   tokenLabel: string;
-  payAtCounter: boolean;
+  // Takeaway/Kiosk only (undefined for dine-in, which never shows a payment choice
+  // here — see onChoosePayment below): null/undefined until the guest picks one.
+  paymentMethod?: "online" | "cash" | null;
+  busy?: boolean;
   kioskMode?: boolean;
+  // Omitted entirely for dine-in — a shared table order pays online directly (no
+  // upfront choice) or cash at the table, neither of which needs a tap here. When
+  // provided (Takeaway/Kiosk), renders the "Payment Gateway"/"Cash" buttons and calls
+  // this once the guest taps one.
+  onChoosePayment?: (method: "online" | "cash") => void;
   onSessionEnded: () => void;
   onPaid?: () => void;
 }) {
@@ -887,14 +898,48 @@ export function BillTab({
         </div>
       </div>
 
-      {payAtCounter && (
+      {onChoosePayment && !paymentMethod && (
+        <div className="mt-4 flex flex-col gap-2 rounded-xl border border-border bg-surface p-4 shadow-pos">
+          <p className="text-center text-sm font-extrabold">How would you like to pay?</p>
+          {data.online_payment.enabled && (
+            <button
+              type="button"
+              onClick={() => onChoosePayment("online")}
+              disabled={busy}
+              className="rounded-lg bg-accent py-3 text-sm font-extrabold text-accent-foreground disabled:opacity-40"
+            >
+              {busy ? "Placing…" : "💳 Pay by Payment Gateway"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onChoosePayment("cash")}
+            disabled={busy}
+            className={`rounded-lg py-3 text-sm font-extrabold disabled:opacity-40 ${
+              data.online_payment.enabled
+                ? "border border-border hover:bg-surface-2"
+                : "bg-accent text-accent-foreground"
+            }`}
+          >
+            {busy ? "Placing…" : "💵 Pay by Cash"}
+          </button>
+        </div>
+      )}
+
+      {paymentMethod === "cash" && !kioskMode && (
         <div className="mt-4 rounded-xl border border-border bg-surface p-4 text-center shadow-pos">
           <p className="text-sm font-extrabold">💵 Pay at the counter</p>
           <p className="mt-1 text-xs text-ink-faint">Pay when you collect your order, with the pickup number above.</p>
         </div>
       )}
 
-      {!payAtCounter && data.online_payment.enabled && (
+      {paymentMethod === "cash" && kioskMode && (
+        <div className="mt-4 rounded-xl border border-veg bg-veg/10 p-4 text-center shadow-pos">
+          <p className="text-sm font-extrabold text-veg">✅ Paid — thank you!</p>
+        </div>
+      )}
+
+      {(!onChoosePayment || paymentMethod === "online") && data.online_payment.enabled && (
         <OnlinePayCard
           info={data.online_payment}
           total={data.grand_total}
@@ -909,19 +954,15 @@ export function BillTab({
       )}
 
       {/* The plain VPA-deep-link QR has no gateway behind it, so nothing would ever
-          confirm the payment automatically — never shown on an unattended kiosk. */}
-      {!payAtCounter && !kioskMode && !data.online_payment.enabled && data.upi_link && (
+          confirm the payment automatically — never shown on an unattended kiosk, and
+          never shown for Takeaway/Kiosk before a payment method is actually chosen. */}
+      {!onChoosePayment && !kioskMode && !data.online_payment.enabled && data.upi_link && (
         <div className="mt-4 rounded-xl border border-border bg-surface p-4 text-center shadow-pos">
           <h2 className="mb-1 text-sm font-extrabold uppercase tracking-wide text-ink-faint">
             💳 Scan to Pay via UPI
           </h2>
           <p className="mb-1 text-xs text-ink-faint">Scan with any UPI app, or download and pay from another device.</p>
           <QrCodeImage value={data.upi_link} downloadName={`upi-payment-${Math.round(data.grand_total)}`} />
-        </div>
-      )}
-      {!payAtCounter && kioskMode && !data.online_payment.enabled && (
-        <div className="mt-4 rounded-xl border border-border bg-chili-soft p-4 text-center text-chili shadow-pos">
-          <p className="text-sm font-bold">Online payment isn&apos;t set up for this kiosk — please ask staff.</p>
         </div>
       )}
     </div>

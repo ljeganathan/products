@@ -41,6 +41,11 @@ class HotelMaster(UUIDPKMixin, TimestampMixin, Base):
     # tenant hasn't set one — the print layer falls back to a generic default rather
     # than printing nothing, but doesn't hardcode that default here in the model.
     receipt_footer_message: Mapped[str | None] = mapped_column(String(200))
+    # Shown full-screen on this location's Kiosk idle/welcome screen between customers
+    # (CLAUDE.md-adjacent Kiosk feature) — NULL means no custom image uploaded yet, and
+    # the kiosk frontend falls back to a built-in default background (logo + hotel name
+    # + decorative food imagery) rather than a blank screen.
+    kiosk_welcome_image_url: Mapped[str | None] = mapped_column(String(500))
 
     __table_args__ = (
         tenant_composite_index("hotel_master"),

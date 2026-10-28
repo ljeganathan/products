@@ -19,6 +19,9 @@ export interface HotelMaster {
   // null means the tenant hasn't set one, and the backend falls back to a generic
   // default at print time rather than printing nothing.
   receipt_footer_message: string | null;
+  // Shown full-screen on this location's Kiosk idle screen between customers — null
+  // falls back to a built-in default design.
+  kiosk_welcome_image_url: string | null;
   gstin_state_warning: string | null;
   created_at: string | null;
 }
@@ -61,4 +64,18 @@ export async function uploadHotelMasterLogo(locationId: string, file: File): Pro
 
 export async function removeHotelMasterLogo(locationId: string): Promise<HotelMaster> {
   return (await api.delete<HotelMaster>(`/api/v1/settings/hotel-master/${locationId}/logo`)).data;
+}
+
+export async function uploadKioskWelcomeImage(locationId: string, file: File): Promise<HotelMaster> {
+  const form = new FormData();
+  form.append("file", file);
+  return (
+    await api.post<HotelMaster>(`/api/v1/settings/hotel-master/${locationId}/kiosk-image`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    })
+  ).data;
+}
+
+export async function removeKioskWelcomeImage(locationId: string): Promise<HotelMaster> {
+  return (await api.delete<HotelMaster>(`/api/v1/settings/hotel-master/${locationId}/kiosk-image`)).data;
 }

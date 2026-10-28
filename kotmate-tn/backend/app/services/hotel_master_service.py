@@ -72,6 +72,7 @@ def _build_response(row: HotelMaster | None, location_id: uuid.UUID) -> HotelMas
         upi_id=row.upi_id,
         show_tamil_names=row.show_tamil_names,
         receipt_footer_message=row.receipt_footer_message,
+        kiosk_welcome_image_url=row.kiosk_welcome_image_url,
         gstin_state_warning=gstin_state_warning(row.gstin, row.state),
         created_at=row.created_at,
     )
@@ -158,5 +159,49 @@ async def remove_hotel_master_logo(
     row = await get_hotel_master_row(session, tenant_id, location_id)
     if row is not None:
         row.logo_url = None
+        await session.flush()
+    return _build_response(row, location_id)
+
+
+async def upload_kiosk_welcome_image(
+    session: AsyncSession, tenant: Tenant, location_id: uuid.UUID, file: UploadFile
+) -> HotelMasterResponse:
+    """Same upload shape as the logo above — a full-screen image shown on this
+    location's Kiosk idle screen between customers (production request: "there should
+    be upload kiosk image option in settings").
+    """
+    await _validate_location(session, tenant.id, location_id)
+    if file.content_type not in _ALLOWED_LOGO_CONTENT_TYPES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only JPEG, PNG, or WebP images are allowed")
+
+    content = await file.read()
+    if len(content) > get_settings().MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Image exceeds the maximum upload size")
+
+    row = await get_hotel_master_row(session, tenant.id, location_id)
+    if row is None:
+        location = (
+            await session.execute(select(TenantLocation).where(TenantLocation.id == location_id))
+        ).scalar_one()
+        row = HotelMaster(tenant_id=tenant.id, location_id=location_id, name=location.name)
+        session.add(row)
+        await session.flush()
+
+    storage = get_storage()
+    url = await storage.save(
+        tenant_id=tenant.id, subfolder="hotel", filename=file.filename or "kiosk", content=content
+    )
+    row.kiosk_welcome_image_url = url
+    await session.flush()
+    return _build_response(row, location_id)
+
+
+async def remove_kiosk_welcome_image(
+    session: AsyncSession, tenant_id: uuid.UUID, location_id: uuid.UUID
+) -> HotelMasterResponse:
+    await _validate_location(session, tenant_id, location_id)
+    row = await get_hotel_master_row(session, tenant_id, location_id)
+    if row is not None:
+        row.kiosk_welcome_image_url = None
         await session.flush()
     return _build_response(row, location_id)

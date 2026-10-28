@@ -131,6 +131,29 @@ async def test_hotel_master_logo_upload(client: AsyncClient, tenant_admin: dict)
     assert resp.json()["logo_url"] is not None
 
 
+async def test_kiosk_welcome_image_upload_and_remove(client: AsyncClient, tenant_admin: dict):
+    headers = tenant_admin["headers"]
+    location_id = await _default_location_id(client, headers)
+
+    fake_png = io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+    uploaded = await client.post(
+        f"/api/v1/settings/hotel-master/{location_id}/kiosk-image",
+        files={"file": ("welcome.png", fake_png, "image/png")},
+        headers=headers,
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    url = uploaded.json()["kiosk_welcome_image_url"]
+    assert url is not None
+    # Uploading a kiosk image never touches the (separate) bill/KOT logo field.
+    assert uploaded.json()["logo_url"] is None
+
+    removed = await client.delete(
+        f"/api/v1/settings/hotel-master/{location_id}/kiosk-image", headers=headers
+    )
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["kiosk_welcome_image_url"] is None
+
+
 async def test_non_tenant_admin_can_read_but_not_write_hotel_master(client: AsyncClient, tenant_admin: dict):
     headers = tenant_admin["headers"]
     location_id = await _default_location_id(client, headers)

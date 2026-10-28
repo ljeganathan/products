@@ -1,6 +1,7 @@
 from app.printing import report_print
 from app.printing.base import (
     _PAYMENT_LABELS,
+    PAID_ONLINE_BANNER_TEXT,
     BillRenderData,
     KotTicketRenderData,
     ReportRenderData,
@@ -198,6 +199,11 @@ def render_bill(bill: BillRenderData) -> bytes:
         else format_inr(bill.round_off_amount, symbol="Rs.")
     )
     out += _text(f"{'Round Off':<{label_w}}{round_off_label:>{amount_w}}")
+    if bill.is_online_paid:
+        out += (
+            _CENTER + _BOLD_ON + _SIZE_DOUBLE + _text(PAID_ONLINE_BANNER_TEXT)
+            + _SIZE_NORMAL + _BOLD_OFF + _LEFT
+        )
     out += _BOLD_ON + _SIZE_DOUBLE_HEIGHT
     out += _text(f"{'Grand Total':<{label_w}}{format_inr(bill.grand_total, symbol='Rs.'):>{amount_w}}")
     out += _SIZE_NORMAL + _BOLD_OFF

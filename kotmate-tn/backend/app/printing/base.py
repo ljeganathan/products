@@ -226,6 +226,13 @@ class BillRenderData:
     # the hotel hasn't set one and nothing extra prints (no hardcoded default here, the
     # service layer resolves a fallback so printing stays a pure function of this field).
     footer_message: str | None = None
+    # True when `payments` includes an "online"/"upi" row from the guest/kiosk online
+    # flow (same check already used to decide the Online Summary row, bill_service.py) —
+    # prints a bold "PAID ONLINE" stamp line just above Grand Total so a customer/staff
+    # glancing at the physical receipt doesn't need to scan the payments section to see
+    # it was settled online rather than cash/card. Never set for a cash/card/manual-UPI
+    # bill, which prints exactly as before.
+    is_online_paid: bool = False
 
     @property
     def header_label(self) -> str:
@@ -237,6 +244,10 @@ class BillRenderData:
 
 
 _PAYMENT_LABELS = {"upi": "UPI", "cash": "Cash", "card": "Card", "online": "Online"}
+
+# Shared by both print adapters (base.py's own dot-matrix text path and
+# escpos_thermal.py's own bold/double-size rendering of the same words).
+PAID_ONLINE_BANNER_TEXT = "***** PAID ONLINE *****"
 
 
 def two_column_lines(left: str, right: str, line_width: int) -> list[str]:
@@ -346,6 +357,10 @@ def format_bill_text_lines(bill: BillRenderData) -> list[str]:
         else format_inr(bill.round_off_amount, symbol="Rs.")
     )
     lines.append(f"{'Round Off':<{label_w}}{round_off_label:>{amount_w}}")
+    if bill.is_online_paid:
+        # No bold/size control on dot-matrix (CLAUDE.md §10) — centered plain text is
+        # the honest equivalent of the thermal adapter's bold/double-size banner.
+        lines.append(f"{PAID_ONLINE_BANNER_TEXT:^{bill.line_width}}")
     lines.append(f"{'Grand Total':<{label_w}}{format_inr(bill.grand_total, symbol='Rs.'):>{amount_w}}")
     lines.append(sep)
 
