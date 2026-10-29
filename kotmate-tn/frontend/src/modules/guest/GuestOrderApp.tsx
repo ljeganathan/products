@@ -852,7 +852,7 @@ export function BillTab({
   // this once the guest taps one.
   onChoosePayment?: (method: "online" | "cash") => void;
   onSessionEnded: () => void;
-  onPaid?: () => void;
+  onPaid?: (info: { amount: number | null; reference: string | null }) => void;
 }) {
   const queryClient = useQueryClient();
   const { data, isLoading, isError, error } = useQuery<GuestBillPreview>({
@@ -944,13 +944,14 @@ export function BillTab({
           total={data.grand_total}
           tokenLabel={tokenLabel}
           kioskMode={kioskMode}
-          onPaid={() => {
+          onPaid={(info) => {
             // Kiosk only: the guest session closes the instant a kiosk-online bill
-            // finalizes, so refetching the bill preview here would just 404 and bounce
-            // this screen to "session ended" before OnlinePayCard's own "Payment
-            // received" confirmation (and the auto-reset timer below) ever gets shown.
+            // finalizes. Refetching the bill preview here would just 404 against the
+            // now-dead session — skip it and let the kiosk's own onPaid handler swap
+            // straight to its receipt screen (built from `info` alone, no further
+            // guest-session calls) instead of bouncing to "session ended".
             if (!kioskMode) void queryClient.invalidateQueries({ queryKey: ["guest-bill-preview"] });
-            onPaid?.();
+            onPaid?.(info);
           }}
           onSessionEnded={onSessionEnded}
         />

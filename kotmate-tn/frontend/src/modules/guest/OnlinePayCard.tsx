@@ -121,7 +121,7 @@ export function OnlinePayCard({
   // a scannable QR (Razorpay/Cashfree's own checkout already does this by default on a
   // non-mobile-UA browser), never the Google Pay/PhonePe intent buttons below.
   kioskMode?: boolean;
-  onPaid: () => void;
+  onPaid: (info: { amount: number | null; reference: string | null }) => void;
   onSessionEnded: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>(info.paid ? "paid" : "idle");
@@ -149,7 +149,7 @@ export function OnlinePayCard({
       if (status.status === "paid") {
         setReference(status.reference);
         setPhase("paid");
-        onPaid();
+        onPaid({ amount: status.paid_amount ?? null, reference: status.reference ?? null });
       } else if (status.status === "failed") {
         setMessage(status.failure_reason ?? "The payment didn't go through.");
         setRefundNote(true);

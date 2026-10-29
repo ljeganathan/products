@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import logoMark from "@/assets/logo-mark.png";
 import { formatINR } from "@/lib/utils";
@@ -36,7 +36,8 @@ const KIOSK_SETUP_KEY = "kotmate_kiosk_setup";
 // Resets the kiosk back to a blank cart for the next customer a while after a
 // successful payment — long enough for the current customer to read the pickup
 // number, short enough that the next person isn't kept waiting on a stale screen.
-const AUTO_RESET_MS = 9000;
+// A "Done" button on the receipt screen lets an engaged customer skip the wait.
+const AUTO_RESET_MS = 30000;
 
 interface KioskSetup {
   locationId: string;
@@ -239,6 +240,26 @@ function KioskOrderFlow({
   const [cashPaidInfo, setCashPaidInfo] = useState<{ billNumber: string | null; grandTotal: number | null } | null>(
     null,
   );
+  // Set the instant an online payment is confirmed. Captured once, straight from the
+  // payment-status response, and never refreshed from the guest session again — the
+  // guest session closes the moment the kiosk-online bill auto-finalizes, so any
+  // further call against it (a bill-preview refetch, a stray window-focus refetch…)
+  // would just 404 and bounce this screen to "session ended" instead of the receipt.
+  const [onlinePaidInfo, setOnlinePaidInfo] = useState<{ amount: number | null; reference: string | null } | null>(
+    null,
+  );
+  const autoResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function scheduleAutoReset() {
+    autoResetTimer.current = setTimeout(onDone, AUTO_RESET_MS);
+  }
+
+  // The receipt screen's own "Done" button — lets an engaged customer move on right
+  // away instead of waiting out the auto-reset countdown.
+  function finishNow() {
+    if (autoResetTimer.current) clearTimeout(autoResetTimer.current);
+    onDone();
+  }
 
   function handleError(err: unknown, fallback: string) {
     if (isSessionEndedError(err)) {
@@ -285,6 +306,12 @@ function KioskOrderFlow({
     const t = setTimeout(() => setNotice(null), 3000);
     return () => clearTimeout(t);
   }, [notice]);
+
+  useEffect(() => {
+    return () => {
+      if (autoResetTimer.current) clearTimeout(autoResetTimer.current);
+    };
+  }, []);
 
   async function handleAddItem(item: GuestMenuItem) {
     const current = toLineInputs(order);
@@ -386,11 +413,45 @@ function KioskOrderFlow({
           <p className="mb-1 text-lg font-extrabold">✅ Paid — thank you!</p>
           <p className="mb-1 text-2xl font-black">{session.pickup_token}</p>
           {cashPaidInfo.billNumber && (
-            <p className="text-sm text-ink-faint">
+            <p className="mb-4 text-sm text-ink-faint">
               Bill #{cashPaidInfo.billNumber}
               {cashPaidInfo.grandTotal != null ? ` — ${formatINR(cashPaidInfo.grandTotal)}` : ""}
             </p>
           )}
+          <button
+            type="button"
+            onClick={finishNow}
+            className="rounded-lg bg-accent px-6 py-3 text-sm font-extrabold text-accent-foreground"
+          >
+            Done
+          </button>
+        </CenteredMessage>
+      </div>
+    );
+  }
+
+  if (onlinePaidInfo) {
+    return (
+      <div className="relative">
+        <div className="absolute right-3 top-3">
+          <UserMenu />
+        </div>
+        <CenteredMessage>
+          <p className="mb-1 text-lg font-extrabold">✅ Payment received — thank you!</p>
+          <p className="mb-1 text-2xl font-black">{session.pickup_token}</p>
+          {onlinePaidInfo.amount != null && (
+            <p className="mb-4 text-sm text-ink-faint">
+              {formatINR(onlinePaidInfo.amount)} paid online
+              {onlinePaidInfo.reference ? ` · ${onlinePaidInfo.reference}` : ""}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={finishNow}
+            className="rounded-lg bg-accent px-6 py-3 text-sm font-extrabold text-accent-foreground"
+          >
+            Done
+          </button>
         </CenteredMessage>
       </div>
     );
@@ -409,7 +470,7 @@ function KioskOrderFlow({
       const result = await sendGuestOrderToKitchen(method);
       if (result.status === "paid_cash") {
         setCashPaidInfo({ billNumber: result.bill_number ?? null, grandTotal: result.grand_total ?? null });
-        setTimeout(onDone, AUTO_RESET_MS);
+        scheduleAutoReset();
         return;
       }
       queryClient.setQueryData<GuestSession>(["kiosk-session", locationId, sectionId, epoch], (prev) =>
@@ -470,8 +531,9 @@ function KioskOrderFlow({
             kioskMode
             onChoosePayment={(method) => void handleChoosePayment(method)}
             onSessionEnded={() => setSessionEnded(true)}
-            onPaid={() => {
-              setTimeout(onDone, AUTO_RESET_MS);
+            onPaid={(info) => {
+              setOnlinePaidInfo(info);
+              scheduleAutoReset();
             }}
           />
         )}
