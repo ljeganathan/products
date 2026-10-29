@@ -855,10 +855,20 @@ export function BillTab({
   onPaid?: (info: { amount: number | null; reference: string | null }) => void;
 }) {
   const queryClient = useQueryClient();
+  // refetchOnWindowFocus/refetchOnReconnect are off deliberately, same as the session
+  // queries already do: the embedded payment widget (Cashfree's SDK especially) causes
+  // its own focus/blur churn while it loads, and react-query's default is to refetch on
+  // every one of those. That refetch landing after a kiosk-online payment has already
+  // finalized and closed the guest session 404s as "session ended" — entirely bypassing
+  // OnlinePayCard's own payment-status poll (and its race guard) since this is a
+  // separate query altogether — and bounces straight to "This order timed out" instead
+  // of ever showing the receipt. Nothing here needs to auto-refresh mid-payment anyway.
   const { data, isLoading, isError, error } = useQuery<GuestBillPreview>({
     queryKey: ["guest-bill-preview"],
     queryFn: getGuestBillPreview,
     retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   useEffect(() => {

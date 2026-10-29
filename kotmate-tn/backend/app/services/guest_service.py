@@ -1,3 +1,4 @@
+import logging
 import secrets
 import uuid
 from datetime import UTC, date, datetime
@@ -48,6 +49,10 @@ from app.services.payment_gateway import get_gateway
 from app.services.tenant_onboarding import get_active_plan, get_active_subscription
 
 _UNAVAILABLE_MESSAGE = "Ordering is currently unavailable right now."
+# Reuses payment_gateway.py's logger — diagnostic-only, tracing a kiosk bug where the
+# guest screen bounces to "session ended" right around a payment that actually
+# succeeded (see `_get_active_session_or_404` and `apply_gateway_payments` below).
+_logger = logging.getLogger("kotmate.payments")
 
 
 def is_qr_self_order_enabled(tenant: Tenant, plan_features: dict | None) -> bool:
@@ -281,7 +286,13 @@ async def create_or_resume_session(session: AsyncSession, qr_token: str) -> tupl
     return guest_session, tenant
 
 
-async def _get_active_session_or_404(session: AsyncSession, guest: CurrentGuest) -> GuestSession:
+async def _get_active_session_or_404(
+    session: AsyncSession, guest: CurrentGuest, context: str = "unknown"
+) -> GuestSession:
+    """`context` is diagnostic-only (logged on a 404, see below) — names the call site
+    so a stray "session ended" can be traced back to exactly which guest-side request
+    triggered it, without guessing from the frontend alone.
+    """
     if guest.table_id is None:
         # Takeaway: resolved by the JWT's own session id, never by table/section —
         # there is nothing to "resume" or share (see create_or_resume_session).
@@ -297,6 +308,23 @@ async def _get_active_session_or_404(session: AsyncSession, guest: CurrentGuest)
     else:
         row = await _current_guest_session(session, guest.tenant_id, guest.table_id)
     if row is None or row.expires_at < datetime.now(UTC):
+        # Diagnostic-only: look the row up again with no status/table filter, purely to
+        # log *why* it was excluded (closed? expired? genuinely missing?) — never used
+        # to decide anything, so this can't change behavior either way.
+        raw = (
+            await session.execute(
+                select(GuestSession).where(GuestSession.id == guest.guest_session_id)
+            )
+        ).scalar_one_or_none()
+        _logger.info(
+            "Guest session 404 [%s]: guest_session_id=%s found=%s status=%s expires_at=%s now=%s",
+            context,
+            guest.guest_session_id,
+            raw is not None,
+            raw.status if raw else None,
+            raw.expires_at if raw else None,
+            datetime.now(UTC),
+        )
         raise HTTPException(status.HTTP_404_NOT_FOUND, "This ordering session has ended — please rescan")
     return row
 
@@ -304,7 +332,7 @@ async def _get_active_session_or_404(session: AsyncSession, guest: CurrentGuest)
 async def update_profile(
     session: AsyncSession, guest: CurrentGuest, req: GuestProfileUpdateRequest
 ) -> GuestSession:
-    guest_session = await _get_active_session_or_404(session, guest)
+    guest_session = await _get_active_session_or_404(session, guest, context="update_profile")
     if req.customer_name is not None:
         guest_session.customer_name = req.customer_name
     if req.customer_phone is not None:
@@ -334,7 +362,7 @@ async def update_cart(
     session: AsyncSession, guest: CurrentGuest, items: list[OrderLineInput]
 ) -> OrderResponse:
     tenant = (await session.execute(select(Tenant).where(Tenant.id == guest.tenant_id))).scalar_one()
-    guest_session = await _get_active_session_or_404(session, guest)
+    guest_session = await _get_active_session_or_404(session, guest, context="update_cart")
     if guest_session.order_id is not None and await find_paid_attempt(
         session, guest.tenant_id, guest_session.order_id
     ):
@@ -395,7 +423,7 @@ async def get_cart(session: AsyncSession, guest: CurrentGuest) -> OrderResponse 
     added items but hasn't sent them to the kitchen yet would lose sight of their own
     draft cart the moment they refreshed the page or came back to a backgrounded tab.
     """
-    guest_session = await _get_active_session_or_404(session, guest)
+    guest_session = await _get_active_session_or_404(session, guest, context="get_cart")
     if guest_session.order_id is None:
         return None
     order_row = await get_order_or_404(session, guest.tenant_id, guest_session.order_id)
@@ -408,7 +436,7 @@ async def send_kot_for_guest(session: AsyncSession, guest: CurrentGuest) -> KotS
     see `place_takeaway_order` for that flow's very different timing.
     """
     tenant = (await session.execute(select(Tenant).where(Tenant.id == guest.tenant_id))).scalar_one()
-    guest_session = await _get_active_session_or_404(session, guest)
+    guest_session = await _get_active_session_or_404(session, guest, context="send_kot_for_guest")
     if guest_session.order_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add an item before sending to the kitchen")
     return await _send_kot(session, tenant, guest_session.order_id)
@@ -461,7 +489,7 @@ async def place_takeaway_order(
     None for every other case (including a Kiosk guest paying online, which still
     finalizes later via the verified-payment webhook as before).
     """
-    guest_session = await _get_active_session_or_404(session, guest)
+    guest_session = await _get_active_session_or_404(session, guest, context="place_takeaway_order")
     if guest_session.order_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add an item before placing your order")
     if payment_method is None:
@@ -495,7 +523,7 @@ async def place_takeaway_order(
 
 
 async def get_order_status(session: AsyncSession, guest: CurrentGuest) -> list[ActiveKotTicketResponse]:
-    guest_session = await _get_active_session_or_404(session, guest)
+    guest_session = await _get_active_session_or_404(session, guest, context="get_order_status")
     if guest_session.order_id is None:
         return []
     tickets = await list_active_tickets(session, guest.tenant_id, guest.location_id)
@@ -533,7 +561,7 @@ async def _table_label(session: AsyncSession, guest_session: GuestSession) -> st
 
 
 async def preview_guest_bill(session: AsyncSession, guest: CurrentGuest) -> GuestBillPreviewResponse:
-    guest_session = await _get_active_session_or_404(session, guest)
+    guest_session = await _get_active_session_or_404(session, guest, context="preview_guest_bill")
     if guest_session.order_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add an item before viewing the bill")
 
@@ -559,19 +587,19 @@ async def preview_guest_bill(session: AsyncSession, guest: CurrentGuest) -> Gues
 
 
 async def start_online_payment(session: AsyncSession, guest: CurrentGuest):
-    guest_session = await _get_active_session_or_404(session, guest)
+    guest_session = await _get_active_session_or_404(session, guest, context="start_online_payment")
     return await create_guest_payment(session, guest, guest_session)
 
 
 async def online_payment_status(
     session: AsyncSession, guest: CurrentGuest
 ) -> tuple[object, PaidNotice | None]:
-    guest_session = await _get_active_session_or_404(session, guest)
+    guest_session = await _get_active_session_or_404(session, guest, context="online_payment_status")
     return await guest_payment_status(session, guest, guest_session)
 
 
 async def request_bill(session: AsyncSession, guest: CurrentGuest) -> GuestSession:
-    guest_session = await _get_active_session_or_404(session, guest)
+    guest_session = await _get_active_session_or_404(session, guest, context="request_bill")
     if guest_session.order_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Add an item before requesting the bill")
     guest_session.status = "payment_claimed"

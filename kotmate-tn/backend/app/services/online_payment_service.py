@@ -11,6 +11,7 @@ enabled for new payments. Payments already in flight keep settling through the p
 they were created with, even after the owner switches providers.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -52,6 +53,7 @@ from app.ws.manager import manager as ws_manager
 _PROVIDER_LABELS = {"razorpay": "Razorpay", "cashfree": "Cashfree"}
 _CASHFREE_ENVIRONMENTS = ("sandbox", "production")
 _RECENT_ATTEMPTS_TO_SYNC = 5
+_logger = logging.getLogger("kotmate.payments")
 
 
 @dataclass
@@ -300,6 +302,15 @@ async def apply_gateway_payments(
             guest_session = (
                 await session.execute(select(GuestSession).where(GuestSession.id == attempt.guest_session_id))
             ).scalar_one_or_none()
+        _logger.info(
+            "Payment confirmed paid: attempt_id=%s guest_session_id=%s guest_session_status=%s "
+            "is_kiosk=%s now=%s",
+            attempt.id,
+            attempt.guest_session_id,
+            guest_session.status if guest_session else None,
+            guest_session.is_kiosk if guest_session else None,
+            datetime.now(UTC),
+        )
         if guest_session is not None and guest_session.status == "active":
             # Reuses the existing "guest says paid" state, which staff already see on the
             # KOT Tickets list — now backed by a verified payment instead of a tap.
@@ -312,6 +323,15 @@ async def apply_gateway_payments(
             if guest_session.is_kiosk:
                 kot_result = await _auto_finalize_kiosk_order(
                     session, attempt.tenant_id, guest_session.order_id, attempt.amount
+                )
+                _logger.info(
+                    "Kiosk auto-finalize result: guest_session_id=%s order_id=%s succeeded=%s "
+                    "guest_session_status_after=%s now=%s",
+                    attempt.guest_session_id,
+                    guest_session.order_id,
+                    kot_result is not None,
+                    guest_session.status,
+                    datetime.now(UTC),
                 )
             else:
                 kot_result = await _auto_send_takeaway_kot(session, attempt.tenant_id, guest_session.order_id)
