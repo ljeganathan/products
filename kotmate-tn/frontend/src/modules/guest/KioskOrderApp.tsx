@@ -352,57 +352,13 @@ function KioskOrderFlow({
       </div>
     );
   }
-  if (sessionEnded) {
-    return (
-      <div className="relative">
-        <div className="absolute right-3 top-3">
-          <UserMenu />
-        </div>
-        <CenteredMessage>
-          <p className="mb-3">This order timed out.</p>
-          <button
-            type="button"
-            onClick={onDone}
-            className="rounded-lg bg-accent px-4 py-2.5 text-sm font-extrabold text-accent-foreground"
-          >
-            Start a new order
-          </button>
-        </CenteredMessage>
-      </div>
-    );
-  }
-
   const session = sessionQuery.data as GuestSession;
 
-  if (!started) {
-    return (
-      <KioskIdleScreen
-        hotelName={session.hotel_name}
-        welcomeImageUrl={session.kiosk_welcome_image_url}
-        onStart={() => setStarted(true)}
-      />
-    );
-  }
-
-  if (profileRequired) {
-    return (
-      <RequiredProfileScreen
-        onSaved={(updated) => {
-          queryClient.setQueryData(["kiosk-session", locationId, sectionId, epoch], updated);
-          setProfileRequired(false);
-          const method = pendingPayment;
-          setPendingPayment(null);
-          if (method) void handleChoosePayment(method);
-        }}
-        onSessionEnded={() => {
-          setProfileRequired(false);
-          setSessionEnded(true);
-        }}
-        topRight={<UserMenu />}
-      />
-    );
-  }
-
+  // Checked ahead of `sessionEnded` deliberately: a straggler request from the
+  // payment-status poll can still land a stray "session ended" 404 after the guest
+  // session has already closed from a confirmed payment (see the `checking` guard in
+  // OnlinePayCard for the main fix) — once a receipt has actually been captured, that
+  // must always win over a late/spurious timeout signal, never the other way round.
   if (cashPaidInfo) {
     return (
       <div className="relative">
@@ -454,6 +410,55 @@ function KioskOrderFlow({
           </button>
         </CenteredMessage>
       </div>
+    );
+  }
+
+  if (sessionEnded) {
+    return (
+      <div className="relative">
+        <div className="absolute right-3 top-3">
+          <UserMenu />
+        </div>
+        <CenteredMessage>
+          <p className="mb-3">This order timed out.</p>
+          <button
+            type="button"
+            onClick={onDone}
+            className="rounded-lg bg-accent px-4 py-2.5 text-sm font-extrabold text-accent-foreground"
+          >
+            Start a new order
+          </button>
+        </CenteredMessage>
+      </div>
+    );
+  }
+
+  if (!started) {
+    return (
+      <KioskIdleScreen
+        hotelName={session.hotel_name}
+        welcomeImageUrl={session.kiosk_welcome_image_url}
+        onStart={() => setStarted(true)}
+      />
+    );
+  }
+
+  if (profileRequired) {
+    return (
+      <RequiredProfileScreen
+        onSaved={(updated) => {
+          queryClient.setQueryData(["kiosk-session", locationId, sectionId, epoch], updated);
+          setProfileRequired(false);
+          const method = pendingPayment;
+          setPendingPayment(null);
+          if (method) void handleChoosePayment(method);
+        }}
+        onSessionEnded={() => {
+          setProfileRequired(false);
+          setSessionEnded(true);
+        }}
+        topRight={<UserMenu />}
+      />
     );
   }
 

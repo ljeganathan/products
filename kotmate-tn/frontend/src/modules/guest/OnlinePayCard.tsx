@@ -142,8 +142,18 @@ export function OnlinePayCard({
   // unconditionally, before the auto-pay effect ever fires.
   const cashfreeContainerRef = useRef<HTMLDivElement>(null);
   const isMobile = !kioskMode && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  // The poll interval and the visibilitychange listener below can both fire within
+  // milliseconds of each other (e.g. the Cashfree widget's own focus/blur churn while
+  // it's rendering inline for kiosk). Two concurrent status checks race against the
+  // same guest session: whichever confirms "paid" first closes it server-side, and the
+  // other — still in flight — then reads that now-closed session as a 404 "session
+  // ended" even though the payment just succeeded. This guard makes sure only one
+  // checkStatus call is ever in flight at a time, so there's nothing left to race.
+  const checking = useRef(false);
 
   const checkStatus = useCallback(async () => {
+    if (checking.current) return;
+    checking.current = true;
     try {
       const status = await getGuestPaymentStatus();
       if (status.status === "paid") {
@@ -157,6 +167,8 @@ export function OnlinePayCard({
       }
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 404) onSessionEnded();
+    } finally {
+      checking.current = false;
     }
   }, [onPaid, onSessionEnded]);
 
