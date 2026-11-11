@@ -35,14 +35,20 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      # Seen repeatedly in 2026-11: this runner's default DNS resolver fails to
+      # resolve archive.ubuntu.com/security.ubuntu.com/azure.archive.ubuntu.com on
+      # *every* attempt, not intermittently — a known occasional GitHub-hosted-
+      # runner issue, not an Ubuntu mirror outage (retrying the same broken
+      # resolver wouldn't help on its own). Pointing at public DNS first fixes it.
+      - name: Work around occasional runner DNS resolution issues
+        run: |
+          sudo resolvectl dns eth0 8.8.8.8 1.1.1.1 2>/dev/null || true
+          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null || true
       # Tamil item/category names are rasterized (KOT/bill printing, and report
       # printing's Tamil toggle — CLAUDE.md §10/§11) via a Tamil-glyph font at print
       # time, same packages backend/Dockerfile installs in the production image — the
       # runner needs them too or every Tamil-rasterization test fails with "No Tamil
-      # font found on this system".
-      # Retried — GitHub's hosted runner occasionally can't resolve the Ubuntu mirror
-      # hosts (seen repeatedly 2026-11, "Temporary failure resolving ..."), which is
-      # transient on GitHub's own infrastructure, not anything in this repo (mirrors
+      # font found on this system". Retried too, as a second line of defense (mirrors
       # .github/workflows/kotmate-tn-deploy.yml at the monorepo root).
       - run: |
           for i in 1 2 3 4 5; do

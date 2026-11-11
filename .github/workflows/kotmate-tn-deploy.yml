@@ -6,14 +6,33 @@
 # same shape as storemate-tn-deploy.yml in this same directory. Replaces the old
 # kotmate-tn-ci.yml now that KOTMate TN has reached its deploy phase
 # (kotmate-tn/docs/DEPLOYMENT.md).
+#
+# Narrowed from a blanket "kotmate-tn/**" (2026-11) — scripts/deploy.sh only ever
+# rebuilds postgres/backend/nginx(frontend)/landing, so the native-shell add-ons
+# (android-print-agent/, android-table-tablet/, android-staff-app/, desktop-app/,
+# installer/ — none of them part of docker-compose at all) and docs/ were
+# needlessly triggering this whole pipeline, including the flaky apt-get step,
+# on every commit to those folders.
 name: KOTMate TN — CI & Deploy
 
 on:
   push:
     branches: [main]
-    paths: ["kotmate-tn/**"]
+    paths:
+      - "kotmate-tn/backend/**"
+      - "kotmate-tn/frontend/**"
+      - "kotmate-tn/landing/**"
+      - "kotmate-tn/docker-compose*.yml"
+      - "kotmate-tn/scripts/**"
+      - ".github/workflows/kotmate-tn-deploy.yml"
   pull_request:
-    paths: ["kotmate-tn/**"]
+    paths:
+      - "kotmate-tn/backend/**"
+      - "kotmate-tn/frontend/**"
+      - "kotmate-tn/landing/**"
+      - "kotmate-tn/docker-compose*.yml"
+      - "kotmate-tn/scripts/**"
+      - ".github/workflows/kotmate-tn-deploy.yml"
 
 jobs:
   backend:
@@ -41,14 +60,21 @@ jobs:
         working-directory: kotmate-tn/backend
     steps:
       - uses: actions/checkout@v4
+      # Seen repeatedly in 2026-11: this runner's default DNS resolver fails to
+      # resolve archive.ubuntu.com/security.ubuntu.com/azure.archive.ubuntu.com on
+      # *every* attempt, not intermittently — a known occasional GitHub-hosted-
+      # runner issue, not an Ubuntu mirror outage (retrying the same broken
+      # resolver wouldn't help on its own). Pointing at public DNS first fixes it.
+      - name: Work around occasional runner DNS resolution issues
+        run: |
+          sudo resolvectl dns eth0 8.8.8.8 1.1.1.1 2>/dev/null || true
+          echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null || true
       # Tamil item/category names are rasterized (KOT/bill printing, and report
       # printing's Tamil toggle) via a Tamil-glyph font at print time, same packages
       # kotmate-tn/backend/Dockerfile installs in the production image — the runner
       # needs them too or every Tamil-rasterization test fails with "No Tamil font
-      # found on this system" (mirrors kotmate-tn/.github/workflows/ci.yml).
-      # Retried — GitHub's hosted runner occasionally can't resolve the Ubuntu mirror
-      # hosts (seen repeatedly 2026-11, "Temporary failure resolving ..."), which is
-      # transient on GitHub's own infrastructure, not anything in this repo.
+      # found on this system" (mirrors kotmate-tn/.github/workflows/ci.yml). Retried
+      # too, as a second line of defense in case the DNS fix above isn't enough.
       - run: |
           for i in 1 2 3 4 5; do
             sudo apt-get update && sudo apt-get install -y --no-install-recommends fontconfig fonts-lohit-taml libraqm0
