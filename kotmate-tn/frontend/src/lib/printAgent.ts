@@ -32,7 +32,7 @@ export async function isPrintAgentReachable(connectionDetails: Record<string, un
 export async function sendPrintJobToAgent(job: BillPrintJob): Promise<void> {
   const printerName = windowsPrinterName(job.connection_details);
   if (!printerName) {
-    throw new Error("This printer has no Windows Printer Name configured — set it in Settings > Printers.");
+    throw new Error("This printer has no Printer Name configured — set it in Settings > Printers.");
   }
 
   let res: Response;

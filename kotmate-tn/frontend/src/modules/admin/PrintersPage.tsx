@@ -400,12 +400,12 @@ export function PrinterFormModal({
           {form.connection_type === "local_agent" && (
             <div className="flex flex-col gap-3 rounded-md border border-border bg-foreground/5 p-3">
               <p className="text-xs text-foreground/60">
-                Requires the KOTMate local print-agent running on the counter PC this printer is
-                plugged into (<code>print-agent/agent.py</code>) — it forwards jobs to this
-                printer's own Windows driver.
+                Requires the KOTMate local print-agent running on the device this printer is
+                connected to — <code>print-agent/agent.py</code> on a Windows counter PC, or the
+                KOTMate Print Agent app on an Android tablet/kiosk.
               </p>
               <div className="flex flex-col gap-1.5">
-                <label className={labelClass}>Windows Printer Name</label>
+                <label className={labelClass}>Printer Name</label>
                 <input
                   required
                   placeholder="e.g. POS80 Printer"
@@ -414,7 +414,8 @@ export function PrinterFormModal({
                   onChange={(e) => setForm((f) => ({ ...f, windows_printer_name: e.target.value }))}
                 />
                 <p className="text-[11px] text-foreground/50">
-                  Must match exactly what's shown in Windows' Printers &amp; scanners list.
+                  Must match exactly what you named this printer in the agent — Windows'
+                  Printers &amp; scanners list, or the printer's own name in the Android app.
                 </p>
               </div>
               <div className="flex flex-col gap-1.5">

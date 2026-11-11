@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A plain table/seat glyph -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,46 L84,46 L84,56 L24,56 Z M30,56 L38,56 L38,84 L30,84 Z M70,56 L78,56 L78,84 L70,84 Z" />
+</vector>

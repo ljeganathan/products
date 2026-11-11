@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A plain receipt/printer glyph — simple enough to draw as a vector path without
+         needing a real image asset. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,30 L74,30 L74,50 L84,50 L84,74 L74,74 L74,86 L34,86 L34,74 L24,74 L24,50 L34,50 Z
+                           M40,36 L40,50 L68,50 L68,36 Z
+                           M40,80 L68,80 L68,62 L40,62 Z" />
+</vector>
