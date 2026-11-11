@@ -40,7 +40,19 @@ jobs:
       # time, same packages backend/Dockerfile installs in the production image — the
       # runner needs them too or every Tamil-rasterization test fails with "No Tamil
       # font found on this system".
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fontconfig fonts-lohit-taml libraqm0
+      # Retried — GitHub's hosted runner occasionally can't resolve the Ubuntu mirror
+      # hosts (seen repeatedly 2026-11, "Temporary failure resolving ..."), which is
+      # transient on GitHub's own infrastructure, not anything in this repo (mirrors
+      # .github/workflows/kotmate-tn-deploy.yml at the monorepo root).
+      - run: |
+          for i in 1 2 3 4 5; do
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends fontconfig fonts-lohit-taml libraqm0
+            if [ $? -eq 0 ]; then exit 0; fi
+            echo "apt-get attempt $i failed — retrying in 20s..."
+            sleep 20
+          done
+          echo "apt-get failed after 5 attempts."
+          exit 1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
