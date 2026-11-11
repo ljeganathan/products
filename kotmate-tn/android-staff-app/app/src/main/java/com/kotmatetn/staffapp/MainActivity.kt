@@ -1,5 +1,7 @@
 package com.kotmatetn.staffapp
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.webkit.WebChromeClient
@@ -10,6 +12,7 @@ import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -82,6 +85,41 @@ class MainActivity : AppCompatActivity() {
                 // sub-resource (an analytics script, a font) shouldn't blank the screen.
                 if (request?.isForMainFrame == true) showError(error?.description?.toString())
             }
+
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                handleExternalAppLaunch(view, request.url.toString())
+        }
+    }
+
+    /** A plain WebView has no built-in way to hand off to an installed app the way a real
+     * browser (Chrome) does — so without this, tapping "Google Pay"/"PhonePe" inside the
+     * Razorpay/Cashfree checkout silently does nothing, even though the exact same page
+     * works fine in an ordinary mobile browser tab. `intent://...#Intent;...;end` (and a
+     * bare custom scheme like `upi://pay?...`) are both parsed the same way UPI payment
+     * SDKs expect a WebView host to handle them. Returns true (navigation handled here)
+     * for anything that isn't a plain http(s) page load.
+     */
+    private fun handleExternalAppLaunch(view: WebView, url: String): Boolean {
+        if (url.startsWith("http://") || url.startsWith("https://")) return false
+        return try {
+            val intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+            intent.addCategory(Intent.CATEGORY_BROWSABLE)
+            intent.component = null
+            intent.selector = null
+            if (intent.resolveActivity(packageManager) != null) {
+                startActivity(intent)
+            } else {
+                // No app installed for this UPI intent — most of these carry a fallback
+                // page (e.g. "install this app" or a plain web payment option) under this
+                // well-known extra key; load it if present instead of just doing nothing.
+                intent.getStringExtra("browser_fallback_url")?.let { view.loadUrl(it) }
+            }
+            true
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "That app isn't installed on this device", Toast.LENGTH_SHORT).show()
+            true
+        } catch (e: Exception) {
+            false
         }
     }
 

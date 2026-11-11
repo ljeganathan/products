@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 
 import logoMark from "@/assets/logo-mark.png";
 import { formatINR } from "@/lib/utils";
@@ -64,6 +64,15 @@ function isSessionEndedError(err: unknown): boolean {
 // customer identity — that's fully determined by which QR it is.
 export function GuestOrderApp() {
   const { qrToken = "" } = useParams();
+  // Set by android-table-tablet (a bolted-down tablet mounted at the table, never a
+  // customer's own phone) when it loads this exact same table URL — without this, the
+  // page has no way to tell that case apart from a real customer's phone, and since the
+  // tablet genuinely has an Android user agent, OnlinePayCard's own mobile check would
+  // otherwise show "Open Google Pay/PhonePe" buttons that launch those apps on the
+  // restaurant's own fixed device instead of the customer's, same reasoning as Kiosk
+  // mode already not showing them — only the QR/cash options make sense here.
+  const [searchParams] = useSearchParams();
+  const fixedDevice = searchParams.get("fixed_device") === "1";
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("menu");
   const [order, setOrder] = useState<Order | null>(null);
@@ -334,6 +343,7 @@ export function GuestOrderApp() {
             tokenLabel={takeaway ? (session.pickup_token ?? "") : `Table ${session.table_number}`}
             paymentMethod={takeaway ? (session.takeaway_payment ?? null) : undefined}
             busy={busy}
+            kioskMode={fixedDevice}
             onChoosePayment={takeaway ? handleChoosePayment : undefined}
             onSessionEnded={() => setSessionEnded(true)}
           />

@@ -1,10 +1,13 @@
 package com.kotmatetn.tableorder
 
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -70,9 +73,19 @@ class MainActivity : AppCompatActivity() {
         } else {
             setupContainer.visibility = View.GONE
             webViewContainer.visibility = View.VISIBLE
-            webView.loadUrl(url)
+            webView.loadUrl(fixedDeviceUrl(url))
         }
     }
+
+    /** This tablet is bolted to the table, never a customer's own phone — the guest
+     * ordering page has no other way to tell the two apart, and without this it would
+     * show "Open Google Pay/PhonePe" buttons that launch those apps on the restaurant's
+     * own fixed device instead of a customer's (production feedback). Appends rather
+     * than assumes a bare URL, since a re-scanned/edited table QR could already carry
+     * its own query string.
+     */
+    private fun fixedDeviceUrl(rawUrl: String): String =
+        rawUrl + (if (rawUrl.contains("?")) "&" else "?") + "fixed_device=1"
 
     private fun launchScan() {
         val options = ScanOptions()
@@ -116,7 +129,7 @@ class MainActivity : AppCompatActivity() {
      * reload (below) backs this up in case staff forget.
      */
     private fun reloadForNextCustomer() {
-        config.tableUrl?.let { webView.loadUrl(it) }
+        config.tableUrl?.let { webView.loadUrl(fixedDeviceUrl(it)) }
     }
 
     private fun rebind() {
@@ -130,7 +143,10 @@ class MainActivity : AppCompatActivity() {
         webView.settings.domStorageEnabled = true
         webView.settings.databaseEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
-        webView.webViewClient = object : WebViewClient() {}
+        webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                handleExternalAppLaunch(view, request.url.toString())
+        }
         webView.webChromeClient = WebChromeClient()
         // The idle safety net — reloads back to this table's own URL on a long fixed
         // interval regardless of what's on screen, so a tablet that somehow got stuck
@@ -138,10 +154,42 @@ class MainActivity : AppCompatActivity() {
         // just because nobody noticed.
         webView.postDelayed(object : Runnable {
             override fun run() {
-                config.tableUrl?.let { webView.loadUrl(it) }
+                config.tableUrl?.let { webView.loadUrl(fixedDeviceUrl(it)) }
                 webView.postDelayed(this, IDLE_SAFETY_RELOAD_MS)
             }
         }, IDLE_SAFETY_RELOAD_MS)
+    }
+
+    /** A plain WebView has no built-in way to hand off to an installed app the way a real
+     * browser (Chrome) does — so without this, tapping "Google Pay"/"PhonePe" inside the
+     * Razorpay/Cashfree checkout silently does nothing, even though the exact same page
+     * works fine in an ordinary mobile browser tab. `intent://...#Intent;...;end` (and a
+     * bare custom scheme like `upi://pay?...`) are both parsed the same way UPI payment
+     * SDKs expect a WebView host to handle them. Returns true (navigation handled here)
+     * for anything that isn't a plain http(s) page load.
+     */
+    private fun handleExternalAppLaunch(view: WebView, url: String): Boolean {
+        if (url.startsWith("http://") || url.startsWith("https://")) return false
+        return try {
+            val intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+            intent.addCategory(Intent.CATEGORY_BROWSABLE)
+            intent.component = null
+            intent.selector = null
+            if (intent.resolveActivity(packageManager) != null) {
+                startActivity(intent)
+            } else {
+                // No app installed for this UPI intent — most of these carry a fallback
+                // page (e.g. "install this app" or a plain web payment option) under this
+                // well-known extra key; load it if present instead of just doing nothing.
+                intent.getStringExtra("browser_fallback_url")?.let { view.loadUrl(it) }
+            }
+            true
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "That app isn't installed on this device", Toast.LENGTH_SHORT).show()
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun startKioskLock() {

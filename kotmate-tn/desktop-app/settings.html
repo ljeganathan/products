@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>KOTMate Settings</title>
+<style>
+  body { font-family: Segoe UI, Arial, sans-serif; padding: 24px; background: #f5f6f7; }
+  h1 { font-size: 16px; margin: 0 0 16px; }
+  label { font-size: 12px; font-weight: 600; color: #444; display: block; margin-bottom: 6px; }
+  input { width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 13px;
+          border: 1px solid #ccc; border-radius: 4px; margin-bottom: 16px; }
+  button { background: #1f7a55; color: white; border: none; border-radius: 4px;
+           padding: 9px 18px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  button:hover { opacity: 0.9; }
+  #status { font-size: 12px; color: #1f7a55; margin-top: 10px; height: 16px; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .row label { margin: 0; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 18px 0; }
+  .hint { font-size: 11px; color: #777; margin: -8px 0 14px; }
+</style>
+</head>
+<body>
+  <h1>KOTMate Desktop — Settings</h1>
+  <label for="url">Server URL</label>
+  <input id="url" type="text" placeholder="https://app.kotmatetn.in" />
+  <button onclick="saveUrl()">Save and reload</button>
+  <div id="status"></div>
+
+  <hr />
+
+  <div class="row">
+    <input id="kioskLock" type="checkbox" onchange="toggleLockFields()" />
+    <label for="kioskLock">Lock this device to this app (kiosk mode)</label>
+  </div>
+  <p class="hint">
+    Full screen, no title bar, no way to close or minimize — same idea as the Android
+    apps' "lock this device" option. Takes effect the next time the app starts.
+  </p>
+  <div id="lockFields" style="display:none">
+    <label for="pin">Exit PIN (needed to open Settings or Exit once locked)</label>
+    <input id="pin" type="text" inputmode="numeric" maxlength="8" placeholder="e.g. 1234" />
+  </div>
+  <button onclick="saveLock()">Save lock setting</button>
+  <div id="lockStatus"></div>
+
+<script>
+  async function load() {
+    document.getElementById('url').value = await window.pywebview.api.get_server_url();
+    const state = await window.pywebview.api.get_kiosk_lock();
+    document.getElementById('kioskLock').checked = state.enabled;
+    document.getElementById('pin').value = state.exit_pin;
+    toggleLockFields();
+  }
+  function toggleLockFields() {
+    document.getElementById('lockFields').style.display =
+      document.getElementById('kioskLock').checked ? 'block' : 'none';
+  }
+  async function saveUrl() {
+    const url = document.getElementById('url').value;
+    await window.pywebview.api.save_server_url(url);
+    document.getElementById('status').textContent = 'Saved — reloading main window…';
+  }
+  async function saveLock() {
+    const enabled = document.getElementById('kioskLock').checked;
+    const pin = document.getElementById('pin').value;
+    await window.pywebview.api.save_kiosk_lock(enabled, pin);
+    document.getElementById('lockStatus').textContent = 'Saved — restart KOTMate for this to take effect.';
+  }
+  window.addEventListener('pywebviewready', load);
+</script>
+</body>
+</html>
