@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Same exception as android-staff-app's copy of this file — see its comment for
+         why this is needed (Android 9+ blocks plain-HTTP fetch() calls to the local
+         print-agent by default, even to 127.0.0.1, unless explicitly allowed here). -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

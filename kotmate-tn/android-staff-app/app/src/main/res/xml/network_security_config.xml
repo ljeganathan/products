@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- The whole app stays HTTPS-only by default (base-config below) — this one
+         narrow exception is for the local print-agent, which only ever listens on
+         loopback and only ever speaks plain HTTP (print-agent/agent.py, the Android
+         print-agent app). Without this, Android 9+ silently blocks the page's own
+         fetch("http://127.0.0.1:<port>/...") calls — a stricter, OS-level gate that
+         sits below whatever mixed-content exemption a browser's own Chromium engine
+         might otherwise give localhost, and the actual reason "Test Print" reports
+         "Couldn't reach the local print-agent" even when it's genuinely running on
+         this same device. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

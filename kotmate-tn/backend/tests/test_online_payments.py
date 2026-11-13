@@ -50,9 +50,20 @@ class FakeRazorpay:
             qr_id = f"qr_{uuid.uuid4().hex[:12]}"
             self.created.append({"id": qr_id, **(body or {})})
             self.payments[qr_id] = []
-            return {"id": qr_id, "image_url": f"https://rzp.io/i/{qr_id}", "status": "active"}
+            return {
+                "id": qr_id,
+                "image_url": f"https://rzp.io/i/{qr_id}",
+                # The raw upi://pay?... string the real API also returns alongside
+                # image_url (payment_gateway.py renders its own bare QR from this
+                # instead of showing Razorpay's branded image_url).
+                "image_content": f"upi://pay?pa=test@razorpay&pn=KOTMate&tr={qr_id}&am=100&cu=INR",
+                "status": "active",
+            }
         if method == "GET" and path.startswith("/payments/qr_codes/") and path.endswith("/payments"):
             return {"items": self.payments.get(path.split("/")[3], [])}
+        if method == "GET" and path.startswith("/payments/qr_codes/"):
+            qr_id = path.rsplit("/", 1)[-1]
+            return {"id": qr_id, "image_content": f"upi://pay?pa=test@razorpay&pn=KOTMate&tr={qr_id}&am=100&cu=INR"}
         if method == "POST" and path.endswith("/capture"):
             pay_id = path.split("/")[2]
             for items in self.payments.values():

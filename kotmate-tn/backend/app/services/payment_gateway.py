@@ -225,6 +225,18 @@ class RazorpayGateway:
                 },
             )
             image_content = answer.get("image_content")
+            # Razorpay's own docs disagree on whether `image_content` comes back from
+            # this create call or only from re-fetching the QR code object afterward —
+            # try that second, cheap call before giving up to the branded `image_url`.
+            if not image_content:
+                fetched = await self._request("GET", f"/payments/qr_codes/{answer['id']}")
+                image_content = fetched.get("image_content")
+            _logger.info(
+                "Razorpay kiosk QR: id=%s image_content_present=%s response_keys=%s",
+                answer.get("id"),
+                bool(image_content),
+                sorted(answer.keys()),
+            )
             qr_image_url = _render_bare_qr(image_content) if image_content else answer.get("image_url")
             return {"id": answer["id"], "qr_image_url": qr_image_url}
         return await self._request(
