@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -7,6 +8,14 @@ from fastapi.staticfiles import StaticFiles
 from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.ws.router import router as ws_router
+
+# Without this, Python's root logger has no handler at all, so every logger.info() call
+# anywhere in the app (kotmate.payments and friends) is silently dropped — not an
+# error, just gone, nothing in `docker compose logs backend` beyond uvicorn's own
+# request access-log lines (uvicorn configures its own loggers independently of this).
+# Discovered 2026-11 while chasing a Razorpay QR issue: none of this session's own
+# diagnostic logging had ever actually been visible in production because of this.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 def create_app() -> FastAPI:
