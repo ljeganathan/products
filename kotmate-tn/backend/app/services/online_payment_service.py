@@ -528,12 +528,30 @@ async def handle_webhook(
     # is the one that actually closed a guest's payment screen (production feedback: "QR
     # screen takes too long to close after scanning" turned out to need this distinction).
     received_at = time.monotonic()
+    event = payload.get("event")
     gateway = await get_gateway_for_provider(session, tenant_id, provider)
     if gateway is None or not gateway.verify_webhook(raw_body, headers):
+        # Every other early-exit below is logged — this one wasn't, so a bad/stale saved
+        # webhook secret (the single most likely cause) would otherwise fail silently on
+        # every single delivery with nothing to grep for at all (production feedback:
+        # chasing a slow kiosk QR close with Razorpay's own delivery log unable to
+        # confirm response codes led straight back here).
+        _logger.warning(
+            "Webhook rejected: provider=%s tenant_id=%s event=%s reason=%s",
+            provider,
+            tenant_id,
+            event,
+            "no gateway configured" if gateway is None else "signature mismatch",
+        )
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid webhook signature")
 
     provider_order_id = gateway.webhook_order_id(payload)
     if not provider_order_id:
+        _logger.info(
+            "Webhook accepted but unused: provider=%s event=%s (no order/qr_code id in payload)",
+            provider,
+            event,
+        )
         return None
     attempt = (
         await session.execute(
@@ -545,13 +563,20 @@ async def handle_webhook(
         )
     ).scalar_one_or_none()
     if attempt is None:
+        _logger.warning(
+            "Webhook matched no payment attempt: provider=%s event=%s provider_order_id=%s",
+            provider,
+            event,
+            provider_order_id,
+        )
         return None
     # Re-read from the gateway rather than trusting the webhook body's contents.
     payments = await gateway.fetch_order_payments(provider_order_id)
     notice = await apply_gateway_payments(session, gateway, attempt, payments)
     _logger.info(
-        "Webhook processed: provider=%s attempt_id=%s became_paid=%s elapsed_ms=%s",
+        "Webhook processed: provider=%s event=%s attempt_id=%s became_paid=%s elapsed_ms=%s",
         provider,
+        event,
         attempt.id,
         notice is not None,
         round((time.monotonic() - received_at) * 1000),
