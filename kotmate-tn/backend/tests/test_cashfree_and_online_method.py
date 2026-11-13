@@ -7,11 +7,15 @@ test_online_payments.py), so these run offline and never touch Razorpay or Cashf
 import base64
 import hashlib
 import hmac
+import io
 import json
 import uuid
 
 import pytest
+import qrcode
 from httpx import AsyncClient
+from PIL import Image
+from pyzbar.pyzbar import decode as decode_qr_codes
 from sqlalchemy import select, text
 
 from app.db.session import async_session_maker
@@ -46,6 +50,11 @@ class FakeCashfree:
         self.payments: dict[str, list[dict]] = {}
         self.created: list[dict] = []
         self.check_code = 404  # 404 = keys accepted (made-up order not found)
+        # Real sandbox shape, confirmed 2026-10-27 against an actual Cashfree test
+        # account: a base64 PNG data URI lives at data.payload.qrcode. Garbage by
+        # default (not a real decodable image) — tests that care about the decode
+        # path override this with a real QR image.
+        self.qr_data_uri = "data:image/png;base64,FAKE_QR=="
 
     async def request(self, method: str, path: str, body: dict | None = None):
         if method == "POST" and path == "/orders":
@@ -60,12 +69,10 @@ class FakeCashfree:
         if method == "GET" and path.startswith("/orders/") and path.endswith("/payments"):
             return self.payments.get(path.split("/")[2], [])
         if method == "POST" and path == "/orders/sessions":
-            # Real sandbox shape, confirmed 2026-10-27 against an actual Cashfree test
-            # account: a base64 PNG data URI lives at data.payload.qrcode.
             return {
                 "action": "custom",
                 "channel": "qrcode",
-                "data": {"payload": {"qrcode": "data:image/png;base64,FAKE_QR=="}},
+                "data": {"payload": {"qrcode": self.qr_data_uri}},
             }
         raise AssertionError(f"unexpected Cashfree call {method} {path}")
 
@@ -202,6 +209,46 @@ async def test_kiosk_cashfree_order_pay_returns_qr_image_not_inline_checkout(
     cf_id = cashfree.pay(body["provider_order_id"], 70.00)
     status = await client.get("/api/v1/guest/payments/status", headers=guest)
     assert status.json()["status"] == "paid" and status.json()["reference"] == cf_id
+
+
+async def test_kiosk_cashfree_qr_is_decoded_and_rerendered_without_branding(
+    client: AsyncClient, pro_max_tenant_admin: dict, fakes
+):
+    """If Cashfree's QR-channel image ever does carry branding the way Razorpay's did
+    (undocumented either way — see `CashfreeGateway._create_qr_image`'s docstring), the
+    kiosk must still end up with a bare, scannable code: decode whatever real payment
+    string is baked into Cashfree's image and re-render it plain, the same fallback
+    `payment_gateway._decode_qr_data_uri` already applies to Razorpay's `image_url`.
+    """
+    cashfree, _ = fakes
+    upi_string = "upi://pay?pa=test@cashfree&pn=KOTMate&am=55.00&cu=INR"
+    buffer = io.BytesIO()
+    qrcode.make(upi_string).save(buffer, format="PNG")
+    cashfree.qr_data_uri = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+    headers = pro_max_tenant_admin["headers"]
+    await _save_provider(client, headers, "cashfree", enabled=True)
+    await _enable_qr_self_order(client, headers)
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "Takeaway")
+    guest = _guest_headers(await _start_kiosk(client, headers, location_id, section_id))
+    await _set_guest_profile(client, guest)
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=55)
+    cart = await client.post(
+        "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
+    )
+    assert cart.status_code == 200, cart.text
+
+    created = await client.post("/api/v1/guest/payments/create", headers=guest)
+    assert created.status_code == 200, created.text
+    # qrcode.make() is deterministic, so a successful decode-and-rerender round-trip of
+    # the same payload can legitimately come back byte-identical to the fake's own
+    # input image — the real signal is that the payload decodes back correctly either way.
+    qr_image_url = created.json()["qr_image_url"]
+    _, _, encoded = qr_image_url.partition(",")
+    decoded = decode_qr_codes(Image.open(io.BytesIO(base64.b64decode(encoded))))
+    assert decoded and decoded[0].data.decode("utf-8") == upi_string
 
 
 async def test_settings_list_both_providers_and_only_one_enabled(

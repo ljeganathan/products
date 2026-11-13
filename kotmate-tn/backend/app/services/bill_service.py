@@ -1,4 +1,7 @@
+import asyncio
 import base64
+import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -55,6 +58,8 @@ from app.services.order_service import get_order_or_404
 from app.services.stock_service import is_stock_tracking_enabled, set_item_stock
 from app.services.tax_rule_service import get_default_tax_rule
 from app.services.tenant_onboarding import get_active_plan
+
+_logger = logging.getLogger("kotmate.printing")
 
 # Any discount above this rupee amount is written to audit_log for loss-prevention
 # review (CLAUDE.md §11: "manual price override or discount applied above a
@@ -601,8 +606,24 @@ async def _dispatch_print_for_bill(
         printed = True
     elif printer.connection_type in ("network", "wifi"):
         details = printer.connection_details or {}
-        print_error = send_raw_bytes_over_network(details.get("ip_address"), details.get("port"), content)
+        # Off the event loop — this is one plain blocking socket call away from
+        # stalling every other tenant's request on the server (single uvicorn worker,
+        # no --workers flag) for the full connect/write timeout whenever a network bill
+        # printer is slow or unreachable (production feedback: a kiosk guest's
+        # payment-status poll sits behind this exact call via apply_gateway_payments ->
+        # _auto_finalize_kiosk_order -> finalize_bill).
+        started = time.monotonic()
+        print_error = await asyncio.to_thread(
+            send_raw_bytes_over_network, details.get("ip_address"), details.get("port"), content
+        )
         printed = print_error is None
+        _logger.info(
+            "Bill network print dispatch: printer_id=%s location_id=%s elapsed_ms=%s ok=%s",
+            printer.id,
+            location_id,
+            round((time.monotonic() - started) * 1000),
+            printed,
+        )
     else:
         printed = False
         print_error = f"{printer.connection_type.replace('_', ' ').title()} printing isn't supported yet."

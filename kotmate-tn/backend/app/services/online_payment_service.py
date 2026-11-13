@@ -12,6 +12,7 @@ they were created with, even after the owner switches providers.
 """
 
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -365,8 +366,24 @@ async def sync_order_attempts(
         gateway = gateways[attempt.provider]
         if gateway is None:
             continue
+        started = time.monotonic()
         payments = await gateway.fetch_order_payments(attempt.provider_order_id)
-        notice = await apply_gateway_payments(session, gateway, attempt, payments) or notice
+        _logger.info(
+            "Gateway payments fetch: provider=%s attempt_id=%s elapsed_ms=%s result_count=%s",
+            attempt.provider,
+            attempt.id,
+            round((time.monotonic() - started) * 1000),
+            len(payments),
+        )
+        started = time.monotonic()
+        result = await apply_gateway_payments(session, gateway, attempt, payments)
+        if result is not None:
+            _logger.info(
+                "apply_gateway_payments (incl. any auto-finalize/print): attempt_id=%s elapsed_ms=%s",
+                attempt.id,
+                round((time.monotonic() - started) * 1000),
+            )
+        notice = result or notice
     return notice
 
 
@@ -464,6 +481,7 @@ async def guest_payment_status(
 ) -> tuple[GuestPaymentStatusResponse, PaidNotice | None]:
     if guest_session.order_id is None:
         return GuestPaymentStatusResponse(status="none"), None
+    poll_started = time.monotonic()
     notice = await sync_order_attempts(session, guest.tenant_id, guest_session.order_id)
 
     attempts = await _attempts_for_order(session, guest.tenant_id, guest_session.order_id)
@@ -471,6 +489,16 @@ async def guest_payment_status(
         return GuestPaymentStatusResponse(status="none"), notice
     paid = next((a for a in attempts if a.status == "paid"), None)
     chosen = paid or attempts[0]
+    # One line per guest status poll — the frontend polls this every 2.5s while the
+    # kiosk QR screen is showing (production feedback: "takes too long to close after
+    # scanning"), so this is the single number to grep for to see whether a slow close
+    # is our own backend work or the gateway/UPI side settling the payment.
+    _logger.info(
+        "guest_payment_status poll: order_id=%s status=%s total_elapsed_ms=%s",
+        guest_session.order_id,
+        chosen.status,
+        round((time.monotonic() - poll_started) * 1000),
+    )
     return (
         GuestPaymentStatusResponse(
             status=chosen.status,

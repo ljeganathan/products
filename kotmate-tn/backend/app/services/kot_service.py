@@ -1,4 +1,7 @@
+import asyncio
 import base64
+import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 
@@ -29,6 +32,8 @@ from app.services.item_service import LOW_STOCK_THRESHOLD
 from app.services.order_service import get_order_or_404
 from app.services.stock_service import is_stock_tracking_enabled, set_item_stock
 from app.services.tenant_onboarding import get_active_plan
+
+_logger = logging.getLogger("kotmate.printing")
 
 
 def has_kds_feature(plan_features: dict | None) -> bool:
@@ -312,10 +317,24 @@ async def send_kot(
                 printed = True
             elif printer.connection_type in ("network", "wifi"):
                 details = printer.connection_details or {}
-                print_error = send_raw_bytes_over_network(
-                    details.get("ip_address"), details.get("port"), content
+                # Off the event loop — this is one plain blocking socket call away from
+                # stalling every other tenant's request on the server (single uvicorn
+                # worker, no --workers flag) for the full connect/write timeout whenever
+                # a network KOT printer is slow or unreachable (production feedback: a
+                # kiosk guest's payment-status poll sits behind this exact call via
+                # apply_gateway_payments -> _auto_finalize_kiosk_order -> send_kot).
+                started = time.monotonic()
+                print_error = await asyncio.to_thread(
+                    send_raw_bytes_over_network, details.get("ip_address"), details.get("port"), content
                 )
                 printed = print_error is None
+                _logger.info(
+                    "KOT network print dispatch: printer_id=%s location_id=%s elapsed_ms=%s ok=%s",
+                    printer.id,
+                    order.location_id,
+                    round((time.monotonic() - started) * 1000),
+                    printed,
+                )
             else:
                 connection_label = printer.connection_type.replace("_", " ").title()
                 print_error = f"{connection_label} printing isn't supported yet."

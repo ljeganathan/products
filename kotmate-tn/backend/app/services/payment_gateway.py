@@ -13,8 +13,9 @@ own signature, and payments are always re-read from the gateway before being tru
 
 Uses the standard library HTTP client (in a worker thread) so no new dependency is
 needed on the backend image — with one exception: `pyzbar` (+ the system `libzbar0`
-package, see Dockerfile), needed only to decode Razorpay's kiosk QR image back into its
-own raw payment string (see `_decode_qr_image`'s docstring for why).
+package, see Dockerfile), needed only to decode a provider's own kiosk QR image back
+into its raw payment string, for both Razorpay (`_decode_qr_image`) and Cashfree
+(`_decode_qr_data_uri`) — see either docstring for why.
 """
 
 import asyncio
@@ -72,6 +73,20 @@ def _render_bare_qr(data: str) -> str:
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
+def _decode_qr_bytes_sync(image_bytes: bytes) -> str | None:
+    """Shared by both providers' QR-branding fallbacks below: pulls the raw payment
+    string back out of a QR image's own pixels, so `_render_bare_qr` can re-render it
+    plain. Returns None on any decode failure rather than raising — this must never be
+    the reason a kiosk payment screen breaks.
+    """
+    try:
+        decoded = decode_qr_codes(Image.open(io.BytesIO(image_bytes)))
+        return decoded[0].data.decode("utf-8") if decoded else None
+    except Exception:
+        _logger.exception("Couldn't decode a provider's QR image")
+        return None
+
+
 def _decode_qr_image_sync(image_url: str) -> str | None:
     """Last-resort fallback for `_render_bare_qr`'s own input: confirmed against a real
     live account (2026-11) that Razorpay's `/payments/qr_codes` response — neither the
@@ -88,15 +103,37 @@ def _decode_qr_image_sync(image_url: str) -> str | None:
         request = urllib.request.Request(image_url)  # noqa: S310 - Razorpay's own rzp.io short link
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310
             image_bytes = response.read()
-        decoded = decode_qr_codes(Image.open(io.BytesIO(image_bytes)))
-        return decoded[0].data.decode("utf-8") if decoded else None
     except Exception:
-        _logger.exception("Couldn't decode Razorpay's own QR image at %s", image_url)
+        _logger.exception("Couldn't fetch Razorpay's own QR image at %s", image_url)
         return None
+    return _decode_qr_bytes_sync(image_bytes)
 
 
 async def _decode_qr_image(image_url: str) -> str | None:
     return await asyncio.to_thread(_decode_qr_image_sync, image_url)
+
+
+def _decode_qr_data_uri_sync(data_uri: str) -> str | None:
+    """Cashfree equivalent of `_decode_qr_image_sync`: its Order Pay QR-channel call
+    (`CashfreeGateway._create_qr_image`) hands back a ready-made `data:image/png;
+    base64,...` QR, undocumented beyond a one-line mention in Cashfree's API reference —
+    whether that image is bare or carries Cashfree's own branding (like Razorpay's
+    `image_url` did) isn't documented either, so decode it the same defensive way:
+    pull the raw payment string back out of the pixels and re-render it plain via
+    `_render_bare_qr`, falling back to the original image untouched on any decode
+    failure rather than ever breaking the kiosk payment screen.
+    """
+    try:
+        _, _, encoded = data_uri.partition(",")
+        image_bytes = base64.b64decode(encoded)
+    except Exception:
+        _logger.exception("Couldn't decode Cashfree's own QR data URI")
+        return None
+    return _decode_qr_bytes_sync(image_bytes)
+
+
+async def _decode_qr_data_uri(data_uri: str) -> str | None:
+    return await asyncio.to_thread(_decode_qr_data_uri_sync, data_uri)
 
 
 class PaymentGateway(Protocol):
@@ -137,7 +174,10 @@ class PaymentGateway(Protocol):
             `data.payload.qrcode` — undocumented beyond a one-line mention in Cashfree's
             API reference, so a failure there is swallowed and `qr_image_url` is simply
             left unset; the kiosk falls back to Cashfree's inline Drop-in checkout
-            (`OnlinePayCard.tsx`) exactly as it did before this existed.
+            (`OnlinePayCard.tsx`) exactly as it did before this existed. That image is
+            decoded and re-rendered bare the same way as Razorpay's (`_decode_qr_data_uri`),
+            since Cashfree's docs don't say whether it carries branding either; the
+            original image is used unchanged if decoding ever fails.
         """
         ...
 
@@ -421,7 +461,9 @@ class CashfreeGateway:
             return None
         qr = answer.get("data", {}).get("payload", {}).get("qrcode")
         if isinstance(qr, str) and qr.startswith("data:image"):
-            return qr
+            decoded = await _decode_qr_data_uri(qr)
+            _logger.info("Cashfree kiosk QR: decoded_from_image=%s", bool(decoded))
+            return _render_bare_qr(decoded) if decoded else qr
         _logger.warning(
             "Cashfree QR-channel call returned an unexpected shape: action=%r channel=%r data_keys=%r",
             answer.get("action"),
