@@ -12,7 +12,9 @@ own signature, and payments are always re-read from the gateway before being tru
     `build_gateway` keyed by `TenantPaymentGateway.provider`.
 
 Uses the standard library HTTP client (in a worker thread) so no new dependency is
-needed on the backend image.
+needed on the backend image — with one exception: `pyzbar` (+ the system `libzbar0`
+package, see Dockerfile), needed only to decode Razorpay's kiosk QR image back into its
+own raw payment string (see `_decode_qr_image`'s docstring for why).
 """
 
 import asyncio
@@ -31,6 +33,8 @@ from typing import Any, Protocol
 
 import qrcode
 from fastapi import HTTPException, status
+from PIL import Image
+from pyzbar.pyzbar import decode as decode_qr_codes
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,6 +70,33 @@ def _render_bare_qr(data: str) -> str:
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _decode_qr_image_sync(image_url: str) -> str | None:
+    """Last-resort fallback for `_render_bare_qr`'s own input: confirmed against a real
+    live account (2026-11) that Razorpay's `/payments/qr_codes` response — neither the
+    create call nor a follow-up fetch-by-id — ever actually includes `image_content`
+    for this account, despite what Razorpay's own docs show as an example response.
+    With no plain-text field available anywhere, the only place the QR's real payment
+    string (VPA, amount, reference) exists at all is baked into the pixels of
+    `image_url`'s own image — so download and decode it, then `_render_bare_qr` re-
+    renders the exact same payload without the branding. Returns None on any failure
+    (network, decode) rather than raising — this must never be the reason a kiosk
+    payment screen breaks; the branded `image_url` is always a safe fallback.
+    """
+    try:
+        request = urllib.request.Request(image_url)  # noqa: S310 - Razorpay's own rzp.io short link
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:  # noqa: S310
+            image_bytes = response.read()
+        decoded = decode_qr_codes(Image.open(io.BytesIO(image_bytes)))
+        return decoded[0].data.decode("utf-8") if decoded else None
+    except Exception:
+        _logger.exception("Couldn't decode Razorpay's own QR image at %s", image_url)
+        return None
+
+
+async def _decode_qr_image(image_url: str) -> str | None:
+    return await asyncio.to_thread(_decode_qr_image_sync, image_url)
 
 
 class PaymentGateway(Protocol):
@@ -227,14 +258,23 @@ class RazorpayGateway:
             image_content = answer.get("image_content")
             # Razorpay's own docs disagree on whether `image_content` comes back from
             # this create call or only from re-fetching the QR code object afterward —
-            # try that second, cheap call before giving up to the branded `image_url`.
+            # try that second, cheap call too.
             if not image_content:
                 fetched = await self._request("GET", f"/payments/qr_codes/{answer['id']}")
                 image_content = fetched.get("image_content")
+            # Confirmed against a real account (2026-11): neither of the above actually
+            # has it. image_url itself is the only remaining source of the real payment
+            # string — decode it directly as a last resort before giving up to the
+            # branded image.
+            decoded_from_image = False
+            if not image_content and answer.get("image_url"):
+                image_content = await _decode_qr_image(answer["image_url"])
+                decoded_from_image = bool(image_content)
             _logger.info(
-                "Razorpay kiosk QR: id=%s image_content_present=%s response_keys=%s",
+                "Razorpay kiosk QR: id=%s image_content_present=%s decoded_from_image=%s response_keys=%s",
                 answer.get("id"),
                 bool(image_content),
+                decoded_from_image,
                 sorted(answer.keys()),
             )
             qr_image_url = _render_bare_qr(image_content) if image_content else answer.get("image_url")
