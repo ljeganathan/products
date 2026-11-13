@@ -19,6 +19,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import io
 import json
 import logging
 import urllib.error
@@ -28,6 +29,7 @@ from collections.abc import Mapping
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Protocol
 
+import qrcode
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +52,20 @@ _TIMEOUT_SECONDS = 15
 
 def to_paise(amount: float) -> int:
     return int((Decimal(str(amount)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def _render_bare_qr(data: str) -> str:
+    """A plain black-and-white QR encoding `data`, as a data: URI the kiosk's <img> can
+    show directly — no provider branding, logos, or "powered by" footer (production
+    feedback: Razorpay's own `image_url` for a QR code is a full marketing-style image,
+    not a bare code, and far too large to print on a receipt either). `qrcode` is a
+    small, pure-Python-plus-Pillow dependency — Pillow is already required for Tamil
+    rasterization, so this doesn't add any new system-level/apt dependency.
+    """
+    img = qrcode.make(data)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 class PaymentGateway(Protocol):
@@ -187,8 +203,14 @@ class RazorpayGateway:
     ) -> dict[str, Any]:
         if upi_only:
             # Kiosk: a standalone, fixed-amount, single-use UPI QR code rather than an
-            # Order — returns a hosted `image_url` the kiosk screen shows directly, full
-            # screen, with no checkout widget involved at all.
+            # Order — Razorpay's own `image_url` for this is a full marketing-style
+            # image (its logo, a "Powered by Razorpay" header, UPI-app logos, "Scan &
+            # Pay" footer) meant for a shop counter printout, not a kiosk screen or a
+            # thermal receipt. `image_content` is the same QR's raw encoded
+            # `upi://pay?...` string (confirmed against Razorpay's own API docs) — used
+            # to render a bare code ourselves instead. Falls back to the branded
+            # `image_url` on the rare chance `image_content` is ever absent, same
+            # never-breaks-the-kiosk safety net Cashfree's own QR fallback already has.
             answer = await self._request(
                 "POST",
                 "/payments/qr_codes",
@@ -202,7 +224,9 @@ class RazorpayGateway:
                     "notes": notes,
                 },
             )
-            return {"id": answer["id"], "qr_image_url": answer.get("image_url")}
+            image_content = answer.get("image_content")
+            qr_image_url = _render_bare_qr(image_content) if image_content else answer.get("image_url")
+            return {"id": answer["id"], "qr_image_url": qr_image_url}
         return await self._request(
             "POST",
             "/orders",

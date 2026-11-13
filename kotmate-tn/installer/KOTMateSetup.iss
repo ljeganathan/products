@@ -53,10 +53,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "startnow"; Description: "Start {#MyAppName} now"
 Name: "autostart"; Description: "Launch {#MyAppName} (the window) automatically when Windows starts"; Flags: unchecked
+Name: "emulate"; Description: "Install the test/dev print agent instead (adds --emulate support — renders print jobs to PNG images for testing with no thermal hardware attached, see print-agent/README.md). Never select this on a real counter PC."; Flags: unchecked
 
 [Files]
 Source: "..\desktop-app\dist\KOTMateDesktop.exe"; DestDir: "{app}\Desktop"; DestName: "{#MyDesktopExeName}"; Flags: ignoreversion
-Source: "..\print-agent\dist\KOTMatePrintAgent.exe"; DestDir: "{app}\PrintAgent"; DestName: "{#MyAgentExeName}"; Flags: ignoreversion
+Source: "..\print-agent\dist\KOTMatePrintAgent.exe"; DestDir: "{app}\PrintAgent"; DestName: "{#MyAgentExeName}"; Flags: ignoreversion; Tasks: not emulate
+Source: "..\print-agent\dist\KOTMatePrintAgentEmulate.exe"; DestDir: "{app}\PrintAgent"; DestName: "{#MyAgentExeName}"; Flags: ignoreversion; Tasks: emulate
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\Desktop\{#MyDesktopExeName}"
@@ -119,6 +121,8 @@ end;
 function GetAgentArgs(Param: String): String;
 begin
   Result := '--port ' + GetPort();
+  if WizardIsTaskSelected('emulate') then
+    Result := Result + ' --emulate';
 end;
 
 function TryRegisterScheduledTask(): Boolean;
