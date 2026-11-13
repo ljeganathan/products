@@ -230,7 +230,7 @@ export function OnlinePaymentsSettings() {
         <p className="mt-1 text-foreground/60">
           {isCashfree
             ? "Events: payment success and payment failed. Optional — payments are also confirmed directly with Cashfree, but the webhook makes confirmation faster and covers customers who close the page."
-            : "Events: payment.captured, payment.failed, order.paid. Optional — payments are also confirmed directly with Razorpay, but the webhook makes confirmation faster and covers customers who close the page."}
+            : "Events: payment.captured, payment.failed, order.paid, qr_code.credited. Optional — payments are also confirmed directly with Razorpay, but the webhook makes confirmation faster and covers customers who close the page. qr_code.credited specifically is what speeds up the Kiosk's standalone QR code — without it, a kiosk payment only confirms once Razorpay's own payments list catches up, which can take well over 30 seconds."}
         </p>
       </div>
 
