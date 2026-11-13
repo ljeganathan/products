@@ -522,6 +522,12 @@ async def handle_webhook(
     headers: Any,
     payload: dict[str, Any],
 ) -> PaidNotice | None:
+    # A webhook confirming payment never touches sync_order_attempts (the frontend poll's
+    # own path, with its own timing logs) — it's the gateway pushing to us, not us asking
+    # — so this is logged separately: whichever path logs "Payment confirmed paid" first
+    # is the one that actually closed a guest's payment screen (production feedback: "QR
+    # screen takes too long to close after scanning" turned out to need this distinction).
+    received_at = time.monotonic()
     gateway = await get_gateway_for_provider(session, tenant_id, provider)
     if gateway is None or not gateway.verify_webhook(raw_body, headers):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid webhook signature")
@@ -542,7 +548,15 @@ async def handle_webhook(
         return None
     # Re-read from the gateway rather than trusting the webhook body's contents.
     payments = await gateway.fetch_order_payments(provider_order_id)
-    return await apply_gateway_payments(session, gateway, attempt, payments)
+    notice = await apply_gateway_payments(session, gateway, attempt, payments)
+    _logger.info(
+        "Webhook processed: provider=%s attempt_id=%s became_paid=%s elapsed_ms=%s",
+        provider,
+        attempt.id,
+        notice is not None,
+        round((time.monotonic() - received_at) * 1000),
+    )
+    return notice
 
 
 async def broadcast_paid_notice(notice: PaidNotice) -> None:
