@@ -436,6 +436,65 @@ async def test_kiosk_qr_code_webhook_matches_by_qr_code_id(
     assert [(p["method"], p["amount"]) for p in detail.json()["payments"]] == [("online", 55.0)]
 
 
+async def test_kiosk_qr_code_webhook_confirms_from_its_own_payload_not_a_slow_refetch(
+    client: AsyncClient, pro_max_tenant_admin: dict, fake_gateway
+):
+    """Confirmed against a real account (2026-11): Razorpay's `GET /payments/qr_codes/
+    {id}/payments` can lag 30+ seconds behind a `qr_code.credited` webhook that already
+    arrived for the very same payment, so re-reading it right after the webhook just
+    throws the webhook's speed away. A webhook never calls `fetch_order_payments` (the
+    fake would raise `AssertionError` on an unregistered call) once the webhook's own
+    payload carries a real payment entity — deliberately never registering anything via
+    `fake_gateway.pay()` here proves the webhook's own payment data alone is what
+    confirms it, not a re-fetch of a list that would otherwise still be empty.
+    """
+    headers = pro_max_tenant_admin["headers"]
+    settings = await _configure(client, headers)
+    tenant_id = settings["webhook_url"].rsplit("/", 1)[1]
+    await _enable_qr_self_order(client, headers)
+    location_id = await _default_location_id(client, headers)
+    section_id = await _section_id(client, headers, "Takeaway")
+    guest = _guest_headers(await _start_kiosk(client, headers, location_id, section_id))
+    await _set_guest_profile(client, guest)
+    category = await _create_category(client, headers)
+    item = await _create_item(client, headers, category["id"], price=55)
+    cart = await client.post(
+        "/api/v1/guest/cart", json={"items": [{"item_id": item["id"], "quantity": 1}]}, headers=guest
+    )
+    order_id = cart.json()["id"]
+    body = (await client.post("/api/v1/guest/payments/create", headers=guest)).json()
+
+    payload = json.dumps(
+        {
+            "event": "qr_code.credited",
+            "payload": {
+                "payment": {
+                    "entity": {
+                        "id": "pay_webhook_only",
+                        "status": "captured",
+                        "amount": 5500,
+                        "method": "upi",
+                    }
+                },
+                "qr_code": {"entity": {"id": body["provider_order_id"]}},
+            },
+        }
+    ).encode()
+    url = f"/api/v1/webhooks/razorpay/{tenant_id}"
+    signature = hmac.new(WEBHOOK_SECRET.encode(), payload, hashlib.sha256).hexdigest()
+    ok = await client.post(url, content=payload, headers={"X-Razorpay-Signature": signature})
+    assert ok.status_code == 200, ok.text
+
+    # The kiosk's guest session closes itself the instant it auto-finalizes, so (same as
+    # the test above) the confirmation is checked the way staff would see it: a real,
+    # paid bill — never reachable if the webhook's own payload hadn't been trusted.
+    bills = await client.get("/api/v1/bills", headers=headers)
+    [bill] = [b for b in bills.json() if b["order_id"] == order_id]
+    assert bill["grand_total"] == 55.0
+    detail = await client.get(f"/api/v1/bills/{bill['id']}", headers=headers)
+    assert [(p["method"], p["amount"]) for p in detail.json()["payments"]] == [("online", 55.0)]
+
+
 async def test_dine_in_send_to_kitchen_prints_on_network_kot_printer(
     client: AsyncClient, pro_max_tenant_admin: dict, monkeypatch
 ):

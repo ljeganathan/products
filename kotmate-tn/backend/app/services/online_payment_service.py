@@ -570,15 +570,22 @@ async def handle_webhook(
             provider_order_id,
         )
         return None
-    # Re-read from the gateway rather than trusting the webhook body's contents.
-    payments = await gateway.fetch_order_payments(provider_order_id)
+    # The webhook body is already signature-verified above, so its own payment entity
+    # (when the event carries one) is used directly instead of re-reading from the
+    # gateway's own API — confirmed (2026-11, production) that re-read can itself lag
+    # 30+ seconds behind the webhook for Razorpay's QR codes, which defeated the whole
+    # point of listening for the faster webhook in the first place.
+    from_webhook = gateway.payment_from_webhook(payload)
+    payments = [from_webhook] if from_webhook else await gateway.fetch_order_payments(provider_order_id)
     notice = await apply_gateway_payments(session, gateway, attempt, payments)
     _logger.info(
-        "Webhook processed: provider=%s event=%s attempt_id=%s became_paid=%s elapsed_ms=%s",
+        "Webhook processed: provider=%s event=%s attempt_id=%s became_paid=%s "
+        "used_webhook_payload=%s elapsed_ms=%s",
         provider,
         event,
         attempt.id,
         notice is not None,
+        from_webhook is not None,
         round((time.monotonic() - received_at) * 1000),
     )
     return notice

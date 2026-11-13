@@ -194,6 +194,13 @@ class PaymentGateway(Protocol):
 
     def webhook_order_id(self, payload: dict[str, Any]) -> str | None: ...
 
+    def payment_from_webhook(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Same normalised shape as `fetch_order_payments`' own list items, pulled
+        directly out of an already-signature-verified webhook body instead of asking
+        the gateway again. Returns None when the payload doesn't carry a usable payment
+        (the caller then falls back to `fetch_order_payments`)."""
+        ...
+
 
 def _http_json(request: urllib.request.Request, name: str) -> tuple[int, dict[str, Any]]:
     """Returns (status, body) for any HTTP answer; raises 502 only when the host is unreachable."""
@@ -359,6 +366,26 @@ class RazorpayGateway:
         # own id instead, which is what was stored as provider_order_id for that attempt.
         return payload.get("payload", {}).get("qr_code", {}).get("entity", {}).get("id")
 
+    def payment_from_webhook(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Confirmed against a real account (2026-11): Razorpay's own `GET /payments/
+        qr_codes/{id}/payments` can lag 30+ seconds behind a `qr_code.credited` webhook
+        actually arriving for the same payment — re-fetching it right after the webhook
+        just hits that same stale data and defeats the entire point of the webhook being
+        faster. `payment.authorized`/`payment.captured`/`payment.failed`/`qr_code.
+        credited` all carry the full payment entity directly in the payload, so use that
+        instead — it's already signature-verified by the time this is called.
+        """
+        entity = payload.get("payload", {}).get("payment", {}).get("entity")
+        if not entity:
+            return None
+        return {
+            "id": entity.get("id"),
+            "status": entity.get("status"),
+            "amount": entity.get("amount"),
+            "method": entity.get("method"),
+            "error_description": entity.get("error_description"),
+        }
+
 
 _CASHFREE_STATUS = {"SUCCESS": "captured", "FAILED": "failed"}
 
@@ -510,6 +537,12 @@ class CashfreeGateway:
 
     def webhook_order_id(self, payload: dict[str, Any]) -> str | None:
         return payload.get("data", {}).get("order", {}).get("order_id")
+
+    def payment_from_webhook(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        # No known lag on Cashfree's side to work around (unlike Razorpay's QR codes
+        # API, see RazorpayGateway's own version) — always falls back to the existing,
+        # already-working re-fetch rather than taking on an untested shortcut.
+        return None
 
 
 async def get_gateway_rows(session: AsyncSession, tenant_id: uuid.UUID) -> list[TenantPaymentGateway]:
